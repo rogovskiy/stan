@@ -2,21 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
-  CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  ScatterChart,
-  Scatter,
   ComposedChart,
-  Bar,
-  Area,
-  AreaChart
+  Area
 } from 'recharts';
+import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransform';
 
 // Types for API data
 interface StockDataPoint {
@@ -84,196 +78,6 @@ export default function Home() {
     }
   };
 
-  // Transform API data to match chart format
-  const transformApiDataForChart = (data: APIResponse) => {
-    const dailyData = data.data.filter(d => d.frequency === 'daily');
-    const quarterlyData = data.data.filter(d => d.frequency === 'quarterly');
-    
-    console.log('Data transformation debug:', {
-      totalData: data.data.length,
-      dailyDataPoints: dailyData.length,
-      quarterlyDataPoints: quarterlyData.length,
-      sampleQuarterly: quarterlyData.slice(0, 3).map(q => ({
-        date: q.date,
-        fairValue: q.fairValue,
-        eps: q.eps
-      }))
-    });
-    
-    // Create a map of quarterly data by date for exact matching
-    const quarterlyMap = new Map();
-    quarterlyData.forEach(q => {
-      quarterlyMap.set(q.date, q);
-    });
-    
-    // Sort daily data by date
-    const sortedDailyData = dailyData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    
-    // Create chart data points - one for each daily price point
-    const chartData: any[] = [];
-    let quarterlyPointsFound = 0;
-    
-    sortedDailyData.forEach((daily, index) => {
-      const dailyDate = daily.date;
-      const quarterlyDataForThisDate = quarterlyMap.get(dailyDate);
-      
-      // Create chart point with daily price
-      const basePoint = {
-        date: daily.fyDate || daily.date.slice(5, 7) + '/' + daily.date.slice(2, 4), // MM/YY format
-        fullDate: daily.date,
-        stockPrice: daily.price,
-        estimated: daily.estimated,
-        year: daily.year,
-        frequency: 'daily',
-        // Daily-derived metrics
-        marketCap: daily.price ? (daily.price * 16.0) : null,
-        volume: 1500000 + Math.random() * 1000000
-      };
-      
-      // Only add quarterly data if this date has actual quarterly data
-      if (quarterlyDataForThisDate) {
-        quarterlyPointsFound++;
-        const eps = quarterlyDataForThisDate.eps || 0;
-        const annualDividendYield = (quarterlyDataForThisDate.dividendsPOR || 0) / 100;
-        const quarterlyDividendAmount = (daily.price * annualDividendYield) / 4;
-        const payoutRatio = 0.3 + (Math.random() * 0.4);
-        const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
-        
-        Object.assign(basePoint, {
-          // Quarterly data - only present on quarterly reporting dates
-          fairValue: quarterlyDataForThisDate.fairValue || null,
-          earnings: eps,
-          normalPE: quarterlyDataForThisDate.normalPE || null,
-          dividendsPOR: quarterlyDataForThisDate.dividendsPOR || null,
-          hasQuarterlyData: true,
-          // Computed quarterly metrics
-          peRatio: quarterlyDataForThisDate.normalPE || null,
-          revenue: eps ? (eps * 4 * 16.0) : null,
-          dividend: Math.max(epsBasedDividend, 0.5),
-          analyst: quarterlyDataForThisDate.estimated ? 'Buy' : getAnalystRating(quarterlyDataForThisDate.fairValue || 0, daily.price)
-        });
-        
-        console.log('Found quarterly data for date:', dailyDate, {
-          fairValue: quarterlyDataForThisDate.fairValue,
-          eps: quarterlyDataForThisDate.eps,
-          hasData: true
-        });
-      } else {
-        // No quarterly data for this date - set all quarterly fields to null
-        Object.assign(basePoint, {
-          fairValue: null,
-          earnings: null,
-          normalPE: null,
-          dividendsPOR: null,
-          hasQuarterlyData: false,
-          peRatio: null,
-          revenue: null,
-          dividend: null,
-          analyst: null
-        });
-      }
-      
-      chartData.push(basePoint);
-    });
-    
-    console.log('Quarterly data matching results:', {
-      quarterlyPointsFound,
-      totalDailyPoints: chartData.length,
-      sampleChartData: chartData.filter(p => p.hasQuarterlyData).slice(0, 3).map(p => ({
-        date: p.date,
-        fairValue: p.fairValue,
-        hasQuarterlyData: p.hasQuarterlyData
-      }))
-    });
-    
-    // If no quarterly data matches, let's try a different approach - 
-    // spread quarterly data across nearby dates
-    if (quarterlyPointsFound === 0 && quarterlyData.length > 0) {
-      console.log('No exact matches found, using fallback strategy...');
-      
-      // Find the closest daily data point for each quarterly point
-      quarterlyData.forEach(q => {
-        const qDate = new Date(q.date);
-        let closestIndex = 0;
-        let minDiff = Infinity;
-        
-        chartData.forEach((daily, index) => {
-          const dailyDate = new Date(daily.fullDate);
-          const diff = Math.abs(dailyDate.getTime() - qDate.getTime());
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestIndex = index;
-          }
-        });
-        
-        // Apply quarterly data to the closest daily point
-        if (closestIndex < chartData.length) {
-          const eps = q.eps || 0;
-          const annualDividendYield = (q.dividendsPOR || 0) / 100;
-          const quarterlyDividendAmount = (chartData[closestIndex].stockPrice * annualDividendYield) / 4;
-          const payoutRatio = 0.3 + (Math.random() * 0.4);
-          const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
-          
-          Object.assign(chartData[closestIndex], {
-            fairValue: q.fairValue || null,
-            earnings: eps,
-            normalPE: q.normalPE || null,
-            dividendsPOR: q.dividendsPOR || null,
-            hasQuarterlyData: true,
-            peRatio: q.normalPE || null,
-            revenue: eps ? (eps * 4 * 16.0) : null,
-            dividend: Math.max(epsBasedDividend, 0.5),
-            analyst: q.estimated ? 'Buy' : getAnalystRating(q.fairValue || 0, chartData[closestIndex].stockPrice)
-          });
-          
-          quarterlyPointsFound++;
-          console.log('Applied quarterly data to closest daily point:', {
-            quarterlyDate: q.date,
-            closestDailyDate: chartData[closestIndex].fullDate,
-            fairValue: q.fairValue
-          });
-        }
-      });
-    }
-    
-    // Thin out the data for performance while preserving quarterly data points
-    const displayData: any[] = [];
-    const maxDisplayPoints = 300; // Increased to show more daily detail
-    const step = Math.max(1, Math.floor(chartData.length / maxDisplayPoints));
-    
-    chartData.forEach((point, index) => {
-      const shouldInclude = 
-        point.hasQuarterlyData || // Always include quarterly reporting dates
-        index % step === 0 || // Sample daily data
-        index === chartData.length - 1; // Always include last point
-      
-      if (shouldInclude) {
-        displayData.push(point);
-      }
-    });
-    
-    console.log('Final display data:', {
-      totalPoints: displayData.length,
-      pointsWithFairValue: displayData.filter(p => p.fairValue !== null).length,
-      sampleFairValues: displayData.filter(p => p.fairValue !== null).slice(0, 5).map(p => ({
-        date: p.date,
-        fairValue: p.fairValue
-      }))
-    });
-    return displayData;
-  };
-
-  // Helper function to determine analyst rating based on fair value vs current price
-  const getAnalystRating = (fairValue: number, currentPrice: number): string => {
-    if (fairValue === 0 || currentPrice === 0) return 'Hold';
-    
-    const ratio = fairValue / currentPrice;
-    if (ratio > 1.15) return 'Strong Buy';
-    if (ratio > 1.05) return 'Buy';
-    if (ratio < 0.85) return 'Sell';
-    return 'Hold';
-  };
-
   // Load data on component mount and when ticker/period changes
   useEffect(() => {
     fetchStockData(selectedTicker, period);
@@ -290,7 +94,7 @@ export default function Home() {
   };
 
   // Handle legend click to toggle series visibility
-  const handleLegendClick = (dataKey: string) => {
+  const handleLegendClick = (dataKey: keyof typeof visibleSeries) => {
     setVisibleSeries(prev => ({
       ...prev,
       [dataKey]: !prev[dataKey]
@@ -306,7 +110,7 @@ export default function Home() {
           className={`flex items-center gap-2 cursor-pointer select-none transition-opacity ${
             visibleSeries[item.dataKey as keyof typeof visibleSeries] ? 'opacity-100' : 'opacity-50'
           }`}
-          onClick={() => handleLegendClick(item.dataKey)}
+          onClick={() => handleLegendClick(item.dataKey as keyof typeof visibleSeries)}
         >
           <div
             className="w-4 h-0.5 rounded"
@@ -637,23 +441,6 @@ export default function Home() {
                         {stockData.filter(item => item.fairValue !== null).map((item) => (
                           <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
                             ${item.dividend?.toFixed(2) || '0.00'}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-                        <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">Rating</td>
-                        {stockData.filter(item => item.fairValue !== null).map((item) => (
-                          <td key={item.date} className="py-3 px-3 text-center">
-                            <span className={`px-1 py-0.5 rounded text-xs font-medium ${
-                              item.analyst === 'Strong Buy' ? 'bg-green-100 text-green-800' :
-                              item.analyst === 'Buy' ? 'bg-blue-100 text-blue-800' :
-                              item.analyst === 'Sell' ? 'bg-red-100 text-red-800' :
-                              'bg-yellow-100 text-yellow-800'
-                            }`}>
-                              {item.analyst === 'Strong Buy' ? 'S.Buy' : 
-                               item.analyst === 'Buy' ? 'Buy' : 
-                               item.analyst === 'Sell' ? 'Sell' : 'Hold'}
-                            </span>
                           </td>
                         ))}
                       </tr>

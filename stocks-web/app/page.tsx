@@ -1,16 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import {
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  ComposedChart,
-  Area
-} from 'recharts';
 import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransform';
+import StockAnalysisChart from './components/StockAnalysisChart';
 
 // Types for API data
 interface StockDataPoint {
@@ -42,13 +34,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('2y');
-
-  // State to track visibility of data series
-  const [visibleSeries, setVisibleSeries] = useState({
-    price: true,
-    fairValue: true,
-    dividendsPOR: true
-  });
 
   // Available tickers
   const tickers = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'AMZN'];
@@ -93,63 +78,11 @@ export default function Home() {
     setPeriod(newPeriod);
   };
 
-  // Handle legend click to toggle series visibility
-  const handleLegendClick = (dataKey: keyof typeof visibleSeries) => {
-    setVisibleSeries(prev => ({
-      ...prev,
-      [dataKey]: !prev[dataKey]
-    }));
-  };
-
-  // Custom Legend Component
-  const CustomLegend = ({ legendItems }: { legendItems: Array<{ dataKey: string; color: string; name: string }> }) => (
-    <div className="flex justify-center gap-6 mb-4">
-      {legendItems.map((item) => (
-        <div
-          key={item.dataKey}
-          className={`flex items-center gap-2 cursor-pointer select-none transition-opacity ${
-            visibleSeries[item.dataKey as keyof typeof visibleSeries] ? 'opacity-100' : 'opacity-50'
-          }`}
-          onClick={() => handleLegendClick(item.dataKey as keyof typeof visibleSeries)}
-        >
-          <div
-            className="w-4 h-0.5 rounded"
-            style={{ backgroundColor: item.color }}
-          />
-          <span className={`text-sm ${
-            visibleSeries[item.dataKey as keyof typeof visibleSeries] 
-              ? 'text-gray-700 font-medium' 
-              : 'text-gray-400 line-through'
-          }`}>
-            {item.name}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-
   // Get current stock info
   const currentData = stockData[stockData.length - 1];
   const previousData = stockData[stockData.length - 2];
   const priceChange = currentData && previousData ? currentData.stockPrice - previousData.stockPrice : 0;
   const priceChangePercent = currentData && previousData ? ((priceChange / previousData.stockPrice) * 100) : 0;
-
-  // Custom tooltip for the main chart
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-4 border border-gray-200 rounded-lg shadow-lg">
-          <p className="font-semibold text-gray-900 mb-2">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <p key={index} style={{ color: entry.color }} className="text-sm">
-              {entry.name}: ${typeof entry.value === 'number' ? entry.value.toFixed(2) : entry.value}
-            </p>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
@@ -328,126 +261,8 @@ export default function Home() {
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
             {/* Main Chart Area - 3/4 width */}
             <div className="xl:col-span-3 space-y-8">
-              {/* Area Chart - Stock Price, Fair Value, and Dividends Stacked */}
-              <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6 tracking-tight">
-                  Stock Price and Fair Value Analysis
-                </h2>
-
-                <ResponsiveContainer width="100%" height={400}>
-                  <ComposedChart data={stockData} margin={{ bottom: 20 }}>
-                    {/* <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" /> */}
-                    <XAxis 
-                      dataKey="fullDate" 
-                      interval={1}
-                      tick={{ fontSize: 12  }}
-                      tickFormatter={(value, index) => {
-                        if (stockData[index].fairValue !== null) {
-                          return stockData[index].fullDate;
-                        }
-                        return '';
-                      }}
-                    />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip content={<CustomTooltip />} />
-                    {visibleSeries.fairValue && (
-                      <Area 
-                        type="monotone"
-                        dataKey="fairValue" 
-                        stroke="#f97316" 
-                        fill="#f97316"
-                        fillOpacity={0.15}
-                        strokeWidth={1}
-                        name="Fair Value (Quarterly)"
-                        connectNulls={true}
-                      />
-                    )}
-                    {visibleSeries.dividendsPOR && (
-                      <Line 
-                        type="linear"
-                        dataKey="dividend" 
-                        stroke="#fbbf24" 
-                        fill="#fbbf24"
-                        fillOpacity={0.1}
-                        strokeWidth={1}
-                        name="Dividend (Quarterly)"
-                        connectNulls={true}
-                        dot={false}
-                      />
-                    )}
-                    {visibleSeries.price && (
-                      <Line 
-                        type="monotone"
-                        dataKey="stockPrice" 
-                        stroke="#000000" 
-                        strokeWidth={1}
-                        name="Stock Price (Daily)"
-                        dot={false}
-                      />
-                    )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-
-                {/* Custom Legend for Area Chart */}
-                <CustomLegend 
-                  legendItems={[
-                    { dataKey: 'price', color: '#000000', name: 'Stock Price ($)' },
-                    { dataKey: 'fairValue', color: '#f97316', name: 'Fair Value ($)' },
-                    { dataKey: 'dividendsPOR', color: '#fbbf24', name: 'Dividend ($)' }
-                  ]} 
-                />
-                
-                {/* Detailed Data Table aligned with X-axis */}
-                <div className="mt-6 overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b-2 border-gray-200">
-                        <th className="text-left py-3 px-2 font-bold text-gray-900 w-20 text-sm uppercase tracking-wide">Metric</th>
-                        {stockData.filter(item => item.fairValue !== null).map((item, index) => (
-                          <th key={item.date} className="text-center py-3 px-3 font-bold text-gray-900 text-sm tracking-tight" 
-                              style={{ width: `${100 / stockData.filter(item => item.fairValue !== null).length}%` }}>
-                            {item.fullDate}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="text-sm">
-                      <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white transition-colors">
-                        <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">P/E</td>
-                        {stockData.filter(item => item.fairValue !== null).map((item) => (
-                          <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                            {item.peRatio?.toFixed(1) || '0.0'}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
-                        <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">Fair Val</td>
-                        {stockData.filter(item => item.fairValue !== null).map((item) => (
-                          <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                            ${item.fairValue?.toFixed(0) || '0'}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-                        <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">EPS</td>
-                        {stockData.filter(item => item.fairValue !== null).map((item) => (
-                          <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                            ${item.earnings?.toFixed(2) || '0.00'}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
-                        <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">Div</td>
-                        {stockData.filter(item => item.fairValue !== null).map((item) => (
-                          <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                            ${item.dividend?.toFixed(2) || '0.00'}
-                          </td>
-                        ))}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              {/* Stock Analysis Chart Component */}
+              <StockAnalysisChart stockData={stockData} />
             </div>
 
             {/* Right Sidebar - 1/4 width */}

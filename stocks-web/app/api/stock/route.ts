@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DataCache } from '../../lib/cache';
 import { YFinanceService } from '../../lib/yfinance';
-import { MockStockService } from '../../lib/mockStock';
 
 const cache = new DataCache('./cache');
 const yfinanceService = new YFinanceService();
-const mockStock = new MockStockService();
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +11,6 @@ export async function GET(request: NextRequest) {
     const ticker = searchParams.get('ticker');
     const period = searchParams.get('period') || '5y';
     const forceRefresh = searchParams.get('refresh') === 'true';
-    const useMock = searchParams.get('mock') === 'true';
 
     if (!ticker) {
       return NextResponse.json(
@@ -22,7 +19,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`API Request: ${ticker}, period: ${period}, refresh: ${forceRefresh}, mock: ${useMock}`);
+    console.log(`API Request: ${ticker}, period: ${period}, refresh: ${forceRefresh}`);
 
     // Check cache first (unless force refresh is requested)
     if (!forceRefresh) {
@@ -34,34 +31,31 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    console.log(`Fetching fresh data for ${ticker} from ${useMock ? 'mock service' : 'Yahoo Finance'}...`);
+    console.log(`Fetching fresh data for ${ticker} from Yahoo Finance...`);
 
     let chartData;
     
-    if (useMock) {
-      // Use mock service
-      chartData = mockStock.generateMockData(ticker, period);
-    } else {
-      try {
-        // Fetch real Yahoo Finance data with quarterly earnings and forecasts
-        console.log(`Calling Yahoo Finance for ${ticker} with quarterly EPS data...`);
-        chartData = await yfinanceService.fetchStockData(ticker, period);
-        
-        // Log the quarterly data points we got
-        const quarterlyPoints = chartData.data.filter(d => d.frequency === 'quarterly');
-        const historicalEarnings = quarterlyPoints.filter(d => !d.estimated);
-        const forecastedEarnings = quarterlyPoints.filter(d => d.estimated);
-        
-        console.log(`Retrieved data for ${ticker}:`);
-        console.log(`- Historical quarterly earnings: ${historicalEarnings.length} points`);
-        console.log(`- Forecasted quarterly earnings: ${forecastedEarnings.length} points`);
-        console.log(`- Total daily price points: ${chartData.data.filter(d => d.frequency === 'daily').length}`);
-        
-      } catch (error) {
-        console.warn(`Yahoo Finance failed for ${ticker}, falling back to mock data:`, error);
-        // Fall back to mock data if Yahoo Finance fails
-        chartData = mockStock.generateMockData(ticker, period);
-      }
+    try {
+      // Fetch real Yahoo Finance data with quarterly earnings and forecasts
+      console.log(`Calling Yahoo Finance for ${ticker} with quarterly EPS data...`);
+      chartData = await yfinanceService.fetchStockData(ticker, period);
+      
+      // Log the quarterly data points we got
+      const quarterlyPoints = chartData.data.filter((d: any) => d.frequency === 'quarterly');
+      const historicalEarnings = quarterlyPoints.filter((d: any) => !d.estimated);
+      const forecastedEarnings = quarterlyPoints.filter((d: any) => d.estimated);
+      
+      console.log(`Retrieved data for ${ticker}:`);
+      console.log(`- Historical quarterly earnings: ${historicalEarnings.length} points`);
+      console.log(`- Forecasted quarterly earnings: ${forecastedEarnings.length} points`);
+      console.log(`- Total daily price points: ${chartData.data.filter((d: any) => d.frequency === 'daily').length}`);
+      
+    } catch (error) {
+      console.error(`Yahoo Finance failed for ${ticker}:`, error);
+      return NextResponse.json(
+        { error: `Unable to fetch data for ticker ${ticker}. Please try again.` },
+        { status: 500 }
+      );
     }
 
     // Cache the complete result (includes quarterly earnings data)

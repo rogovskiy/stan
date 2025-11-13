@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransform';
 import StockAnalysisChart from './components/StockAnalysisChart';
+import { Ticker } from './lib/firebaseService';
 
 // Types for API data
 interface StockDataPoint {
@@ -34,9 +35,27 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('2y');
+  const [allTickers, setAllTickers] = useState<Ticker[]>([]);
+  const [tickersLoading, setTickersLoading] = useState(false);
 
-  // Available tickers
-  const tickers = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'AMZN'];
+  // Fetch all tickers for dropdown
+  const fetchAllTickers = async () => {
+    try {
+      setTickersLoading(true);
+      const response = await fetch('/api/tickers?getAllTickers=true');
+      const result = await response.json();
+      
+      if (result.success) {
+        setAllTickers(result.data);
+      } else {
+        console.error('Failed to fetch tickers:', result.error);
+      }
+    } catch (err) {
+      console.error('Error fetching tickers:', err);
+    } finally {
+      setTickersLoading(false);
+    }
+  };
 
   // Fetch data from API
   const fetchStockData = async (ticker: string, selectedPeriod: string = period) => {
@@ -63,7 +82,12 @@ export default function Home() {
     }
   };
 
-  // Load data on component mount and when ticker/period changes
+  // Load tickers and initial data on component mount
+  useEffect(() => {
+    fetchAllTickers();
+  }, []);
+
+  // Load data when ticker/period changes
   useEffect(() => {
     fetchStockData(selectedTicker, period);
   }, [selectedTicker, period]);
@@ -143,9 +167,13 @@ export default function Home() {
                     onChange={(e) => handleTickerChange(e.target.value)}
                     className="text-base text-gray-600 bg-transparent border border-gray-300 rounded px-2 py-1 focus:outline-none cursor-pointer font-medium"
                   >
-                    {tickers.map(ticker => (
-                      <option key={ticker} value={ticker}>{ticker}</option>
-                    ))}
+                    {tickersLoading ? (
+                      <option>Loading...</option>
+                    ) : (
+                      allTickers.map(ticker => (
+                        <option key={ticker.symbol} value={ticker.symbol}>{ticker.symbol}</option>
+                      ))
+                    )}
                   </select>
                 </div>
                 <p className="text-gray-500 text-sm font-medium">NASDAQ: {selectedTicker} • {apiData?.currency || 'USD'}</p>

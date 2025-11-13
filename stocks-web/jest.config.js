@@ -23,6 +23,10 @@ const customJestConfig = {
     'app/**/*.{ts,tsx}',
     '!app/**/*.d.ts',
   ],
+  // Force Jest to exit after tests complete (helps with Firebase connections)
+  forceExit: true,
+  // Detect open handles for debugging
+  detectOpenHandles: true,
 }
 
 // createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async

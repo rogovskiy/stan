@@ -1,3 +1,5 @@
 .next/
 node_modules/
 cache/
+.env
+.env.local

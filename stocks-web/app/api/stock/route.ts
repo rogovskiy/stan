@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { DataCache } from '../../lib/cache';
+import { FirebaseCache } from '../../lib/cache';
 import { YFinanceService } from '../../lib/yfinance';
 
-const cache = new DataCache('./cache');
+const cache = new FirebaseCache();
 const yfinanceService = new YFinanceService();
 
 export async function GET(request: NextRequest) {
@@ -21,23 +21,18 @@ export async function GET(request: NextRequest) {
 
     console.log(`API Request: ${ticker}, period: ${period}, refresh: ${forceRefresh}`);
 
-    // Check cache first (unless force refresh is requested)
-    if (!forceRefresh) {
-      // Check for complete cached data (includes quarterly earnings)
-      const cachedData = await cache.getCachedData(ticker, 'historical');
-      if (cachedData) {
-        console.log(`Returning cached data for ${ticker}`);
-        return NextResponse.json(cachedData);
-      }
+    // Clear cache if force refresh is requested
+    if (forceRefresh) {
+      console.log(`Force refresh requested - clearing cache for ${ticker}`);
+      await cache.clearCache(ticker);
     }
 
-    console.log(`Fetching fresh data for ${ticker} from Yahoo Finance...`);
+    console.log(`Fetching data for ${ticker} from Yahoo Finance with Firebase cache...`);
 
     let chartData;
     
     try {
-      // Fetch real Yahoo Finance data with quarterly earnings and forecasts
-      console.log(`Calling Yahoo Finance for ${ticker} with quarterly EPS data...`);
+      // This will automatically check Firebase cache first and only fetch missing data
       chartData = await yfinanceService.fetchStockData(ticker, period);
       
       // Log the quarterly data points we got
@@ -57,9 +52,6 @@ export async function GET(request: NextRequest) {
         { status: 500 }
       );
     }
-
-    // Cache the complete result (includes quarterly earnings data)
-    await cache.setCachedData(ticker, chartData, 'historical');
 
     return NextResponse.json(chartData);
     
@@ -86,41 +78,75 @@ export async function POST(request: NextRequest) {
     if (action === 'clear-cache') {
       await cache.clearCache(ticker || undefined);
       return NextResponse.json({ 
-        message: ticker ? `Cache cleared for ${ticker}` : 'All cache cleared' 
+        message: ticker ? `Cache cleared for ${ticker}` : 'Please specify a ticker to clear cache' 
       });
     }
 
-    if (action === 'earnings-summary' && ticker) {
-      // Get just the quarterly earnings data for a specific ticker
+    if (action === 'cache-status' && ticker) {
+      // Check cache status for a ticker
       try {
-        const cachedData = await cache.getCachedData(ticker, 'historical');
-        if (cachedData) {
-          const quarterlyData = cachedData.data.filter((d: any) => d.frequency === 'quarterly');
-          const historical = quarterlyData.filter((d: any) => !d.estimated);
-          const forecasted = quarterlyData.filter((d: any) => d.estimated);
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setFullYear(endDate.getFullYear() - 5); // 5 year default
+        
+        const cacheStatus = await cache.hasCachedDataForRange(ticker, startDate, endDate);
+        const metadata = await cache.getTickerMetadata(ticker);
+        
+        return NextResponse.json({
+          ticker: ticker.toUpperCase(),
+          metadata: metadata,
+          cacheStatus: cacheStatus,
+          dateRange: {
+            start: startDate.toISOString().split('T')[0],
+            end: endDate.toISOString().split('T')[0]
+          }
+        });
+      } catch (error) {
+        console.error('Error getting cache status:', error);
+        return NextResponse.json(
+          { error: 'Failed to get cache status' },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (action === 'earnings-summary' && ticker) {
+      // Get quarterly financial data for a specific ticker
+      try {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setFullYear(endDate.getFullYear() - 5);
+        
+        const financialData = await cache.getFinancialDataRange(ticker, startDate, endDate);
+        
+        if (financialData.length > 0) {
+          const historical = financialData.filter(q => new Date(q.endDate) <= new Date());
+          const forecasted = financialData.filter(q => new Date(q.endDate) > new Date());
           
           return NextResponse.json({
             ticker: ticker.toUpperCase(),
             quarterlyEarnings: {
-              historical: historical.map((d: any) => ({
-                date: d.date,
-                quarter: d.fyDate,
-                eps: d.eps,
-                fairValue: d.fairValue,
+              historical: historical.map(q => ({
+                quarterKey: `${q.fiscalYear}Q${q.fiscalQuarter}`,
+                date: q.endDate,
+                quarter: `Q${q.fiscalQuarter}/${String(q.fiscalYear).slice(-2)}`,
+                eps: q.financials?.epsDiluted || 0,
+                revenue: q.financials?.revenue,
                 estimated: false
               })),
-              forecasted: forecasted.map((d: any) => ({
-                date: d.date,
-                quarter: d.fyDate,
-                eps: d.eps,
-                fairValue: d.fairValue,
+              forecasted: forecasted.map(q => ({
+                quarterKey: `${q.fiscalYear}Q${q.fiscalQuarter}`,
+                date: q.endDate,
+                quarter: `Q${q.fiscalQuarter}/${String(q.fiscalYear).slice(-2)}`,
+                eps: q.financials?.epsDiluted || 0,
+                revenue: q.financials?.revenue,
                 estimated: true
               }))
             }
           });
         } else {
           return NextResponse.json(
-            { error: `No cached data found for ${ticker}. Fetch the data first.` },
+            { error: `No financial data found for ${ticker} in Firebase cache. Fetch the data first.` },
             { status: 404 }
           );
         }
@@ -134,7 +160,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: 'Invalid action. Use "clear-cache" or "earnings-summary"' },
+      { error: 'Invalid action. Use "clear-cache", "cache-status", or "earnings-summary"' },
       { status: 400 }
     );
     

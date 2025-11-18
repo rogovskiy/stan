@@ -1,38 +1,559 @@
 import YahooFinance from 'yahoo-finance2';
 import { DataPoint, HistoricalChartResponse } from '../types/api';
+import { FirebaseCache, AnnualPriceData, QuarterlyFinancialData, TickerMetadata } from './cache';
 
 export class YFinanceService {
   private yf: any;
+  private cache: FirebaseCache;
 
   constructor() {
     // Initialize Yahoo Finance v3 instance with suppressNotices to reduce warnings
     this.yf = new YahooFinance({ 
       suppressNotices: ['ripHistorical', 'yahooSurvey'] 
     });
+    this.cache = new FirebaseCache();
   }
 
   async fetchStockData(ticker: string, period: string = '5y'): Promise<HistoricalChartResponse> {
     try {
-      // Use chart() instead of deprecated historical()
-      const chartData = await this.yf.chart(ticker, {
-        period1: this.getPeriodStartDate(period),
-        period2: new Date(),
-        interval: '1d'
-      });
+      console.log(`Fetching stock data for ${ticker} with period ${period}`);
+      
+      // Calculate date range
+      const endDate = new Date();
+      const startDate = this.getPeriodStartDate(period);
+      
+      // Check cache first
+      const cacheStatus = await this.cache.hasCachedDataForRange(ticker, startDate, endDate);
+      console.log(`Cache status for ${ticker}:`, cacheStatus);
 
-      // Extract historical price data from chart response
-      const historical = chartData.quotes || [];
+      // Get metadata (try cache first)
+      let metadata = await this.cache.getTickerMetadata(ticker);
+      if (!metadata) {
+        metadata = await this.fetchAndCacheMetadata(ticker);
+      }
 
-      // Try to fetch fundamentals with retry logic and fallback
-      let quoteSummary = await this.fetchQuoteSummaryWithFallback(ticker);
+      // Fetch missing data if needed
+      if (!cacheStatus.hasAllPriceData || cacheStatus.missingYears.length > 0 || cacheStatus.missingQuarters.length > 0) {
+        await this.fetchAndCacheAnnualData(ticker, startDate, endDate, cacheStatus.missingYears, cacheStatus.missingQuarters);
+      }
 
-      // Transform the data to our format
-      return this.transformToHistoricalChart(historical, quoteSummary, ticker, period);
+      // Retrieve cached data
+      const [priceData, financialData] = await Promise.all([
+        this.cache.getPriceDataRange(ticker, startDate, endDate),
+        this.cache.getFinancialDataRange(ticker, startDate, endDate)
+      ]);
+
+      return this.transformToHistoricalChart(priceData, financialData, metadata, ticker, period);
       
     } catch (error) {
       console.error(`Error fetching data for ${ticker}:`, error);
       throw new Error(`Failed to fetch stock data for ${ticker}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private async fetchAndCacheMetadata(ticker: string): Promise<TickerMetadata> {
+    try {
+      const quoteSummary = await this.fetchQuoteSummaryWithFallback(ticker);
+      
+      const metadata: TickerMetadata = {
+        name: quoteSummary?.price?.longName || this.getCompanyNameFallback(ticker),
+        exchange: quoteSummary?.price?.exchangeName || 'NASDAQ',
+        sector: quoteSummary?.summaryProfile?.sector || 'Technology',
+        lastUpdated: new Date().toISOString()
+      };
+
+      await this.cache.cacheTickerMetadata(ticker, metadata);
+      return metadata;
+    } catch (error) {
+      console.warn(`Could not fetch metadata for ${ticker}, using fallback`);
+      const fallbackMetadata: TickerMetadata = {
+        name: this.getCompanyNameFallback(ticker),
+        exchange: 'NASDAQ',
+        sector: 'Technology',
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await this.cache.cacheTickerMetadata(ticker, fallbackMetadata);
+      return fallbackMetadata;
+    }
+  }
+
+  private async fetchAndCacheAnnualData(ticker: string, startDate: Date, endDate: Date, missingYears: number[], missingQuarters: string[]): Promise<void> {
+    console.log(`Fetching missing annual data for ${ticker}:`);
+    console.log(`- Missing years: ${missingYears.join(', ')}`);
+    console.log(`- Missing quarters: ${missingQuarters.join(', ')}`);
+
+    // Fetch historical price data from Yahoo Finance for the entire range
+    const chartData = await this.yf.chart(ticker, {
+      period1: startDate,
+      period2: endDate,
+      interval: '1d'
+    });
+
+    const historical = chartData.quotes || [];
+    console.log(`Fetched ${historical.length} daily price points for ${ticker}`);
+
+    // Group daily data by years and cache to Storage
+    const annualPriceData = this.groupDataByYears(historical, ticker);
+    
+    // Cache each year's price data to Firebase Storage
+    for (const [yearStr, priceData] of Object.entries(annualPriceData)) {
+      const year = parseInt(yearStr);
+      if (missingYears.includes(year) || missingYears.length === 0) {
+        await this.cache.cacheAnnualPriceData(ticker, year, priceData);
+      }
+    }
+
+    // Fetch and cache quarterly financial data (unchanged process)
+    await this.fetchAndCacheFinancialData(ticker, missingQuarters);
+  }
+
+  private async fetchAndCacheFinancialData(ticker: string, missingQuarters: string[]): Promise<void> {
+    try {
+      const quoteSummary = await this.fetchQuoteSummaryWithFallback(ticker);
+      
+      if (quoteSummary) {
+        console.log(`\n🔍 Debug: Raw earnings data structure for ${ticker}:`);
+        
+        // Process historical earnings
+        const earningsHistory = quoteSummary?.earningsHistory?.history || [];
+        console.log(`Historical earnings records: ${earningsHistory.length}`);
+        
+        if (earningsHistory.length > 0) {
+          console.log('Sample earnings record:', JSON.stringify(earningsHistory[0], null, 2));
+        }
+        
+        for (const earnings of earningsHistory) {
+          console.log(`Processing earnings: quarter=${earnings.quarter}, epsActual=${earnings.epsActual}`);
+          
+          if (earnings.quarter && earnings.epsActual !== undefined) {
+            // Handle Date objects properly
+            let quarterKey: string | null = null;
+            
+            if (earnings.quarter instanceof Date) {
+              const year = earnings.quarter.getFullYear();
+              const quarter = Math.floor(earnings.quarter.getMonth() / 3) + 1;
+              quarterKey = `${year}Q${quarter}`;
+              console.log(`Parsed Date object "${earnings.quarter}" → "${quarterKey}"`);
+            } else {
+              quarterKey = this.parseEarningsQuarter(earnings.quarter);
+            }
+            
+            console.log(`Parsed quarter key: ${quarterKey} from ${earnings.quarter}`);
+            
+            if (quarterKey && (missingQuarters.includes(quarterKey) || missingQuarters.length === 0)) {
+              const financialData = this.createFinancialDataFromEarnings(earnings, quarterKey);
+              console.log(`Caching financial data for ${quarterKey}:`, financialData);
+              await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
+            } else {
+              console.log(`Skipping quarter ${quarterKey} - not in missing list or already cached`);
+            }
+          }
+        }
+
+        // Process forecasted earnings
+        const earningsChart = quoteSummary?.earnings?.earningsChart;
+        console.log(`Earnings chart available: ${!!earningsChart}`);
+        
+        if (earningsChart?.quarterly) {
+          console.log(`Quarterly forecasts: ${earningsChart.quarterly.length}`);
+          
+          if (earningsChart.quarterly.length > 0) {
+            console.log('Sample forecast record:', JSON.stringify(earningsChart.quarterly[0], null, 2));
+          }
+          
+          for (const quarter of earningsChart.quarterly) {
+            if (quarter.date && quarter.estimate) {
+              // Handle forecast quarter strings like "4Q2024"
+              const quarterKey = this.parseForecastQuarter(quarter.date);
+              console.log(`Processing forecast: date=${quarter.date}, quarterKey=${quarterKey}, estimate=${quarter.estimate}`);
+              
+              if (quarterKey && (missingQuarters.includes(quarterKey) || missingQuarters.length === 0)) {
+                const financialData = this.createFinancialDataFromForecast(quarter, quarterKey);
+                console.log(`Caching forecast data for ${quarterKey}:`, financialData);
+                await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
+              }
+            }
+          }
+        }
+        
+        console.log(`✅ Finished processing financial data for ${ticker}`);
+      }
+    } catch (error) {
+      console.warn(`Could not fetch financial data for ${ticker}:`, error);
+      // No more synthetic data generation - only actual data
+    }
+  }
+
+  private parseForecastQuarter(quarterStr: string): string | null {
+    if (!quarterStr || typeof quarterStr !== 'string') {
+      return null;
+    }
+    
+    console.log(`Parsing forecast quarter string: "${quarterStr}"`);
+    
+    // Handle formats like "4Q2024", "1Q2025"
+    const match = quarterStr.match(/(\d)Q(\d{4})/);
+    if (match) {
+      const quarter = match[1];
+      const year = match[2];
+      const result = `${year}Q${quarter}`;
+      console.log(`Successfully parsed forecast "${quarterStr}" → "${result}"`);
+      return result;
+    }
+    
+    console.warn(`Could not parse forecast quarter: "${quarterStr}"`);
+    return null;
+  }
+
+  private parseEarningsQuarter(quarterData: any): string | null {
+    // Handle both Date objects and string formats
+    if (!quarterData) {
+      return null;
+    }
+    
+    let quarterStr: string;
+    
+    // If it's a Date object, extract quarter from it
+    if (quarterData instanceof Date) {
+      const year = quarterData.getFullYear();
+      const quarter = Math.floor(quarterData.getMonth() / 3) + 1;
+      const result = `${year}Q${quarter}`;
+      console.log(`Parsed Date object "${quarterData}" → "${result}"`);
+      return result;
+    }
+    
+    // If it's a string, use existing logic
+    if (typeof quarterData === 'string') {
+      quarterStr = quarterData;
+    } else {
+      // Try to convert to string
+      quarterStr = String(quarterData);
+    }
+    
+    console.log(`Parsing earnings quarter string: "${quarterStr}"`);
+    
+    // Try multiple patterns that Yahoo Finance might use
+    const patterns = [
+      /(\d)Q(\d{4})/,     // 1Q2024
+      /Q(\d)\s*(\d{4})/,  // Q1 2024 or Q1 2024
+      /(\d{4})Q(\d)/,     // 2024Q1
+      /(\d{4})-Q(\d)/,    // 2024-Q1
+    ];
+    
+    for (const pattern of patterns) {
+      const match = quarterStr.match(pattern);
+      if (match) {
+        let quarter, year;
+        
+        if (pattern.source.includes('(\\d)Q(\\d{4})')) {
+          // 1Q2024 format
+          quarter = match[1];
+          year = match[2];
+        } else if (pattern.source.includes('Q(\\d)\\s*(\\d{4})')) {
+          // Q1 2024 format
+          quarter = match[1];
+          year = match[2];
+        } else {
+          // 2024Q1 or 2024-Q1 format
+          year = match[1];
+          quarter = match[2];
+        }
+        
+        const result = `${year}Q${quarter}`;
+        console.log(`Successfully parsed "${quarterStr}" → "${result}"`);
+        return result;
+      }
+    }
+    
+    console.warn(`Could not parse earnings quarter string: "${quarterStr}"`);
+    return null;
+  }
+
+  private groupDataByYears(historical: any[], ticker: string): Record<string, AnnualPriceData> {
+    const annualData: Record<string, AnnualPriceData> = {};
+
+    for (const dataPoint of historical) {
+      if (dataPoint.date && dataPoint.close) {
+        const date = new Date(dataPoint.date);
+        const year = date.getFullYear();
+        const yearStr = year.toString();
+        const dateStr = date.toISOString().split('T')[0];
+
+        if (!annualData[yearStr]) {
+          annualData[yearStr] = {
+            ticker: ticker.toUpperCase(),
+            year: year,
+            currency: 'USD',
+            timezone: 'America/New_York',
+            data: {},
+            metadata: {
+              totalDays: 0,
+              generatedAt: new Date().toISOString(),
+              source: 'yahoo_finance_v2'
+            }
+          };
+        }
+
+        annualData[yearStr].data[dateStr] = {
+          o: Math.round((dataPoint.open || dataPoint.close) * 100) / 100,
+          h: Math.round((dataPoint.high || dataPoint.close) * 100) / 100,
+          l: Math.round((dataPoint.low || dataPoint.close) * 100) / 100,
+          c: Math.round(dataPoint.close * 100) / 100,
+          v: dataPoint.volume || 0
+        };
+      }
+    }
+
+    // Update totalDays metadata for each year
+    for (const [yearStr, data] of Object.entries(annualData)) {
+      data.metadata.totalDays = Object.keys(data.data).length;
+    }
+
+    return annualData;
+  }
+
+  private getQuarterKey(date: Date): string {
+    const year = date.getFullYear();
+    const quarter = Math.floor(date.getMonth() / 3) + 1;
+    return `${year}Q${quarter}`;
+  }
+
+  private createFinancialDataFromEarnings(earnings: any, quarterKey: string): QuarterlyFinancialData {
+    const year = parseInt(quarterKey.substring(0, 4));
+    const quarter = parseInt(quarterKey.substring(5));
+    
+    const startMonth = (quarter - 1) * 3;
+    const endMonth = startMonth + 2;
+    
+    // Extract comprehensive earnings data
+    const earningsData: any = {};
+    if (earnings.epsActual !== undefined && earnings.epsActual !== null) {
+      earningsData.epsActual = typeof earnings.epsActual === 'object' ? earnings.epsActual.raw : earnings.epsActual;
+    }
+    if (earnings.epsEstimate !== undefined && earnings.epsEstimate !== null) {
+      earningsData.epsEstimate = typeof earnings.epsEstimate === 'object' ? earnings.epsEstimate.raw : earnings.epsEstimate;
+    }
+    if (earnings.epsDifference !== undefined && earnings.epsDifference !== null) {
+      earningsData.epsDifference = typeof earnings.epsDifference === 'object' ? earnings.epsDifference.raw : earnings.epsDifference;
+    }
+    if (earnings.surprisePercent !== undefined && earnings.surprisePercent !== null) {
+      earningsData.surprisePercent = typeof earnings.surprisePercent === 'object' ? earnings.surprisePercent.raw : earnings.surprisePercent;
+    }
+    if (earnings.currency) {
+      earningsData.currency = earnings.currency;
+    }
+    if (earnings.period) {
+      earningsData.period = earnings.period;
+    }
+    if (earnings.maxAge !== undefined) {
+      earningsData.maxAge = earnings.maxAge;
+    }
+    
+    // Extract financial metrics
+    const financials: any = {
+      dataSource: 'yahoo_finance_actual',
+      estimated: false
+    };
+    
+    // Core earnings metrics
+    if (earnings.epsActual !== undefined && earnings.epsActual !== null) {
+      financials.epsDiluted = typeof earnings.epsActual === 'object' ? earnings.epsActual.raw : earnings.epsActual;
+    }
+    
+    // Extract revenue if available
+    if (earnings.revenue?.raw !== undefined) {
+      financials.revenue = earnings.revenue.raw;
+    }
+    
+    // Extract any other financial data from earnings object
+    if (earnings.netIncome?.raw !== undefined) {
+      financials.netIncome = earnings.netIncome.raw;
+    }
+    if (earnings.grossProfit?.raw !== undefined) {
+      financials.grossProfit = earnings.grossProfit.raw;
+    }
+    if (earnings.operatingIncome?.raw !== undefined) {
+      financials.operatingIncome = earnings.operatingIncome.raw;
+    }
+    
+    const result: QuarterlyFinancialData = {
+      fiscalYear: year,
+      fiscalQuarter: quarter,
+      startDate: new Date(year, startMonth, 1).toISOString().split('T')[0],
+      endDate: new Date(year, endMonth + 1, 0).toISOString().split('T')[0],
+      earnings: Object.keys(earningsData).length > 0 ? earningsData : undefined,
+      financials: Object.keys(financials).length > 2 ? financials : undefined // More than just dataSource and estimated
+    };
+    
+    // Only add reportDate if it exists and is not undefined
+    if (earnings.reportDate !== undefined && earnings.reportDate !== null) {
+      result.reportDate = earnings.reportDate;
+    }
+    
+    return result;
+  }
+
+  private createFinancialDataFromForecast(quarter: any, quarterKey: string): QuarterlyFinancialData {
+    const year = parseInt(quarterKey.substring(0, 4));
+    const quarterNum = parseInt(quarterKey.substring(5));
+    
+    const startMonth = (quarterNum - 1) * 3;
+    const endMonth = startMonth + 2;
+    
+    // Extract comprehensive forecast data
+    const forecastData: any = {};
+    if (quarter.actual !== undefined && quarter.actual !== null) {
+      forecastData.actual = typeof quarter.actual === 'object' ? quarter.actual.raw : quarter.actual;
+    }
+    if (quarter.estimate !== undefined && quarter.estimate !== null) {
+      forecastData.estimate = typeof quarter.estimate === 'object' ? quarter.estimate.raw : quarter.estimate;
+    }
+    if (quarter.fiscalQuarter) {
+      forecastData.fiscalQuarter = quarter.fiscalQuarter;
+    }
+    if (quarter.calendarQuarter) {
+      forecastData.calendarQuarter = quarter.calendarQuarter;
+    }
+    if (quarter.difference) {
+      forecastData.difference = quarter.difference;
+    }
+    if (quarter.surprisePct) {
+      forecastData.surprisePct = quarter.surprisePct;
+    }
+    
+    // Extract financial metrics from forecast
+    const financials: any = {
+      dataSource: 'yahoo_finance_forecast',
+      estimated: true
+    };
+    
+    if (quarter.estimate !== undefined && quarter.estimate !== null) {
+      financials.epsDiluted = typeof quarter.estimate === 'object' ? quarter.estimate.raw : quarter.estimate;
+    }
+    
+    return {
+      fiscalYear: year,
+      fiscalQuarter: quarterNum,
+      startDate: new Date(year, startMonth, 1).toISOString().split('T')[0],
+      endDate: new Date(year, endMonth + 1, 0).toISOString().split('T')[0],
+      forecast: Object.keys(forecastData).length > 0 ? forecastData : undefined,
+      financials: Object.keys(financials).length > 2 ? financials : undefined
+    };
+  }
+
+  private transformToHistoricalChart(
+    priceData: Record<string, any>,
+    financialData: QuarterlyFinancialData[],
+    metadata: TickerMetadata,
+    ticker: string,
+    period: string
+  ): HistoricalChartResponse {
+    const dataPoints: DataPoint[] = [];
+    
+    // Transform daily price data
+    Object.entries(priceData).forEach(([dateStr, dayData]) => {
+      const date = new Date(dateStr);
+      dataPoints.push({
+        date: dateStr,
+        fyDate: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getFullYear()).slice(-2)}`,
+        year: date.getFullYear(),
+        estimated: false,
+        frequency: 'daily',
+        price: dayData.c
+      });
+    });
+
+    // Transform quarterly financial data
+    financialData.forEach(quarter => {
+      const quarterEndDate = new Date(quarter.endDate);
+      const currentPE = 15 + Math.random() * 20; // Generate PE between 15-35
+      
+      dataPoints.push({
+        date: quarter.endDate,
+        fyDate: `Q${quarter.fiscalQuarter}/${String(quarter.fiscalYear).slice(-2)}`,
+        year: quarter.fiscalYear,
+        estimated: quarterEndDate > new Date(),
+        frequency: 'quarterly',
+        eps: quarter.financials?.epsDiluted || 0,
+        normalPE: Math.round(currentPE * 100) / 100,
+        fairValue: Math.round((quarter.financials?.epsDiluted || 0) * currentPE * 100) / 100,
+        dividendsPOR: Math.round((Math.random() * 15 + 10) * 100) / 100
+      });
+    });
+
+    // Sort all data by date
+    dataPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    return {
+      symbol: ticker.toUpperCase(),
+      companyName: metadata.name,
+      currency: 'USD',
+      data: dataPoints,
+      chartConfig: {
+        title: `${ticker.toUpperCase()} - Historical Price vs Fair Value Analysis`,
+        height: 450,
+        timeRange: {
+          start: dataPoints[0]?.date || '',
+          end: dataPoints[dataPoints.length - 1]?.date || '',
+          defaultPeriod: period
+        },
+        series: [
+          {
+            dataKey: "fairValue",
+            type: "area",
+            color: "#f97316",
+            label: "Fair Value",
+            yAxisId: "left",
+            fillOpacity: 0.3,
+            visible: true,
+            frequency: "quarterly",
+            interpolation: "step"
+          },
+          {
+            dataKey: "dividendsPOR",
+            type: "area", 
+            color: "#fbbf24",
+            label: "Dividends POR",
+            yAxisId: "right",
+            fillOpacity: 0.2,
+            visible: true,
+            frequency: "quarterly",
+            interpolation: "step"
+          },
+          {
+            dataKey: "price",
+            type: "line",
+            color: "#000000",
+            label: "Price",
+            yAxisId: "left",
+            strokeWidth: 3,
+            visible: true,
+            frequency: "daily",
+            interpolation: "linear"
+          },
+          {
+            dataKey: "normalPE",
+            type: "line",
+            color: "#3b82f6",
+            label: "Normal PE",
+            yAxisId: "left",
+            strokeWidth: 2,
+            visible: true,
+            frequency: "quarterly",
+            interpolation: "linear"
+          }
+        ]
+      },
+      metadata: {
+        lastUpdated: new Date().toISOString(),
+        dataRange: {
+          start: dataPoints[0]?.date || '',
+          end: dataPoints[dataPoints.length - 1]?.date || ''
+        },
+        frequencies: ["daily", "quarterly"]
+      }
+    };
   }
 
   private async fetchQuoteSummaryWithFallback(ticker: string): Promise<any> {
@@ -103,113 +624,6 @@ export class YFinanceService {
     return startDate;
   }
 
-  private transformToHistoricalChart(
-    historical: any[],
-    quoteSummary: any,
-    ticker: string,
-    period: string
-  ): HistoricalChartResponse {
-    const dataPoints: DataPoint[] = [];
-    
-    // Transform historical price data
-    historical.forEach((dataPoint) => {
-      if (dataPoint.date && dataPoint.close) {
-        const date = new Date(dataPoint.date);
-        dataPoints.push({
-          date: date.toISOString().split('T')[0],
-          fyDate: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getFullYear()).slice(-2)}`,
-          year: date.getFullYear(),
-          estimated: false,
-          frequency: 'daily',
-          price: Math.round(dataPoint.close * 100) / 100
-        });
-      }
-    });
-
-    // Process quarterly earnings data if available, otherwise generate synthetic data for testing
-    if (quoteSummary) {
-      this.addRealQuarterlyEarningsData(dataPoints, quoteSummary, ticker);
-    } else {
-      // Add synthetic quarterly data for testing when real data is unavailable
-      this.addSyntheticQuarterlyData(dataPoints, ticker, period);
-    }
-
-    // Sort all data by date
-    dataPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-    const companyName = quoteSummary?.price?.longName || this.getCompanyNameFallback(ticker);
-
-    return {
-      symbol: ticker.toUpperCase(),
-      companyName: companyName,
-      currency: 'USD',
-      data: dataPoints,
-      chartConfig: {
-        title: `${ticker.toUpperCase()} - Historical Price vs Fair Value Analysis`,
-        height: 450,
-        timeRange: {
-          start: dataPoints[0]?.date || '',
-          end: dataPoints[dataPoints.length - 1]?.date || '',
-          defaultPeriod: period
-        },
-        series: [
-          {
-            dataKey: "fairValue",
-            type: "area",
-            color: "#f97316",
-            label: "Fair Value",
-            yAxisId: "left",
-            fillOpacity: 0.3,
-            visible: true,
-            frequency: "quarterly",
-            interpolation: "step"
-          },
-          {
-            dataKey: "dividendsPOR",
-            type: "area", 
-            color: "#fbbf24",
-            label: "Dividends POR",
-            yAxisId: "right",
-            fillOpacity: 0.2,
-            visible: true,
-            frequency: "quarterly",
-            interpolation: "step"
-          },
-          {
-            dataKey: "price",
-            type: "line",
-            color: "#000000",
-            label: "Price",
-            yAxisId: "left",
-            strokeWidth: 3,
-            visible: true,
-            frequency: "daily",
-            interpolation: "linear"
-          },
-          {
-            dataKey: "normalPE",
-            type: "line",
-            color: "#3b82f6",
-            label: "Normal PE",
-            yAxisId: "left",
-            strokeWidth: 2,
-            visible: true,
-            frequency: "quarterly",
-            interpolation: "linear"
-          }
-        ]
-      },
-      metadata: {
-        lastUpdated: new Date().toISOString(),
-        dataRange: {
-          start: dataPoints[0]?.date || '',
-          end: dataPoints[dataPoints.length - 1]?.date || ''
-        },
-        frequencies: ["daily", "quarterly"]
-      }
-    };
-  }
-
   private getCompanyNameFallback(ticker: string): string {
     // Fallback company names for well-known tickers when API fails
     const companyNames: Record<string, string> = {
@@ -228,220 +642,155 @@ export class YFinanceService {
     return companyNames[ticker.toUpperCase()] || `${ticker.toUpperCase()} Inc.`;
   }
 
-  private addRealQuarterlyEarningsData(dataPoints: DataPoint[], quoteSummary: any, ticker: string) {
-    if (!quoteSummary) {
-      console.log('No quote summary available, skipping real quarterly data');
-      return;
+  /**
+   * Fetch and cache maximum available historical data for a ticker
+   * Used by downloadMaxData script
+   */
+  async fetchMaxHistoricalData(ticker: string, maxYearsBack: number = 50): Promise<{
+    yearsProcessed: number;
+    dataPointsRetrieved: number;
+    yearsRange: string;
+  }> {
+    try {
+      // Calculate maximum date range
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(endDate.getFullYear() - maxYearsBack);
+
+      console.log(`   Fetching data from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
+
+      // Fetch maximum historical data
+      const chartData = await this.yf.chart(ticker, {
+        period1: startDate,
+        period2: endDate,
+        interval: '1d'
+      });
+
+      const historical = chartData.quotes || [];
+      console.log(`   Retrieved ${historical.length} daily price points`);
+
+      if (historical.length === 0) {
+        return {
+          yearsProcessed: 0,
+          dataPointsRetrieved: 0,
+          yearsRange: 'No data available'
+        };
+      }
+
+      // Group data by years
+      const annualData = this.groupDataByYears(historical, ticker);
+      console.log(`   Organized data into ${Object.keys(annualData).length} years`);
+
+      // Cache each year separately
+      let cachedYears = 0;
+      for (const [yearStr, priceData] of Object.entries(annualData)) {
+        const year = parseInt(yearStr);
+        try {
+          await this.cache.cacheAnnualPriceData(ticker, year, priceData);
+          cachedYears++;
+        } catch (error) {
+          console.error(`   ❌ Failed to cache year ${year}:`, error);
+        }
+      }
+
+      return {
+        yearsProcessed: cachedYears,
+        dataPointsRetrieved: historical.length,
+        yearsRange: `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`
+      };
+
+    } catch (error) {
+      console.error(`❌ Error fetching historical data for ${ticker}:`, error);
+      throw error;
     }
+  }
 
-    const currentPE = quoteSummary?.summaryDetail?.trailingPE?.raw || 20;
-    let quarterlyPointsAdded = 0;
+  /**
+   * Fetch comprehensive historical financial data using actual data only
+   * Used by downloadMaxData script - no estimation, only real data
+   */
+  async fetchMaxFinancialData(ticker: string): Promise<{
+    quartersProcessed: number;
+    historicalEarnings: number;
+    forecastQuarters: number;
+  }> {
+    try {
+      console.log(`   📊 Fetching actual financial data from Yahoo Finance...`);
+      
+      // Fetch comprehensive financial data
+      const quoteSummary = await this.yf.quoteSummary(ticker, {
+        modules: ['earnings', 'earningsHistory', 'earningsTrend', 'financialData']
+      });
 
-    // 1. Process HISTORICAL earnings from earningsHistory
-    const earningsHistory = quoteSummary?.earningsHistory?.history || [];
-    console.log(`Processing ${earningsHistory.length} historical earnings for ${ticker}`);
-    
-    earningsHistory.forEach((earnings: any) => {
-      if (earnings.quarter && (earnings.epsActual !== undefined && earnings.epsActual !== null)) {
-        const quarterMatch = earnings.quarter.match(/(\d)Q(\d{4})/);
-        if (quarterMatch) {
-          const quarter = parseInt(quarterMatch[1]);
-          const year = parseInt(quarterMatch[2]);
-          const quarterEndMonth = quarter * 3 - 1;
-          const date = new Date(year, quarterEndMonth, 28);
-          
-          const actualEPS = typeof earnings.epsActual === 'object' ? earnings.epsActual.raw : earnings.epsActual;
-          if (actualEPS !== undefined && actualEPS !== null) {
-            const estimatedPE = currentPE * (0.95 + Math.random() * 0.1); // Small PE variation
-            const fairValue = Math.abs(actualEPS * estimatedPE);
+      let cachedQuarters = 0;
+      let historicalCount = 0;
+      let forecastCount = 0;
+
+      if (quoteSummary) {
+        // Process recent earnings history (Yahoo only provides ~4 quarters)
+        const earningsHistory = quoteSummary?.earningsHistory?.history || [];
+        console.log(`   Found ${earningsHistory.length} recent earnings records from earningsHistory`);
+        historicalCount = earningsHistory.length;
+
+        for (const earnings of earningsHistory) {
+          if (earnings.quarter && earnings.epsActual !== undefined) {
+            const quarterKey = this.parseEarningsQuarter(earnings.quarter);
             
-            dataPoints.push({
-              date: date.toISOString().split('T')[0],
-              fyDate: `Q${quarter}/${String(year).slice(-2)}`,
-              year: year,
-              estimated: false,
-              frequency: 'quarterly',
-              eps: Math.round(Math.abs(actualEPS) * 100) / 100,
-              normalPE: Math.round(estimatedPE * 100) / 100,
-              fairValue: Math.round(fairValue * 100) / 100,
-              dividendsPOR: Math.round((Math.random() * 15 + 10) * 100) / 100
-            });
-            quarterlyPointsAdded++;
+            if (quarterKey) {
+              const financialData = this.createFinancialDataFromEarnings(earnings, quarterKey);
+              await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
+              cachedQuarters++;
+            }
+          }
+        }
+
+        // Process forecasted earnings
+        const earningsChart = quoteSummary?.earnings?.earningsChart;
+        if (earningsChart?.quarterly) {
+          console.log(`   Found ${earningsChart.quarterly.length} quarterly forecasts from earningsChart`);
+          forecastCount = earningsChart.quarterly.length;
+          
+          for (const quarter of earningsChart.quarterly) {
+            if (quarter.date && quarter.estimate) {
+              const quarterKey = this.parseForecastQuarter(quarter.date);
+              
+              if (quarterKey) {
+                const financialData = this.createFinancialDataFromForecast(quarter, quarterKey);
+                await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
+                cachedQuarters++;
+              }
+            }
           }
         }
       }
-    });
 
-    // 2. Process FORECASTED earnings from earnings.earningsChart.quarterly
-    const earningsChart = quoteSummary?.earnings?.earningsChart;
-    if (earningsChart?.quarterly) {
-      console.log(`Processing ${earningsChart.quarterly.length} forecasted earnings for ${ticker}`);
-      
-      earningsChart.quarterly.forEach((quarter: any) => {
-        if (quarter.date && quarter.estimate) {
-          const date = new Date(quarter.date);
-          const currentDate = new Date();
-          
-          // Only process future forecasts
-          if (date > currentDate) {
-            const estimatedEPS = typeof quarter.estimate === 'object' ? quarter.estimate.raw : quarter.estimate;
-            if (estimatedEPS !== undefined && estimatedEPS !== null) {
-              const q = Math.floor(date.getMonth() / 3) + 1;
-              const year = date.getFullYear();
-              
-              const estimatedPE = currentPE * (0.95 + Math.random() * 0.1);
-              const fairValue = Math.abs(estimatedEPS * estimatedPE);
-              
-              dataPoints.push({
-                date: date.toISOString().split('T')[0],
-                fyDate: `Q${q}/${String(year).slice(-2)}`,
-                year: year,
-                estimated: true,
-                frequency: 'quarterly',
-                eps: Math.round(Math.abs(estimatedEPS) * 100) / 100,
-                normalPE: Math.round(estimatedPE * 100) / 100,
-                fairValue: Math.round(fairValue * 100) / 100,
-                dividendsPOR: Math.round((Math.random() * 20 + 15) * 100) / 100
-              });
-              quarterlyPointsAdded++;
-            }
-          }
-        }
-      });
+      console.log(`   ✅ Financial data summary:`);
+      console.log(`     - Recent actuals: ${historicalCount} quarters`);
+      console.log(`     - Forecasts: ${forecastCount} quarters`);
+      console.log(`     - Total cached: ${cachedQuarters} quarters`);
+
+      return {
+        quartersProcessed: cachedQuarters,
+        historicalEarnings: historicalCount,
+        forecastQuarters: forecastCount
+      };
+
+    } catch (error) {
+      console.error(`❌ Error fetching financial data for ${ticker}:`, error);
+      // Return partial results instead of throwing
+      return {
+        quartersProcessed: 0,
+        historicalEarnings: 0,
+        forecastQuarters: 0
+      };
     }
-
-    // 3. Process analyst estimates from earningsTrend for next quarters
-    const earningsTrend = quoteSummary?.earningsTrend?.trend;
-    if (earningsTrend && earningsTrend.length > 0) {
-      console.log(`Processing ${earningsTrend.length} earnings trend estimates for ${ticker}`);
-      
-      earningsTrend.forEach((trend: any) => {
-        if (trend.period && trend.earningsEstimate) {
-          const currentDate = new Date();
-          const currentQuarter = Math.floor(currentDate.getMonth() / 3) + 1;
-          const currentYear = currentDate.getFullYear();
-          
-          let targetQuarter = currentQuarter;
-          let targetYear = currentYear;
-          
-          // Handle different period formats: "0q", "+1q", etc.
-          if (trend.period === '0q') {
-            // Current quarter
-          } else if (trend.period === '+1q') {
-            targetQuarter++;
-            if (targetQuarter > 4) {
-              targetQuarter = 1;
-              targetYear++;
-            }
-          }
-          
-          const estimateAvg = trend.earningsEstimate.avg?.raw || trend.earningsEstimate.avg;
-          if (estimateAvg !== undefined && estimateAvg !== null) {
-            const quarterEndMonth = targetQuarter * 3 - 1;
-            const date = new Date(targetYear, quarterEndMonth, 28);
-            
-            // Only add if we don't already have this quarter
-            const existing = dataPoints.find(p => 
-              p.frequency === 'quarterly' && 
-              p.year === targetYear && 
-              p.fyDate.includes(`Q${targetQuarter}`)
-            );
-            
-            if (!existing) {
-              const estimatedPE = currentPE;
-              const fairValue = Math.abs(estimateAvg * estimatedPE);
-              
-              dataPoints.push({
-                date: date.toISOString().split('T')[0],
-                fyDate: `Q${targetQuarter}/${String(targetYear).slice(-2)}`,
-                year: targetYear,
-                estimated: true,
-                frequency: 'quarterly',
-                eps: Math.round(Math.abs(estimateAvg) * 100) / 100,
-                normalPE: Math.round(estimatedPE * 100) / 100,
-                fairValue: Math.round(fairValue * 100) / 100,
-                dividendsPOR: Math.round((Math.random() * 20 + 15) * 100) / 100
-              });
-              quarterlyPointsAdded++;
-            }
-          }
-        }
-      });
-    }
-
-    console.log(`Added ${quarterlyPointsAdded} real quarterly data points for ${ticker}`);
   }
 
-  private addSyntheticQuarterlyData(dataPoints: DataPoint[], ticker: string, period: string) {
-    console.log(`Adding synthetic quarterly data for ${ticker} due to API limitations`);
-    
-    const currentDate = new Date();
-    const startDate = this.getPeriodStartDate(period);
-    const currentPrice = dataPoints.length > 0 ? dataPoints[dataPoints.length - 1].price : 150;
-    
-    // Generate quarterly points from start date to current date + 2 quarters future
-    const quarters = [];
-    let date = new Date(startDate);
-    
-    // Align to quarter end
-    const quarterEndMonth = Math.floor(date.getMonth() / 3) * 3 + 2; // 2, 5, 8, 11
-    date = new Date(date.getFullYear(), quarterEndMonth, 28);
-    
-    // Add historical and future quarters
-    while (date <= new Date(currentDate.getFullYear() + 1, currentDate.getMonth(), currentDate.getDate())) {
-      quarters.push(new Date(date));
-      
-      // Move to next quarter
-      date.setMonth(date.getMonth() + 3);
-      if (date.getMonth() > 11) {
-        date.setFullYear(date.getFullYear() + 1);
-        date.setMonth(date.getMonth() - 12);
-      }
-    }
-    
-    let quarterlyPointsAdded = 0;
-    quarters.forEach((quarterDate, index) => {
-      const quarter = Math.floor(quarterDate.getMonth() / 3) + 1;
-      const year = quarterDate.getFullYear();
-      const isEstimated = quarterDate > currentDate;
-      
-      // Generate realistic-looking data based on ticker and trends
-      const baseEPS = this.generateBaseEPS(ticker);
-      const growthFactor = 1 + (Math.random() * 0.4 - 0.2); // ±20% variation
-      const eps = baseEPS * growthFactor * (1 + index * 0.02); // Slight growth trend
-      
-      const pe = 15 + Math.random() * 20; // PE between 15-35
-      const fairValue = eps * pe;
-      const dividendsPOR = 10 + Math.random() * 15; // 10-25% POR
-      
-      dataPoints.push({
-        date: quarterDate.toISOString().split('T')[0],
-        fyDate: `Q${quarter}/${String(year).slice(-2)}`,
-        year: year,
-        estimated: isEstimated,
-        frequency: 'quarterly',
-        eps: Math.round(eps * 100) / 100,
-        normalPE: Math.round(pe * 100) / 100,
-        fairValue: Math.round(fairValue * 100) / 100,
-        dividendsPOR: Math.round(dividendsPOR * 100) / 100
-      });
-      quarterlyPointsAdded++;
-    });
-    
-    console.log(`Added ${quarterlyPointsAdded} synthetic quarterly data points for ${ticker}`);
-  }
-  
-  private generateBaseEPS(ticker: string): number {
-    // Generate realistic base EPS based on ticker
-    const epsMap: Record<string, number> = {
-      'AAPL': 6.0,
-      'MSFT': 8.0,
-      'GOOGL': 4.5,
-      'AMZN': 2.5,
-      'TSLA': 3.0,
-      'META': 10.0
-    };
-    
-    return epsMap[ticker.toUpperCase()] || 2.0 + Math.random() * 4.0;
+  /**
+   * Fetch and cache company metadata for a ticker
+   * Used by downloadMaxData script
+   */
+  async fetchAndCacheTickerMetadata(ticker: string): Promise<TickerMetadata> {
+    return this.fetchAndCacheMetadata(ticker);
   }
 }

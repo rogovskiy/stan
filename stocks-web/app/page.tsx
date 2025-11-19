@@ -17,7 +17,7 @@ export default function Home() {
   const [stockData, setStockData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState('max');
+  const [period, setPeriod] = useState('8y');
   const [allTickers, setAllTickers] = useState<Ticker[]>([]);
   const [tickersLoading, setTickersLoading] = useState(false);
 

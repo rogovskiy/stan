@@ -45,7 +45,7 @@ const INTERVAL_OPTIONS = [
   { value: '1y', label: '1Y' }
 ];
 
-export default function StockAnalysisChart({ stockData, onPeriodChange, currentPeriod = 'max' }: StockAnalysisChartProps) {
+export default function StockAnalysisChart({ stockData, onPeriodChange, currentPeriod = '8y' }: StockAnalysisChartProps) {
   // State to track visibility of data series
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
     price: true,

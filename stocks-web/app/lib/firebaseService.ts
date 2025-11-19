@@ -12,6 +12,38 @@ export interface Ticker {
 }
 
 /**
+ * Get custom cached data by key with age validation
+ */
+export async function getCustomData(key: string, maxAgeHours: number = 24): Promise<any | null> {
+  try {
+    const customDataRef = doc(db, 'custom_data', key);
+    const customDataSnap = await getDoc(customDataRef);
+    
+    if (customDataSnap.exists()) {
+      const data = customDataSnap.data();
+      
+      // Check if data is still fresh
+      if (data.last_updated) {
+        const lastUpdated = new Date(data.last_updated);
+        const now = new Date();
+        const ageHours = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
+        
+        if (ageHours < maxAgeHours) {
+          // Remove last_updated from returned data
+          const { last_updated, ...customData } = data;
+          return customData;
+        }
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error getting custom data for ${key}:`, error);
+    return null;
+  }
+}
+
+/**
  * Fetch individual ticker details from Firebase using the new cache structure
  */
 export async function getTickers(symbols: string[]): Promise<Ticker[]> {
@@ -110,3 +142,12 @@ export async function hasTickerData(symbol: string): Promise<boolean> {
     return false;
   }
 }
+
+// Create a service object for easier imports
+export const firebaseService = {
+  getTickers,
+  getAllTickers,
+  getTickerMetadata,
+  hasTickerData,
+  getCustomData
+};

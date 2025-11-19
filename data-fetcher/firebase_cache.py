@@ -27,11 +27,18 @@ class FirebaseCache:
         """Initialize Firebase Admin SDK"""
         if not firebase_admin._apps:
             # Create credentials from environment variables
+            private_key = os.getenv("FIREBASE_PRIVATE_KEY")
+            if not private_key:
+                raise ValueError("FIREBASE_PRIVATE_KEY environment variable is not set")
+            
+            # Handle the private key formatting
+            private_key = private_key.replace('\\n', '\n')
+            
             cred_dict = {
                 "type": "service_account",
                 "project_id": os.getenv("FIREBASE_PROJECT_ID"),
                 "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-                "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n') if os.getenv("FIREBASE_PRIVATE_KEY") else None,
+                "private_key": private_key,
                 "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
                 "client_id": os.getenv("FIREBASE_CLIENT_ID"),
                 "auth_uri": os.getenv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
@@ -264,10 +271,21 @@ class FirebaseCache:
                 quarter_data = self.get_quarterly_financial_data(ticker, quarter_key)
                 
                 if quarter_data:
-                    # Check if quarter falls within date range
-                    quarter_end_date = datetime.strptime(quarter_data['end_date'], '%Y-%m-%d')
-                    if start_date <= quarter_end_date <= end_date:
-                        financial_data.append(quarter_data)
+                    # Check if quarter falls within date range using period_end_date
+                    quarter_end_date_str = quarter_data.get('period_end_date')
+                    
+                    if quarter_end_date_str:
+                        try:
+                            quarter_end_date = datetime.strptime(quarter_end_date_str, '%Y-%m-%d')
+                            if start_date <= quarter_end_date <= end_date:
+                                financial_data.append(quarter_data)
+                        except (ValueError, TypeError):
+                            # If date parsing fails, include the quarter anyway
+                            financial_data.append(quarter_data)
+                    else:
+                        # If no period_end_date is available, include the quarter based on year
+                        if start_date.year <= year <= end_date.year:
+                            financial_data.append(quarter_data)
         
         return sorted(financial_data, key=lambda x: (x['fiscal_year'], x['fiscal_quarter']))
     

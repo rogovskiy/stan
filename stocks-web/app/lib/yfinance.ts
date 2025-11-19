@@ -616,8 +616,14 @@ export class YFinanceService {
       case '1y': startDate.setFullYear(endDate.getFullYear() - 1); break;
       case '2y': startDate.setFullYear(endDate.getFullYear() - 2); break;
       case '3y': startDate.setFullYear(endDate.getFullYear() - 3); break;
+      case '4y': startDate.setFullYear(endDate.getFullYear() - 4); break;
       case '5y': startDate.setFullYear(endDate.getFullYear() - 5); break;
+      case '6y': startDate.setFullYear(endDate.getFullYear() - 6); break;
+      case '7y': startDate.setFullYear(endDate.getFullYear() - 7); break;
+      case '8y': startDate.setFullYear(endDate.getFullYear() - 8); break;
+      case '9y': startDate.setFullYear(endDate.getFullYear() - 9); break;
       case '10y': startDate.setFullYear(endDate.getFullYear() - 10); break;
+      case 'max': startDate.setFullYear(endDate.getFullYear() - 50); break; // Max available data
       default: startDate.setFullYear(endDate.getFullYear() - 5);
     }
     

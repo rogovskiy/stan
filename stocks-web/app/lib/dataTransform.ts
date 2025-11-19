@@ -158,37 +158,14 @@ export const transformApiDataForChart = (
     }))
   });
   
-  // Thin out the data for performance while preserving quarterly data points
-  const displayData: TransformedDataPoint[] = [];
-  const maxDisplayPoints = 300; // Increased to show more daily detail
-  
-  if (chartData.length <= maxDisplayPoints) {
-    // If we have fewer points than the max, return all data
-    return chartData;
-  }
-  
-  // Calculate step to ensure we don't exceed maxDisplayPoints
-  const step = Math.ceil(chartData.length / maxDisplayPoints);
-  
-  chartData.forEach((point, index) => {
-    const shouldInclude = 
-      point.hasQuarterlyData || // Always include quarterly reporting dates
-      index % step === 0 || // Sample daily data
-      index === chartData.length - 1; // Always include last point
-    
-    if (shouldInclude) {
-      displayData.push(point);
-    }
-  });
-  
   console.log('Final display data:', {
-    totalPoints: displayData.length,
-    pointsWithFairValue: displayData.filter(p => p.fairValue !== null).length,
-    sampleFairValues: displayData.filter(p => p.fairValue !== null).slice(0, 5).map(p => ({
+    totalPoints: chartData.length,
+    pointsWithFairValue: chartData.filter(p => p.fairValue !== null).length,
+    sampleFairValues: chartData.filter(p => p.fairValue !== null).slice(0, 5).map(p => ({
       date: p.date,
       fairValue: p.fairValue
     }))
   });
   
-  return displayData;
+  return chartData;
 };

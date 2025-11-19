@@ -5,20 +5,6 @@ import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransf
 import { DailyPriceResponse, QuarterlyDataResponse } from './types/api';
 import StockAnalysisChart from './components/StockAnalysisChart';
 
-// Types for API data
-interface StockDataPoint {
-  date: string;
-  fyDate: string;
-  year: number;
-  estimated: boolean;
-  frequency: 'daily' | 'quarterly';
-  price?: number;
-  eps?: number;
-  fairValue?: number;
-  normalPE?: number;
-  dividendsPOR?: number;
-}
-
 interface Ticker {
   ticker: string;
   name: string;
@@ -31,7 +17,7 @@ export default function Home() {
   const [stockData, setStockData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState('2y');
+  const [period, setPeriod] = useState('max');
   const [allTickers, setAllTickers] = useState<Ticker[]>([]);
   const [tickersLoading, setTickersLoading] = useState(false);
 
@@ -54,69 +40,78 @@ export default function Home() {
     }
   };
 
-  // Fetch from separate endpoints
+  // Fetch stock data
   const fetchStockData = async (ticker: string, selectedPeriod: string = period) => {
+    console.log(`Page: fetchStockData called with ticker=${ticker}, selectedPeriod=${selectedPeriod}`);
     setLoading(true);
     setError(null);
+    
     try {
-      console.log(`Fetching data separately for ${ticker}...`);
-      
+      console.log(`Page: Making API calls for ${ticker} with period ${selectedPeriod}`);
       // Fetch both daily and quarterly data in parallel
       const [dailyResponse, quarterlyResponse] = await Promise.all([
         fetch(`/api/daily-prices?ticker=${ticker}&period=${selectedPeriod}&refresh=false`),
         fetch(`/api/quarterly-timeseries?ticker=${ticker}&period=${selectedPeriod}&maxAge=24`)
       ]);
-      
+
       if (!dailyResponse.ok) {
-        throw new Error('Failed to fetch daily price data');
+        const errorText = await dailyResponse.text();
+        console.error('Daily data fetch error:', errorText);
+        throw new Error(`Failed to fetch daily data: ${dailyResponse.status}`);
       }
-      
+
+      if (!quarterlyResponse.ok) {
+        const errorText = await quarterlyResponse.text();
+        console.error('Quarterly data fetch error:', errorText);
+        throw new Error(`Failed to fetch quarterly data: ${quarterlyResponse.status}`);
+      }
+
       let quarterlyData: QuarterlyDataResponse | null = null;
-      if (quarterlyResponse.ok) {
+      
+      try {
         quarterlyData = await quarterlyResponse.json();
-      } else {
-        console.warn('Quarterly data not available, continuing with daily data only');
+      } catch (err) {
+        console.error('Error parsing quarterly JSON:', err);
       }
       
       const dailyData: DailyPriceResponse = await dailyResponse.json();
-      
-      console.log('Separate fetch results:', {
-        dailyPoints: dailyData.data.length,
-        quarterlyPoints: quarterlyData?.data.length || 0
-      });
-      
-      // Transform using new separated function
+
+      if (!dailyData.data || dailyData.data.length === 0) {
+        throw new Error('No daily stock data available');
+      }
+
       const transformedData = transformApiDataForChart(
-        dailyData.data, 
-        quarterlyData?.data || []
+        dailyData.data,
+        quarterlyData?.data || undefined
       );
       setStockData(transformedData);
       
     } catch (err) {
-      console.error('Error fetching separated stock data:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
       setLoading(false);
     }
   };
 
-  // Load tickers and initial data on component mount
+  // Load tickers and initial data on mount
   useEffect(() => {
     fetchAllTickers();
   }, []);
 
   // Load data when ticker/period changes
   useEffect(() => {
+    console.log(`Fetching data for ticker: ${selectedTicker}, period: ${period}`);
     fetchStockData(selectedTicker, period);
   }, [selectedTicker, period]);
 
   // Handle ticker change
-  const handleTickerChange = (ticker: string) => {
-    setSelectedTicker(ticker);
+  const handleTickerChange = (newTicker: string) => {
+    setSelectedTicker(newTicker);
   };
 
   // Handle period change
   const handlePeriodChange = (newPeriod: string) => {
+    console.log(`Period change requested: ${period} → ${newPeriod}`);
     setPeriod(newPeriod);
   };
 
@@ -137,19 +132,8 @@ export default function Home() {
               <div className="text-lg font-bold text-blue-600 tracking-tight">StockAnalysis</div>
             </div>
             
-            {/* Period Selection */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-700">Period:</span>
-              <select
-                value={period}
-                onChange={(e) => handlePeriodChange(e.target.value)}
-                className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium bg-white"
-              >
-                <option value="1y">1 Year</option>
-                <option value="2y">2 Years</option>
-                <option value="5y">5 Years</option>
-              </select>
-            </div>
+            {/* Empty center space - period selector now in chart */}
+            <div></div>
 
             {/* User Actions */}
             <div className="flex items-center gap-3">
@@ -308,7 +292,11 @@ export default function Home() {
             {/* Main Chart Area - 3/4 width */}
             <div className="xl:col-span-3 space-y-8">
               {/* Stock Analysis Chart Component */}
-              <StockAnalysisChart stockData={stockData} />
+              <StockAnalysisChart 
+                stockData={stockData} 
+                onPeriodChange={handlePeriodChange}
+                currentPeriod={period}
+              />
             </div>
 
             {/* Right Sidebar - 1/4 width */}

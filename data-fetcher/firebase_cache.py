@@ -240,9 +240,32 @@ class FirebaseCache:
             if doc.exists:
                 data = doc.to_dict()
                 
-                # Financial data expires after 12 hours
-                cache_age = datetime.now() - datetime.fromisoformat(data['last_updated'])
-                max_age = timedelta(hours=12)
+                # Check if last_updated exists and is valid
+                if 'last_updated' not in data:
+                    print(f'Financial data missing timestamp for {ticker} {quarter_key} - treating as expired')
+                    return None
+                
+                # Parse timestamp - handle both string and datetime
+                last_updated = data['last_updated']
+                if isinstance(last_updated, str):
+                    try:
+                        last_updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                    except ValueError:
+                        # Fallback parsing
+                        last_updated_dt = datetime.strptime(last_updated, '%Y-%m-%dT%H:%M:%S.%f')
+                else:
+                    last_updated_dt = last_updated
+                
+                # Determine cache policy based on quarter age
+                quarter_end = datetime.strptime(f"{quarter_key[:4]}-12-31", '%Y-%m-%d')  # Approximate quarter end
+                days_since_quarter = (datetime.now() - quarter_end).days
+                
+                if days_since_quarter > 90:  # Historical quarter (>90 days old)
+                    max_age = timedelta(days=365)  # 1 year cache for historical data
+                else:  # Recent quarter
+                    max_age = timedelta(hours=12)  # 12 hours for recent data
+                
+                cache_age = datetime.now() - last_updated_dt
                 
                 if cache_age < max_age:
                     print(f'Financial cache hit for {ticker} {quarter_key}')
@@ -257,7 +280,24 @@ class FirebaseCache:
         except Exception as error:
             print(f'Error getting financial data for {ticker} {quarter_key}: {error}')
             return None
-    
+
+    def get_all_financial_data(self, ticker: str) -> List[Dict[str, Any]]:
+        """Get all available financial data for a ticker (no date restrictions)"""
+        financial_data = []
+        
+        # Check a wide range of years to find all available data
+        # Starting from 1990 to current year + 5 should cover everything
+        current_year = datetime.now().year
+        for year in range(1990, current_year + 6):
+            for quarter in range(1, 5):
+                quarter_key = f'{year}Q{quarter}'
+                quarter_data = self.get_quarterly_financial_data(ticker, quarter_key)
+                
+                if quarter_data:
+                    financial_data.append(quarter_data)
+        
+        return financial_data
+
     def get_financial_data_range(self, ticker: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
         """Get financial data for multiple quarters"""
         start_year = start_date.year

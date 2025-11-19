@@ -310,20 +310,54 @@ export class FirebaseCache {
         const yearData = consolidatedData.years[year.toString()];
         
         if (yearData) {
-          // Check cache age - annual price data expires after 24 hours for current year, longer for past years
+          // Handle different data formats (historical vs new)
+          const lastUpdated = yearData.lastUpdated || yearData.last_updated;
+          const storageRef = yearData.storageRef || yearData.storage_ref;
+          const downloadUrl = yearData.downloadUrl || yearData.download_url;
+          
+          // Ensure the reference has the required fields
+          if (!storageRef) {
+            console.log(`Annual price reference for ${ticker} ${year} missing storage reference`);
+            return null;
+          }
+          
+          if (!downloadUrl) {
+            console.log(`Annual price reference for ${ticker} ${year} missing download URL`);
+            return null;
+          }
+          
+          // Create normalized reference object
+          const normalizedReference: AnnualPriceReference = {
+            ...yearData,
+            storageRef: storageRef,
+            downloadUrl: downloadUrl,
+            lastUpdated: lastUpdated
+          } as AnnualPriceReference;
+          
+          // Check cache age - annual price data expires after 24 hours for current year, much longer for past years
           const currentYear = new Date().getFullYear();
           const maxAge = year === currentYear ? 
             24 * 60 * 60 * 1000 : // 24 hours for current year
-            30 * 24 * 60 * 60 * 1000; // 30 days for past years
+            365 * 24 * 60 * 60 * 1000; // 1 year for past years (historical data doesn't change)
           
-          const cacheAge = Date.now() - new Date(yearData.lastUpdated).getTime();
+          // Handle missing or invalid lastUpdated timestamp
+          if (!lastUpdated) {
+            console.log(`Annual price reference found for ${ticker} ${year} but missing lastUpdated - treating as valid for historical year`);
+            // For historical years without timestamp, treat as valid if it's not the current year
+            if (year < currentYear) {
+              return normalizedReference;
+            }
+            return null;
+          }
+          
+          const cacheAge = Date.now() - new Date(lastUpdated).getTime();
           
           if (cacheAge < maxAge) {
             console.log(`Annual price reference cache hit for ${ticker} ${year}`);
-            return yearData as AnnualPriceReference;
+            return normalizedReference;
           }
           
-          console.log(`Annual price reference cache expired for ${ticker} ${year}`);
+          console.log(`Annual price reference cache expired for ${ticker} ${year} (age: ${Math.round(cacheAge / (24 * 60 * 60 * 1000))} days)`);
         }
       }
       
@@ -354,12 +388,16 @@ export class FirebaseCache {
 
   // Get price data for a date range (across multiple years)
   async getPriceDataRange(ticker: string, startDate: Date, endDate: Date): Promise<Record<string, any>> {
+    console.log(`Cache: getPriceDataRange called for ${ticker} from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
     const years = this.getYearsInRange(startDate, endDate);
+    console.log(`Cache: Years to fetch: ${years.join(', ')}`);
     const priceData: Record<string, any> = {};
     
     for (const year of years) {
+      console.log(`Cache: Fetching data for year ${year}`);
       const reference = await this.getAnnualPriceReference(ticker, year);
       if (reference) {
+        console.log(`Cache: Found reference for ${year}, downloading data`);
         const annualData = await this.downloadAnnualPriceData(reference);
         
         // Filter dates within the requested range
@@ -369,9 +407,13 @@ export class FirebaseCache {
             priceData[dateStr] = dayData;
           }
         });
+        console.log(`Cache: Added ${Object.keys(annualData.data).length} data points for ${year}`);
+      } else {
+        console.log(`Cache: No reference found for ${ticker} year ${year}`);
       }
     }
     
+    console.log(`Cache: Total data points retrieved: ${Object.keys(priceData).length}`);
     return priceData;
   }
 

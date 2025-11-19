@@ -52,20 +52,15 @@ class QuarterlyTimeSeriesGenerator:
     def __init__(self):
         self.cache = FirebaseCache()
     
-    def generate_quarterly_timeseries(self, ticker: str, years_back: int = 10, 
-                                    save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Any]:
+    def generate_quarterly_timeseries(self, ticker: str, save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Any]:
         """Generate quarterly time series for EPS, revenue, and dividends"""
         
         print(f'\n📊 Generating quarterly time series for {ticker.upper()}')
-        print(f'Extracting data from last {years_back} years...')
+        print('Extracting all available quarterly data...')
         
         try:
-            # Calculate date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=years_back * 365)
-            
-            # Get all quarterly financial data for the range
-            quarterly_data = self.cache.get_financial_data_range(ticker, start_date, end_date)
+            # Get all available quarterly financial data (no date restrictions)
+            quarterly_data = self.cache.get_all_financial_data(ticker)
             
             if not quarterly_data:
                 print(f'❌ No quarterly data found for {ticker}')
@@ -81,8 +76,8 @@ class QuarterlyTimeSeriesGenerator:
                 'ticker': ticker.upper(),
                 'quarters_processed': len(quarterly_data),
                 'date_range': {
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
+                    'start': 'all_available',
+                    'end': datetime.now().strftime('%Y-%m-%d')
                 },
                 'generated_at': datetime.now().isoformat(),
                 'data_sources': list(set([q.get('data_source', 'unknown') for q in quarterly_data]))
@@ -307,18 +302,16 @@ class QuarterlyTimeSeriesGenerator:
         cache_key = f'{ticker.upper()}_quarterly_timeseries'
         return self.cache.get_custom_data(cache_key, max_age_hours)
     
-    def generate_for_multiple_tickers(self, tickers: List[str], years_back: int = 10,
-                                    save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Dict[str, Any]]:
+    def generate_for_multiple_tickers(self, tickers: List[str], save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Dict[str, Any]]:
         """Generate quarterly time series for multiple tickers"""
         results = {}
         
         print(f'\n🔄 Generating quarterly time series for {len(tickers)} tickers...')
         
         for i, ticker in enumerate(tickers, 1):
-            print(f'\nProcessing {i}/{len(tickers)}: {ticker}')
+            print(f'\\nProcessing {i}/{len(tickers)}: {ticker}')
             timeseries = self.generate_quarterly_timeseries(
-                ticker=ticker,
-                years_back=years_back,
+                ticker,
                 save_to_cache=save_to_cache,
                 verbose=verbose
             )
@@ -338,15 +331,13 @@ def main():
         epilog='''
 Examples:
   python generate_quarterly_timeseries.py AAPL
-  python generate_quarterly_timeseries.py AAPL --years 5 --verbose
-  python generate_quarterly_timeseries.py AAPL MSFT GOOGL --years 10
+  python generate_quarterly_timeseries.py AAPL --verbose
+  python generate_quarterly_timeseries.py AAPL MSFT GOOGL
   python generate_quarterly_timeseries.py AAPL --no-cache --verbose
         '''
     )
     
     parser.add_argument('tickers', nargs='+', help='One or more stock ticker symbols')
-    parser.add_argument('--years', type=int, default=10,
-                       help='Number of years back to process (default: 10)')
     parser.add_argument('--no-cache', action='store_true',
                        help='Do not save results to cache')
     parser.add_argument('--verbose', action='store_true',
@@ -364,7 +355,6 @@ Examples:
             ticker = args.tickers[0].upper()
             timeseries = generator.generate_quarterly_timeseries(
                 ticker=ticker,
-                years_back=args.years,
                 save_to_cache=not args.no_cache,
                 verbose=args.verbose
             )
@@ -372,8 +362,7 @@ Examples:
         else:
             # Multiple tickers
             results = generator.generate_for_multiple_tickers(
-                tickers=args.tickers,
-                years_back=args.years,
+                args.tickers,
                 save_to_cache=not args.no_cache,
                 verbose=args.verbose
             )

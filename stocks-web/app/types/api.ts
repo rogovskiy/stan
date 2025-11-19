@@ -50,3 +50,67 @@ export interface HistoricalChartResponse {
     frequencies: string[];
   };
 }
+
+// New interfaces for separated data
+export interface DailyPriceResponse {
+  symbol: string;
+  companyName: string;
+  currency: string;
+  data: DailyDataPoint[];
+  metadata: {
+    lastUpdated: string;
+    dataRange: {
+      start: string;
+      end: string;
+    };
+  };
+}
+
+export interface QuarterlyDataResponse {
+  symbol: string;
+  data: QuarterlyDataPoint[];
+  metadata: {
+    lastUpdated: string;
+    dataRange: {
+      start: string;
+      end: string;
+    };
+  };
+}
+
+export interface DailyDataPoint {
+  date: string;
+  fyDate: string;
+  year: number;
+  price: number;
+  estimated: boolean;
+}
+
+export interface QuarterlyDataPoint {
+  date: string;
+  fyDate: string;
+  year: number;
+  quarter: string;
+  eps: number;
+  normalPE?: number;
+  fairValue?: number;
+  dividendsPOR?: number;
+  estimated: boolean;
+}
+
+// Legacy interface for backwards compatibility
+export interface APIResponse {
+  symbol: string;
+  companyName: string;
+  currency: string;
+  data: DataPoint[];
+  chartConfig: ChartConfig;
+  metadata: {
+    lastUpdated: string;
+    dataRange: {
+      start: string;
+      end: string;
+    };
+    frequencies: string[];
+  };
+}

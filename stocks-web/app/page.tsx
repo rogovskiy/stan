@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransform';
+import { DailyPriceResponse, QuarterlyDataResponse } from './types/api';
 import StockAnalysisChart from './components/StockAnalysisChart';
-import { Ticker } from './lib/firebaseService';
 
 // Types for API data
 interface StockDataPoint {
@@ -19,19 +19,16 @@ interface StockDataPoint {
   dividendsPOR?: number;
 }
 
-interface APIResponse {
-  symbol: string;
-  companyName: string;
-  currency: string;
-  data: StockDataPoint[];
-  chartConfig: any;
-  metadata: any;
+interface Ticker {
+  ticker: string;
+  name: string;
+  sector: string;
+  exchange: string;
 }
 
 export default function Home() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [stockData, setStockData] = useState<any[]>([]);
-  const [apiData, setApiData] = useState<APIResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('2y');
@@ -57,25 +54,46 @@ export default function Home() {
     }
   };
 
-  // Fetch data from API
+  // Fetch from separate endpoints
   const fetchStockData = async (ticker: string, selectedPeriod: string = period) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/stock?ticker=${ticker}&period=${selectedPeriod}&refresh=false`);
+      console.log(`Fetching data separately for ${ticker}...`);
       
-      if (!response.ok) {
-        throw new Error('Failed to fetch stock data');
+      // Fetch both daily and quarterly data in parallel
+      const [dailyResponse, quarterlyResponse] = await Promise.all([
+        fetch(`/api/daily-prices?ticker=${ticker}&period=${selectedPeriod}&refresh=false`),
+        fetch(`/api/quarterly-timeseries?ticker=${ticker}&period=${selectedPeriod}&maxAge=24`)
+      ]);
+      
+      if (!dailyResponse.ok) {
+        throw new Error('Failed to fetch daily price data');
       }
       
-      const data: APIResponse = await response.json();
-      setApiData(data);
+      let quarterlyData: QuarterlyDataResponse | null = null;
+      if (quarterlyResponse.ok) {
+        quarterlyData = await quarterlyResponse.json();
+      } else {
+        console.warn('Quarterly data not available, continuing with daily data only');
+      }
       
-      // Transform API data for chart display
-      const transformedData = transformApiDataForChart(data);
+      const dailyData: DailyPriceResponse = await dailyResponse.json();
+      
+      console.log('Separate fetch results:', {
+        dailyPoints: dailyData.data.length,
+        quarterlyPoints: quarterlyData?.data.length || 0
+      });
+      
+      // Transform using new separated function
+      const transformedData = transformApiDataForChart(
+        dailyData.data, 
+        quarterlyData?.data || []
+      );
       setStockData(transformedData);
+      
     } catch (err) {
-      console.error('Error fetching stock data:', err);
+      console.error('Error fetching separated stock data:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
       setLoading(false);
@@ -160,7 +178,7 @@ export default function Home() {
               <div>
                 <div className="flex items-center gap-3 mb-1">
                   <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                    {apiData?.companyName || 'Loading...'}
+                    {selectedTicker || 'Loading...'}
                   </h1>
                   <select 
                     value={selectedTicker}
@@ -171,12 +189,12 @@ export default function Home() {
                       <option>Loading...</option>
                     ) : (
                       allTickers.map(ticker => (
-                        <option key={ticker.symbol} value={ticker.symbol}>{ticker.symbol}</option>
+                        <option key={ticker.ticker} value={ticker.ticker}>{ticker.ticker}</option>
                       ))
                     )}
                   </select>
                 </div>
-                <p className="text-gray-500 text-sm font-medium">NASDAQ: {selectedTicker} • {apiData?.currency || 'USD'}</p>
+                <p className="text-gray-500 text-sm font-medium">NASDAQ: {selectedTicker}</p>
               </div>
             </div>
 
@@ -226,7 +244,7 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="text-xs text-gray-500 font-medium">
-                  Last updated: {apiData?.metadata?.lastUpdated ? new Date(apiData.metadata.lastUpdated).toLocaleString() : 'N/A'}
+                  Data from separate endpoints
                 </div>
               </div>
             )}

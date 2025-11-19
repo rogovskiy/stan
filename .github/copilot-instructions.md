@@ -8,6 +8,7 @@
 - Do not reconfigure the project or install new frameworks without explicit confirmation from the user.
 - Assume the project is configured correctly unless there is clear evidence to the contrary.
 - Analyze the error before suggesting fixes, and avoid making assumptions. 
+- For complex challenges, break down the solution into smaller, manageable steps. The steps must be individually verifiable.
 
 ## Tooling
 ### Python

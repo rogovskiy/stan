@@ -1,5 +1,19 @@
-import { transformApiDataForChart, TransformedDataPoint } from '../lib/dataTransform';
-import { APIResponse, StockDataPoint } from '../types/api';
+import { transformApiDataForChart, transformLegacyApiDataForChart, TransformedDataPoint } from '../lib/dataTransform';
+import { APIResponse, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
+
+// Legacy type for backward compatibility in tests
+interface LegacyDataPoint {
+  date: string;
+  fyDate: string;
+  year: number;
+  estimated: boolean;
+  frequency: 'daily' | 'quarterly';
+  price?: number;
+  eps?: number;
+  normalPE?: number;
+  fairValue?: number;
+  dividendsPOR?: number;
+}
 
 // Mock Math.random to make tests deterministic
 const mockMath = Object.create(global.Math);
@@ -10,12 +24,68 @@ global.Math = mockMath;
 const mockConsoleLog = jest.fn();
 global.console.log = mockConsoleLog;
 
-describe('transformApiDataForChart', () => {
+describe('transformApiDataForChart (New Separated Function)', () => {
   beforeEach(() => {
     mockConsoleLog.mockClear();
   });
 
-  const createMockDailyData = (dates: string[], prices: number[]): StockDataPoint[] => {
+  describe('Basic functionality', () => {
+    it('should transform daily data without quarterly data', () => {
+      const dailyData = createMockDailyData(['2023-01-01', '2023-01-02'], [100, 105]);
+      const result = transformApiDataForChart(dailyData);
+      
+      expect(result).toHaveLength(2);
+      expect(result[0].stockPrice).toBe(100);
+      expect(result[0].hasQuarterlyData).toBe(false);
+      expect(result[1].stockPrice).toBe(105);
+      expect(result[1].hasQuarterlyData).toBe(false);
+    });
+
+    it('should merge daily and quarterly data on matching dates', () => {
+      const dailyData = createMockDailyData(['2023-01-01', '2023-01-02', '2023-01-03'], [100, 105, 110]);
+      const quarterlyData = createMockQuarterlyData(['2023-01-02'], [{ eps: 2.5, fairValue: 150 }]);
+      
+      const result = transformApiDataForChart(dailyData, quarterlyData);
+      
+      expect(result).toHaveLength(3);
+      expect(result[1].hasQuarterlyData).toBe(true);
+      expect(result[1].earnings).toBe(2.5);
+      expect(result[1].fairValue).toBe(150);
+      expect(result[0].hasQuarterlyData).toBe(false);
+      expect(result[2].hasQuarterlyData).toBe(false);
+    });
+  });
+});
+
+describe('transformLegacyApiDataForChart (Backward Compatibility)', () => {
+  beforeEach(() => {
+    mockConsoleLog.mockClear();
+  });
+
+  const createMockDailyData = (dates: string[], prices: number[]): DailyDataPoint[] => {
+    return dates.map((date, index) => ({
+      date,
+      fyDate: date.slice(5, 7) + '/' + date.slice(2, 4),
+      year: parseInt(date.slice(0, 4)),
+      estimated: false,
+      price: prices[index]
+    }));
+  };
+
+  const createMockQuarterlyData = (dates: string[], data: Partial<QuarterlyDataPoint>[]): QuarterlyDataPoint[] => {
+    return dates.map((date, index) => ({
+      date,
+      fyDate: date.slice(5, 7) + '/' + date.slice(2, 4),
+      year: parseInt(date.slice(0, 4)),
+      quarter: 'Q1',
+      estimated: false,
+      eps: 0,
+      ...data[index]
+    }));
+  };
+
+  // Legacy test helpers for backward compatibility
+  const createMockLegacyDailyData = (dates: string[], prices: number[]) => {
     return dates.map((date, index) => ({
       date,
       fyDate: date.slice(5, 7) + '/' + date.slice(2, 4),
@@ -26,7 +96,7 @@ describe('transformApiDataForChart', () => {
     }));
   };
 
-  const createMockQuarterlyData = (dates: string[], data: Partial<StockDataPoint>[]): StockDataPoint[] => {
+  const createMockLegacyQuarterlyData = (dates: string[], data: any[]) => {
     return dates.map((date, index) => ({
       date,
       fyDate: date.slice(5, 7) + '/' + date.slice(2, 4),
@@ -37,21 +107,21 @@ describe('transformApiDataForChart', () => {
     }));
   };
 
-  const createMockAPIResponse = (dailyData: StockDataPoint[], quarterlyData: StockDataPoint[] = []): APIResponse => ({
+  const createMockAPIResponse = (dailyData: LegacyDataPoint[], quarterlyData: LegacyDataPoint[] = []): APIResponse => ({
     symbol: 'AAPL',
     companyName: 'Apple Inc.',
     currency: 'USD',
     data: [...dailyData, ...quarterlyData],
-    chartConfig: {},
-    metadata: {}
+    chartConfig: {} as any,
+    metadata: {} as any
   });
 
   describe('Basic functionality', () => {
     it('should transform daily data without quarterly data', () => {
-      const dailyData = createMockDailyData(['2023-01-01', '2023-01-02'], [150, 151]);
+      const dailyData = createMockLegacyDailyData(['2023-01-01', '2023-01-02'], [150, 151]);
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result).toHaveLength(2);
       expect(result[0]).toMatchObject({
@@ -80,7 +150,7 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result).toHaveLength(2);
       
@@ -109,7 +179,7 @@ describe('transformApiDataForChart', () => {
     });
 
     it('should handle missing price data gracefully', () => {
-      const dailyData: StockDataPoint[] = [{
+      const dailyData: LegacyDataPoint[] = [{
         date: '2023-01-01',
         fyDate: '01/23',
         year: 2023,
@@ -119,7 +189,7 @@ describe('transformApiDataForChart', () => {
       }];
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
@@ -139,7 +209,7 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       // Should find closest match (2023-01-01 is closer to 2023-01-02 than 2023-01-03)
       expect(result[0]).toMatchObject({
@@ -162,7 +232,7 @@ describe('transformApiDataForChart', () => {
       ]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0]).toMatchObject({
         hasQuarterlyData: true,
@@ -186,7 +256,7 @@ describe('transformApiDataForChart', () => {
       const dailyData = createMockDailyData(['2023-01-03', '2023-01-01', '2023-01-02'], [152, 150, 151]);
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].fullDate).toBe('2023-01-01');
       expect(result[1].fullDate).toBe('2023-01-02');
@@ -210,7 +280,7 @@ describe('transformApiDataForChart', () => {
       ]);
       
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       // Should be less than original but include quarterly points
       expect(result.length).toBeLessThan(500);
@@ -230,7 +300,7 @@ describe('transformApiDataForChart', () => {
       const dailyData = createMockDailyData(['2023-01-01'], [100]);
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].marketCap).toBe(100 * 16.0);
     });
@@ -243,7 +313,7 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].dividend).toBeGreaterThan(0);
       // Should be at least 0.5 (minimum dividend)
@@ -257,7 +327,7 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].revenue).toBe(2.5 * 4 * 16.0); // eps * 4 quarters * 16.0 multiplier
     });
@@ -272,7 +342,7 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse(dailyData, quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0]).toMatchObject({
         earnings: 0,
@@ -286,7 +356,7 @@ describe('transformApiDataForChart', () => {
 
   describe('Date formatting', () => {
     it('should format dates correctly', () => {
-      const dailyData: StockDataPoint[] = [{
+      const dailyData: LegacyDataPoint[] = [{
         date: '2023-01-15',
         fyDate: undefined as any,
         year: 2023,
@@ -296,14 +366,14 @@ describe('transformApiDataForChart', () => {
       }];
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       // Should use formatted date when fyDate is not available
       expect(result[0].date).toBe('01/23'); // MM/YY format
     });
 
     it('should use fyDate when available', () => {
-      const dailyData: StockDataPoint[] = [{
+      const dailyData: LegacyDataPoint[] = [{
         date: '2023-01-15',
         fyDate: 'Q1 2023',
         year: 2023,
@@ -313,7 +383,7 @@ describe('transformApiDataForChart', () => {
       }];
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].date).toBe('Q1 2023');
     });
@@ -323,7 +393,7 @@ describe('transformApiDataForChart', () => {
     it('should handle empty data', () => {
       const apiResponse = createMockAPIResponse([]);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result).toHaveLength(0);
     });
@@ -335,13 +405,13 @@ describe('transformApiDataForChart', () => {
       }]);
       const apiResponse = createMockAPIResponse([], quarterlyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result).toHaveLength(0);
     });
 
     it('should preserve estimated flag', () => {
-      const dailyData: StockDataPoint[] = [{
+      const dailyData: LegacyDataPoint[] = [{
         date: '2023-01-01',
         fyDate: '01/23',
         year: 2023,
@@ -351,7 +421,7 @@ describe('transformApiDataForChart', () => {
       }];
       const apiResponse = createMockAPIResponse(dailyData);
 
-      const result = transformApiDataForChart(apiResponse);
+      const result = transformLegacyApiDataForChart(apiResponse);
 
       expect(result[0].estimated).toBe(true);
     });

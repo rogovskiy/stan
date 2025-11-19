@@ -1,4 +1,4 @@
-import { APIResponse } from '../types/api';
+import { APIResponse, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 
 export interface TransformedDataPoint {
   date: string;
@@ -19,13 +19,12 @@ export interface TransformedDataPoint {
   dividend: number | null;
 }
 
-// Transform API data to match chart format
-export const transformApiDataForChart = (data: APIResponse): TransformedDataPoint[] => {
-  const dailyData = data.data.filter(d => d.frequency === 'daily');
-  const quarterlyData = data.data.filter(d => d.frequency === 'quarterly');
-  
+// New function signature for separated data
+export const transformApiDataForChart = (
+  dailyData: DailyDataPoint[], 
+  quarterlyData: QuarterlyDataPoint[] = []
+): TransformedDataPoint[] => {
   console.log('Data transformation debug:', {
-    totalData: data.data.length,
     dailyDataPoints: dailyData.length,
     quarterlyDataPoints: quarterlyData.length,
     sampleQuarterly: quarterlyData.slice(0, 3).map(q => ({
@@ -73,7 +72,7 @@ export const transformApiDataForChart = (data: APIResponse): TransformedDataPoin
       revenue: null,
       dividend: null
     };
-    
+
     // Only add quarterly data if this date has actual quarterly data
     if (quarterlyDataForThisDate) {
       quarterlyPointsFound++;
@@ -106,7 +105,50 @@ export const transformApiDataForChart = (data: APIResponse): TransformedDataPoin
     chartData.push(basePoint);
   });
   
-  console.log('Quarterly data matching results:', {
+  // Find unmatched quarterly data and map to nearest daily dates
+  const unmatchedQuarterly = quarterlyData.filter(q => !quarterlyMap.has(q.date) || !sortedDailyData.find(d => d.date === q.date));
+  
+  unmatchedQuarterly.forEach(q => {
+    const qDate = new Date(q.date);
+    let closestIndex = 0;
+    let minDiff = Infinity;
+    
+    chartData.forEach((daily, index) => {
+      const dailyDate = new Date(daily.fullDate);
+      const diff = Math.abs(dailyDate.getTime() - qDate.getTime());
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIndex = index;
+      }
+    });
+    
+    // Apply quarterly data to the closest daily point that doesn't already have quarterly data
+    if (closestIndex < chartData.length && !chartData[closestIndex].hasQuarterlyData) {
+      const eps = q.eps || 0;
+      const annualDividendYield = (q.dividendsPOR || 0) / 100;
+      const quarterlyDividendAmount = (chartData[closestIndex].stockPrice || 0) * annualDividendYield / 4;
+      const payoutRatio = 0.3 + (Math.random() * 0.4);
+      const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
+      
+      Object.assign(chartData[closestIndex], {
+        fairValue: q.fairValue || null,
+        earnings: eps,
+        normalPE: q.normalPE || null,
+        dividendsPOR: q.dividendsPOR || null,
+        hasQuarterlyData: true,
+        peRatio: q.normalPE || null,
+        revenue: eps ? (eps * 4 * 16.0) : null,
+        dividend: Math.max(epsBasedDividend, 0.5)
+      });
+      
+      quarterlyPointsFound++;
+      console.log('Applied quarterly data to closest daily point:', {
+        quarterlyDate: q.date,
+        closestDailyDate: chartData[closestIndex].fullDate,
+        daysDifference: Math.abs(qDate.getTime() - new Date(chartData[closestIndex].fullDate).getTime()) / (1000 * 60 * 60 * 24)
+      });
+    }
+  });  console.log('Quarterly data matching results:', {
     quarterlyPointsFound,
     totalDailyPoints: chartData.length,
     sampleChartData: chartData.filter(p => p.hasQuarterlyData).slice(0, 3).map(p => ({
@@ -115,55 +157,6 @@ export const transformApiDataForChart = (data: APIResponse): TransformedDataPoin
       hasQuarterlyData: p.hasQuarterlyData
     }))
   });
-  
-  // If no quarterly data matches, let's try a different approach - 
-  // spread quarterly data across nearby dates
-  if (quarterlyPointsFound === 0 && quarterlyData.length > 0) {
-    console.log('No exact matches found, using fallback strategy...');
-    
-    // Find the closest daily data point for each quarterly point
-    quarterlyData.forEach(q => {
-      const qDate = new Date(q.date);
-      let closestIndex = 0;
-      let minDiff = Infinity;
-      
-      chartData.forEach((daily, index) => {
-        const dailyDate = new Date(daily.fullDate);
-        const diff = Math.abs(dailyDate.getTime() - qDate.getTime());
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestIndex = index;
-        }
-      });
-      
-      // Apply quarterly data to the closest daily point
-      if (closestIndex < chartData.length) {
-        const eps = q.eps || 0;
-        const annualDividendYield = (q.dividendsPOR || 0) / 100;
-        const quarterlyDividendAmount = (chartData[closestIndex].stockPrice || 0) * annualDividendYield / 4;
-        const payoutRatio = 0.3 + (Math.random() * 0.4);
-        const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
-        
-        Object.assign(chartData[closestIndex], {
-          fairValue: q.fairValue || null,
-          earnings: eps,
-          normalPE: q.normalPE || null,
-          dividendsPOR: q.dividendsPOR || null,
-          hasQuarterlyData: true,
-          peRatio: q.normalPE || null,
-          revenue: eps ? (eps * 4 * 16.0) : null,
-          dividend: Math.max(epsBasedDividend, 0.5)
-        });
-        
-        quarterlyPointsFound++;
-        console.log('Applied quarterly data to closest daily point:', {
-          quarterlyDate: q.date,
-          closestDailyDate: chartData[closestIndex].fullDate,
-          fairValue: q.fairValue
-        });
-      }
-    });
-  }
   
   // Thin out the data for performance while preserving quarterly data points
   const displayData: TransformedDataPoint[] = [];

@@ -240,41 +240,11 @@ class FirebaseCache:
             if doc.exists:
                 data = doc.to_dict()
                 
-                # Check if last_updated exists and is valid
-                if 'last_updated' not in data:
-                    print(f'Financial data missing timestamp for {ticker} {quarter_key} - treating as expired')
-                    return None
-                
-                # Parse timestamp - handle both string and datetime
-                last_updated = data['last_updated']
-                if isinstance(last_updated, str):
-                    try:
-                        last_updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                    except ValueError:
-                        # Fallback parsing
-                        last_updated_dt = datetime.strptime(last_updated, '%Y-%m-%dT%H:%M:%S.%f')
-                else:
-                    last_updated_dt = last_updated
-                
-                # Determine cache policy based on quarter age
-                quarter_end = datetime.strptime(f"{quarter_key[:4]}-12-31", '%Y-%m-%d')  # Approximate quarter end
-                days_since_quarter = (datetime.now() - quarter_end).days
-                
-                if days_since_quarter > 90:  # Historical quarter (>90 days old)
-                    max_age = timedelta(days=365)  # 1 year cache for historical data
-                else:  # Recent quarter
-                    max_age = timedelta(hours=12)  # 12 hours for recent data
-                
-                cache_age = datetime.now() - last_updated_dt
-                
-                if cache_age < max_age:
-                    print(f'Financial cache hit for {ticker} {quarter_key}')
-                    # Remove last_updated from returned data
-                    financial_data = {k: v for k, v in data.items() if k != 'last_updated'}
-                    return financial_data
-                
-                print(f'Financial cache expired for {ticker} {quarter_key}')
-                return None
+                # Return the data if it exists (no expiration logic)
+                print(f'Retrieved financial data for {ticker} {quarter_key}')
+                # Remove last_updated from returned data if it exists
+                financial_data = {k: v for k, v in data.items() if k != 'last_updated'}
+                return financial_data
             
             return None
         except Exception as error:
@@ -432,46 +402,42 @@ class FirebaseCache:
             'missing_quarters': missing_quarters
         }
     
-    def cache_custom_data(self, key: str, data: Dict[str, Any]) -> None:
-        """Cache custom data with a specific key"""
+
+    def cache_quarterly_timeseries(self, ticker: str, data: Dict[str, Any]) -> None:
+        """Cache quarterly time series data in ticker-specific collection"""
         try:
-            doc_ref = self.db.collection('custom_data').document(key)
+            doc_ref = self.db.collection('tickers').document(ticker.upper()).collection('timeseries').document('quarterly')
             data_with_timestamp = {
                 **data,
                 'last_updated': datetime.now().isoformat()
             }
             doc_ref.set(data_with_timestamp)
-            print(f'Cached custom data for key: {key}')
+            print(f'Cached quarterly timeseries for {ticker.upper()} in tickers/{ticker.upper()}/timeseries/quarterly')
         except Exception as error:
-            print(f'Error caching custom data for {key}: {error}')
+            print(f'Error caching quarterly timeseries for {ticker}: {error}')
             raise error
-    
-    def get_custom_data(self, key: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
-        """Get custom data by key"""
+
+    def get_quarterly_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+        """Get quarterly time series data from ticker-specific collection"""
         try:
-            doc_ref = self.db.collection('custom_data').document(key)
+            doc_ref = self.db.collection('tickers').document(ticker.upper()).collection('timeseries').document('quarterly')
             doc = doc_ref.get()
             
             if doc.exists:
                 data = doc.to_dict()
                 
-                # Check if data is still fresh
-                cache_age = datetime.now() - datetime.fromisoformat(data['last_updated'])
-                max_age = timedelta(hours=max_age_hours)
-                
-                if cache_age < max_age:
-                    print(f'Custom data cache hit for {key}')
+                # Return the data if it exists (no expiration logic)
+                if data:
+                    print(f'Retrieved quarterly timeseries for {ticker.upper()}')
                     # Remove last_updated from returned data
-                    custom_data = {k: v for k, v in data.items() if k != 'last_updated'}
-                    return custom_data
+                    timeseries_data = {k: v for k, v in data.items() if k != 'last_updated'}
+                    return timeseries_data
                 
-                print(f'Custom data cache expired for {key}')
-                return None
-            
             return None
         except Exception as error:
-            print(f'Error getting custom data for {key}: {error}')
+            print(f'Error getting quarterly timeseries for {ticker}: {error}')
             return None
+    
     
     def _get_years_in_range(self, start_date: datetime, end_date: datetime) -> List[int]:
         """Get years in date range"""

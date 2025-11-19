@@ -11,34 +11,29 @@ export interface Ticker {
   lastUpdated?: Date;
 }
 
+
 /**
- * Get custom cached data by key with age validation
+ * Get quarterly time series data from ticker-specific collection
  */
-export async function getCustomData(key: string, maxAgeHours: number = 24): Promise<any | null> {
+export async function getQuarterlyTimeseries(ticker: string, maxAgeHours: number = 24): Promise<any | null> {
   try {
-    const customDataRef = doc(db, 'custom_data', key);
-    const customDataSnap = await getDoc(customDataRef);
+    const timeseriesRef = doc(db, 'tickers', ticker.toUpperCase(), 'timeseries', 'quarterly');
+    const timeseriesSnap = await getDoc(timeseriesRef);
     
-    if (customDataSnap.exists()) {
-      const data = customDataSnap.data();
+    if (timeseriesSnap.exists()) {
+      const data = timeseriesSnap.data();
       
-      // Check if data is still fresh
-      if (data.last_updated) {
-        const lastUpdated = new Date(data.last_updated);
-        const now = new Date();
-        const ageHours = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
-        
-        if (ageHours < maxAgeHours) {
-          // Remove last_updated from returned data
-          const { last_updated, ...customData } = data;
-          return customData;
-        }
+      // Return the data if it exists (no expiration logic)
+      if (data) {
+        // Remove last_updated from returned data
+        const { last_updated, ...timeseriesData } = data;
+        return timeseriesData;
       }
     }
     
     return null;
   } catch (error) {
-    console.error(`Error getting custom data for ${key}:`, error);
+    console.error(`Error getting quarterly timeseries for ${ticker}:`, error);
     return null;
   }
 }
@@ -149,5 +144,5 @@ export const firebaseService = {
   getAllTickers,
   getTickerMetadata,
   hasTickerData,
-  getCustomData
+  getQuarterlyTimeseries
 };

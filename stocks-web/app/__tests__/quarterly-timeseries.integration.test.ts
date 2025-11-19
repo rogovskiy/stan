@@ -1,16 +1,15 @@
 import { firebaseService } from '../lib/firebaseService';
 
 describe('Quarterly Time Series Integration Tests', () => {
-  test('getCustomData method exists and can retrieve AAPL quarterly timeseries', async () => {
+  test('getQuarterlyTimeseries method exists and can retrieve AAPL quarterly timeseries', async () => {
     // Test that the method exists
-    expect(firebaseService.getCustomData).toBeDefined();
-    expect(typeof firebaseService.getCustomData).toBe('function');
+    expect(firebaseService.getQuarterlyTimeseries).toBeDefined();
+    expect(typeof firebaseService.getQuarterlyTimeseries).toBe('function');
     
-    // Test retrieving the AAPL quarterly timeseries data we just generated
-    const cacheKey = 'AAPL_quarterly_timeseries';
-    const result = await firebaseService.getCustomData(cacheKey, 24);
+    // Test retrieving the AAPL quarterly timeseries data from ticker-specific location
+    const result = await firebaseService.getQuarterlyTimeseries('AAPL', 24);
     
-    console.log('getCustomData result:', result);
+    console.log('getQuarterlyTimeseries result:', result);
     
     if (result) {
       // If data exists, test the structure

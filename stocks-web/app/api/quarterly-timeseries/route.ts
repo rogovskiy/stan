@@ -19,8 +19,7 @@ export async function GET(request: NextRequest) {
     console.log(`Quarterly API Request: ${ticker}, period: ${period}, maxAge: ${maxAgeHours}`);
 
     // Try to get cached quarterly time series data
-    const cacheKey = `${ticker.toUpperCase()}_quarterly_timeseries`;
-    const timeseriesData = await firebaseService.getCustomData(cacheKey, maxAgeHours);
+    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, maxAgeHours);
 
     if (!timeseriesData) {
       return NextResponse.json(

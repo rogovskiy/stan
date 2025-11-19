@@ -85,9 +85,8 @@ class QuarterlyTimeSeriesGenerator:
             
             # Save to cache if requested
             if save_to_cache:
-                cache_key = f'{ticker.upper()}_quarterly_timeseries'
-                self.cache.cache_custom_data(cache_key, timeseries)
-                print(f'✅ Cached quarterly time series as: {cache_key}')
+                self.cache.cache_quarterly_timeseries(ticker, timeseries)
+                print(f'✅ Cached quarterly time series in tickers/{ticker.upper()}/timeseries/quarterly')
             
             if verbose:
                 self._print_summary(timeseries)
@@ -297,10 +296,9 @@ class QuarterlyTimeSeriesGenerator:
         if timeseries["dividends"]["latest_value"]:
             print(f'       Latest: ${timeseries["dividends"]["latest_value"]:.2f} ({timeseries["dividends"]["latest_quarter"]})')
     
-    def get_cached_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+    def get_cached_quarterly_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
         """Get cached quarterly time series"""
-        cache_key = f'{ticker.upper()}_quarterly_timeseries'
-        return self.cache.get_custom_data(cache_key, max_age_hours)
+        return self.cache.get_quarterly_timeseries(ticker, max_age_hours)
     
     def generate_for_multiple_tickers(self, tickers: List[str], save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Dict[str, Any]]:
         """Generate quarterly time series for multiple tickers"""

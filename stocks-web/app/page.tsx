@@ -2,9 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { transformApiDataForChart, TransformedDataPoint } from './lib/dataTransform';
-import { HistoricalChart } from "./components/HistoricalChart";
-import { StockAnalysisChart } from "./components/StockAnalysisChart";
-import QuarterlyFinancialsChart from "./components/QuarterlyFinancialsChart";
+import StockAnalysisChart from './components/StockAnalysisChart';
 import { Ticker } from './lib/firebaseService';
 
 // Types for API data
@@ -292,10 +290,7 @@ export default function Home() {
             {/* Main Chart Area - 3/4 width */}
             <div className="xl:col-span-3 space-y-8">
               {/* Stock Analysis Chart Component */}
-              <StockAnalysisChart ticker={selectedTicker} />
-              
-              {/* Quarterly Financials Chart Component */}
-              <QuarterlyFinancialsChart ticker={selectedTicker} />
+              <StockAnalysisChart stockData={stockData} />
             </div>
 
             {/* Right Sidebar - 1/4 width */}

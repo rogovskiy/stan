@@ -3,510 +3,357 @@
 Yahoo Finance Service - Python Version
 
 Handles data fetching from Yahoo Finance API using yfinance library.
-Enhanced with SEC filings data from secfsdstools.
-Now supports dynamic CIK lookup for any publicly traded company.
 """
 
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
-import re
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 import json
-
-from firebase_cache import FirebaseCache
-from cik_lookup_service import CIKLookupService
+import argparse
+import sys
+from financial_data_validator import validate_financial_data_format
 
 class YFinanceService:
-    """Service for fetching data from Yahoo Finance and SEC filings"""
+    """Service for fetching data from Yahoo Finance"""
     
-    def __init__(self):
-        self.cache = FirebaseCache()
-        self.cik_lookup = CIKLookupService()
-        print("✅ YFinance service initialized with dynamic SEC CIK lookup")
+    def __init__(self, cache_dir: str = './sec_data_cache'):
+        self.cache_dir = cache_dir
+        print("✅ YFinance service initialized")
     
-    def get_cik_for_ticker(self, ticker: str) -> Optional[int]:
-        """Get CIK number for any ticker symbol using dynamic lookup"""
-        return self.cik_lookup.get_cik_by_ticker(ticker)
-    
-    def fetch_and_cache_ticker_metadata(self, ticker: str) -> Dict[str, Any]:
-        """Fetch and cache company metadata for a ticker"""
+    def _get_fiscal_quarter_from_date(self, date, fiscal_year_end_month: int) -> tuple:
+        """Calculate fiscal year and quarter from date based on fiscal year-end month
+        
+        For a company with fiscal year ending in September:
+        - Q1: October, November, December (months 10, 11, 12)
+        - Q2: January, February, March (months 1, 2, 3)
+        - Q3: April, May, June (months 4, 5, 6)
+        - Q4: July, August, September (months 7, 8, 9)
+        
+        Args:
+            date: Date object (period END date)
+            fiscal_year_end_month: Month when fiscal year ends (1-12)
+            
+        Returns:
+            Tuple of (fiscal_year, fiscal_quarter)
+        """
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            if not hasattr(date, 'year') or not hasattr(date, 'month'):
+                return None, None
             
-            metadata = {
-                'name': info.get('longName', self._get_company_name_fallback(ticker)),
-                'exchange': info.get('exchange', 'NASDAQ'),
-                'sector': info.get('sector', 'Technology'),
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            self.cache.cache_ticker_metadata(ticker, metadata)
-            return metadata
-            
-        except Exception as error:
-            print(f"Could not fetch metadata for {ticker}, using fallback: {error}")
-            fallback_metadata = {
-                'name': self._get_company_name_fallback(ticker),
-                'exchange': 'NASDAQ',
-                'sector': 'Technology',
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            self.cache.cache_ticker_metadata(ticker, fallback_metadata)
-            return fallback_metadata
-    
-    def fetch_max_historical_data(self, ticker: str, max_years_back: int = 50) -> Dict[str, Any]:
-        """Fetch and cache maximum available historical data for a ticker"""
-        try:
-            # Calculate maximum date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=max_years_back * 365)
-            
-            print(f'   Fetching data from {start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")}')
-            
-            # Fetch maximum historical data
-            stock = yf.Ticker(ticker)
-            historical = stock.history(start=start_date, end=end_date, interval='1d')
-            
-            print(f'   Retrieved {len(historical)} daily price points')
-            
-            if historical.empty:
-                return {
-                    'years_processed': 0,
-                    'data_points_retrieved': 0,
-                    'years_range': 'No data available'
-                }
-            
-            # Group data by years
-            annual_data = self._group_data_by_years(historical, ticker)
-            print(f'   Organized data into {len(annual_data)} years')
-            
-            # Cache each year separately
-            cached_years = 0
-            for year_str, price_data in annual_data.items():
-                year = int(year_str)
-                try:
-                    self.cache.cache_annual_price_data(ticker, year, price_data)
-                    cached_years += 1
-                except Exception as error:
-                    print(f'   ❌ Failed to cache year {year}: {error}')
-            
-            return {
-                'years_processed': cached_years,
-                'data_points_retrieved': len(historical),
-                'years_range': f'{start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")}'
-            }
-            
-        except Exception as error:
-            print(f'❌ Error fetching historical data for {ticker}: {error}')
-            raise error
-    
-    def fetch_max_financial_data(self, ticker: str) -> Dict[str, Any]:
-        """Fetch comprehensive historical financial data from both Yahoo Finance and SEC filings"""
-        try:
-            print(f'   📊 Fetching comprehensive financial data from multiple sources...')
-            
-            # First, get basic data from Yahoo Finance
-            yfinance_results = self._fetch_yfinance_financial_data(ticker)
-            
-            # Then, get comprehensive data from SEC filings using the working extraction
-            sec_results = self._fetch_sec_financial_data_integrated(ticker)
-            
-            # Combine results
-            if sec_results['success']:
-                total_quarters = yfinance_results['quarters_processed'] + sec_results['quarters_processed']
-                total_earnings = yfinance_results['historical_earnings'] + sec_results['quarters_processed']
-                
-                print(f'   ✅ Combined financial data summary:')
-                print(f'     - Yahoo Finance: {yfinance_results["quarters_processed"]} quarters')
-                print(f'     - SEC Filings: {sec_results["quarters_processed"]} quarters cached')
-                print(f'     - SEC Reports: {sec_results["reports_found"]} reports processed')
-                print(f'     - Total quarters cached: {total_quarters}')
-                print(f'     - Total earnings records: {total_earnings}')
-                
-                return {
-                    'quarters_processed': total_quarters,
-                    'historical_earnings': total_earnings,
-                    'forecast_quarters': yfinance_results['forecast_quarters'],
-                    'sec_reports_processed': sec_results['reports_found'],
-                    'sec_time_series': sec_results.get('time_series_generated', {}),
-                    'data_sources': ['yfinance', 'sec_filings']
-                }
+            # Calculate months since the last fiscal year end
+            # If current month is after FYE, we're in the next fiscal year
+            if date.month > fiscal_year_end_month:
+                fiscal_year = date.year + 1
+                months_into_fy = date.month - fiscal_year_end_month
             else:
-                print(f'   ⚠️  SEC data not available for {ticker}, using Yahoo Finance only')
-                return yfinance_results
+                fiscal_year = date.year
+                months_into_fy = 12 - fiscal_year_end_month + date.month
             
-        except Exception as error:
-            print(f'❌ Error fetching comprehensive financial data for {ticker}: {error}')
-            # Fall back to just Yahoo Finance data
-            return self._fetch_yfinance_financial_data(ticker)
-    
-    def _fetch_yfinance_financial_data(self, ticker: str) -> Dict[str, Any]:
-        """Fetch financial data from Yahoo Finance only (original implementation)"""
-        stock = yf.Ticker(ticker)
-        
-        cached_quarters = 0
-        historical_count = 0
-        forecast_count = 0
-        
-        # Get income statement for earnings data
-        try:
-            income_stmt = stock.quarterly_income_stmt
-            if income_stmt is not None and not income_stmt.empty:
-                historical_count = len(income_stmt.columns)
-                print(f'   Found {historical_count} quarterly financial records')
-                
-                for date_col in income_stmt.columns:
-                    quarter_key = self._get_quarter_key_from_date(date_col)
-                    if quarter_key:
-                        # Extract net income as earnings
-                        net_income = income_stmt.loc['Net Income', date_col] if 'Net Income' in income_stmt.index else None
-                        
-                        if pd.notna(net_income):
-                            financial_data = {
-                                'fiscal_year': int(quarter_key[:4]),
-                                'fiscal_quarter': int(quarter_key[5:]),
-                                'start_date': self._get_quarter_start_date(quarter_key),
-                                'end_date': self._get_quarter_end_date(quarter_key),
-                                'report_date': date_col.strftime('%Y-%m-%d') if hasattr(date_col, 'strftime') else None,
-                                'financials': {
-                                    'net_income': float(net_income),
-                                    'data_source': 'yfinance_actual',
-                                    'estimated': False
-                                }
-                            }
-                            
-                            self.cache.cache_quarterly_financial_data(ticker, quarter_key, financial_data)
-                            cached_quarters += 1
-                        
-        except Exception as e:
-            print(f'   Could not fetch income statement: {e}')
-        
-        # Try to get earnings calendar/estimates
-        try:
-            info = stock.info
-            if info and 'earningsDate' in info:
-                # This is very limited data from yfinance
-                print(f'   Found earnings date info in stock info')
-                forecast_count = 1
-                
-        except Exception as e:
-            print(f'   Could not fetch earnings estimates: {e}')
-        
-        print(f'   ✅ Financial data summary:')
-        print(f'     - Historical earnings: {historical_count} quarters')
-        print(f'     - Forecasts: {forecast_count} quarters')
-        print(f'     - Total cached: {cached_quarters} quarters')
-        
-        return {
-            'quarters_processed': cached_quarters,
-            'historical_earnings': historical_count,
-            'forecast_quarters': forecast_count
-        }
-    
-    def _fetch_sec_financial_data_integrated(self, ticker: str) -> Dict[str, Any]:
-        """Integrated SEC data fetching with dynamic CIK lookup"""
-        try:
-            from secfsdstools.e_collector.companycollecting import CompanyReportCollector
-            import logging
-            logging.getLogger('secfsdstools').setLevel(logging.WARNING)
+            # Determine quarter based on months into fiscal year
+            fiscal_quarter = ((months_into_fy - 1) // 3) + 1
             
-            # Get CIK using dynamic lookup (supports any ticker)
-            cik = self.get_cik_for_ticker(ticker)
-            if not cik:
-                print(f'   ⚠️  CIK not found for ticker {ticker} in SEC database')
-                return {'success': False, 'quarters_processed': 0, 'reports_found': 0}
+            # Clamp to 1-4 range
+            fiscal_quarter = max(1, min(4, fiscal_quarter))
             
-            print(f'   📊 Fetching SEC data for {ticker} (CIK: {cik})...')
+            return fiscal_year, fiscal_quarter
             
-            # Get company data collector
-            collector = CompanyReportCollector.get_company_collector([cik])
-            raw_data_bag = collector.collect()
-            
-            # Get statistics and numerical data
-            stats = raw_data_bag.statistics()
-            num_df = raw_data_bag.num_df
-            
-            print(f'   Found {stats.number_of_reports} SEC reports with {len(num_df)} data points')
-            
-            # Extract and cache quarterly data using proven logic
-            quarters_cached = self._extract_and_cache_sec_quarters(num_df, ticker)
-            
-            return {
-                'success': True,
-                'quarters_processed': quarters_cached,
-                'reports_found': stats.number_of_reports,
-                'time_series_generated': {'total_quarters': quarters_cached}
-            }
-            
-        except Exception as e:
-            print(f'   ❌ Error fetching SEC data: {e}')
-            return {'success': False, 'quarters_processed': 0, 'reports_found': 0}
-    
-    def _extract_and_cache_sec_quarters(self, num_df: pd.DataFrame, ticker: str) -> int:
-        """Extract and cache SEC quarterly data using the proven working approach"""
-        try:
-            # Financial metrics to extract
-            financial_tags = {
-                'revenue': ['Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
-                'net_income': ['NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
-                'eps': ['EarningsPerShareDiluted', 'EarningsPerShareBasic']
-            }
-            
-            quarters_cached = 0
-            cached_quarters = {}
-            
-            # Group by adsh and ddate
-            grouped = num_df.groupby(['adsh', 'ddate'])
-            
-            for (adsh, ddate), period_group in grouped:
-                try:
-                    if pd.isna(ddate):
-                        continue
-                    
-                    # Parse date using the FIXED parser
-                    fiscal_info = self._parse_date_fixed(ddate)
-                    if not fiscal_info:
-                        continue
-                    
-                    quarter_key = f"{fiscal_info['fiscal_year']}Q{fiscal_info['fiscal_quarter']}"
-                    
-                    # Skip if already processed this quarter
-                    if quarter_key in cached_quarters:
-                        continue
-                    
-                    # Extract metrics for this quarter
-                    quarter_data = {
-                        'fiscal_year': fiscal_info['fiscal_year'],
-                        'fiscal_quarter': fiscal_info['fiscal_quarter'],
-                        'quarter_key': quarter_key,
-                        'period_end_date': fiscal_info['period_end_date'],
-                        'accession_number': adsh,
-                        'data_source': 'sec_filings',
-                        'estimated': False,
-                        'financials': {'data_source': 'sec_filings'}
-                    }
-                    
-                    # Extract financial metrics
-                    has_data = False
-                    for metric_name, tag_list in financial_tags.items():
-                        metric_values = period_group[period_group['tag'].isin(tag_list)]
-                        if not metric_values.empty:
-                            # Prefer quarterly data (qtrs=1)
-                            quarterly_values = metric_values[metric_values['qtrs'] == 1]
-                            value_row = quarterly_values.iloc[-1] if not quarterly_values.empty else metric_values.iloc[-1]
-                            
-                            if pd.notna(value_row['value']) and value_row['value'] != 0:
-                                quarter_data['financials'][metric_name] = float(value_row['value'])
-                                has_data = True
-                                
-                                # Add to earnings section if relevant
-                                if metric_name in ['net_income', 'eps']:
-                                    if 'earnings' not in quarter_data:
-                                        quarter_data['earnings'] = {'data_source': 'sec_filings'}
-                                    if metric_name == 'eps':
-                                        quarter_data['earnings']['eps_actual'] = float(value_row['value'])
-                                    else:
-                                        quarter_data['earnings'][metric_name] = float(value_row['value'])
-                    
-                    # Cache if we have meaningful data
-                    if has_data:
-                        self.cache.cache_quarterly_financial_data(ticker, quarter_key, quarter_data)
-                        cached_quarters[quarter_key] = True
-                        quarters_cached += 1
-                        
-                except Exception:
-                    continue
-            
-            print(f'   📁 Cached {quarters_cached} SEC quarters to Firebase')
-            return quarters_cached
-            
-        except Exception as e:
-            print(f'   ❌ Error caching SEC quarters: {e}')
-            return 0
-    
-    def _parse_date_fixed(self, date_value):
-        """Fixed date parser for numpy.int64 SEC dates"""
-        try:
-            if pd.isna(date_value):
-                return None
-            
-            # Handle numpy.int64 format
-            if hasattr(date_value, 'item'):
-                date_int = int(date_value.item())
-            else:
-                date_int = int(date_value)
-            
-            date_str = str(date_int)
-            if len(date_str) == 8:  # YYYYMMDD
-                year, month, day = int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8])
-                date_obj = pd.Timestamp(year=year, month=month, day=day)
-                
-                quarter = (month - 1) // 3 + 1
-                
-                return {
-                    'fiscal_year': year,
-                    'fiscal_quarter': quarter,
-                    'period_end_date': date_obj.strftime('%Y-%m-%d')
-                }
-            return None
-        except:
-            return None
-    
-    def _group_data_by_years(self, historical: pd.DataFrame, ticker: str) -> Dict[str, Dict[str, Any]]:
-        """Group daily historical data by years"""
-        annual_data = {}
-        
-        for date_index, row in historical.iterrows():
-            year = date_index.year
-            year_str = str(year)
-            date_str = date_index.strftime('%Y-%m-%d')
-            
-            if year_str not in annual_data:
-                annual_data[year_str] = {
-                    'ticker': ticker.upper(),
-                    'year': year,
-                    'currency': 'USD',
-                    'timezone': 'America/New_York',
-                    'data': {},
-                    'metadata': {
-                        'total_days': 0,
-                        'generated_at': datetime.now().isoformat(),
-                        'source': 'yfinance_python'
-                    }
-                }
-            
-            annual_data[year_str]['data'][date_str] = {
-                'o': round(float(row.get('Open', row.get('Close', 0))), 2),
-                'h': round(float(row.get('High', row.get('Close', 0))), 2),
-                'l': round(float(row.get('Low', row.get('Close', 0))), 2),
-                'c': round(float(row.get('Close', 0)), 2),
-                'v': int(row.get('Volume', 0))
-            }
-        
-        # Update total_days metadata for each year
-        for year_str, data in annual_data.items():
-            data['metadata']['total_days'] = len(data['data'])
-        
-        return annual_data
-    
-    def _get_quarter_key_from_date(self, date) -> Optional[str]:
-        """Generate quarter key from date (e.g., '2024Q1')"""
-        try:
-            if hasattr(date, 'year') and hasattr(date, 'month'):
-                year = date.year
-                quarter = (date.month - 1) // 3 + 1
-                return f"{year}Q{quarter}"
-            return None
         except Exception:
-            return None
+            return None, None
     
-    def _get_quarter_start_date(self, quarter_key: str) -> str:
-        """Get quarter start date from quarter key"""
-        year = int(quarter_key[:4])
-        quarter = int(quarter_key[5:])
-        start_month = (quarter - 1) * 3 + 1
-        return datetime(year, start_month, 1).strftime('%Y-%m-%d')
+    def _get_quarter_key_from_date(self, date, fiscal_year_end_month: int) -> Optional[str]:
+        """Generate quarter key from date (e.g., '2024Q1')"""
+        fiscal_year, fiscal_quarter = self._get_fiscal_quarter_from_date(date, fiscal_year_end_month)
+        if fiscal_year and fiscal_quarter:
+            return f"{fiscal_year}Q{fiscal_quarter}"
+        return None
     
-    def _get_quarter_end_date(self, quarter_key: str) -> str:
-        """Get quarter end date from quarter key"""
-        year = int(quarter_key[:4])
-        quarter = int(quarter_key[5:])
-        end_month = quarter * 3
-        # Get last day of the quarter
-        if end_month == 12:
-            end_date = datetime(year + 1, 1, 1) - timedelta(days=1)
+    def fetch_quarterly_earnings(self, ticker: str) -> List[Dict[str, Any]]:
+        """Fetch comprehensive quarterly financial data from Yahoo Finance
+        
+        Returns:
+            List of quarterly financial data dictionaries with income statement,
+            balance sheet, and cash flow statement
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            
+            # Get fiscal year-end month from company info
+            info = stock.info
+            fiscal_year_end_timestamp = info.get('lastFiscalYearEnd')
+            
+            # Default to December if not available, but try to infer from data
+            fiscal_year_end_month = 12
+            if fiscal_year_end_timestamp:
+                from datetime import datetime
+                fye_date = datetime.fromtimestamp(fiscal_year_end_timestamp)
+                fiscal_year_end_month = fye_date.month
+            
+            # Get all three financial statements
+            quarterly_income = stock.quarterly_income_stmt if hasattr(stock, 'quarterly_income_stmt') else None
+            quarterly_balance = stock.quarterly_balance_sheet if hasattr(stock, 'quarterly_balance_sheet') else None
+            quarterly_cashflow = stock.quarterly_cashflow if hasattr(stock, 'quarterly_cashflow') else None
+            
+            # Collect all unique dates from all statements
+            all_dates = set()
+            if quarterly_income is not None and not quarterly_income.empty:
+                all_dates.update(quarterly_income.columns)
+            if quarterly_balance is not None and not quarterly_balance.empty:
+                all_dates.update(quarterly_balance.columns)
+            if quarterly_cashflow is not None and not quarterly_cashflow.empty:
+                all_dates.update(quarterly_cashflow.columns)
+            
+            quarterly_data = []
+            
+            for date_col in sorted(all_dates, reverse=True):
+                quarter_key = self._get_quarter_key_from_date(date_col, fiscal_year_end_month)
+                if not quarter_key:
+                    continue
+                
+                fiscal_year, fiscal_quarter = self._get_fiscal_quarter_from_date(date_col, fiscal_year_end_month)
+                
+                quarter_data = {
+                    'fiscal_year': fiscal_year,
+                    'fiscal_quarter': fiscal_quarter,
+                    'quarter_key': quarter_key,
+                    'period_end_date': date_col.strftime('%Y-%m-%d') if hasattr(date_col, 'strftime') else str(date_col),
+                    'data_source': 'yfinance',
+                    'is_annual': False,
+                    'income_statement': {},
+                    'balance_sheet': {},
+                    'cash_flow_statement': {}
+                }
+                
+                # Extract Income Statement data
+                if quarterly_income is not None and date_col in quarterly_income.columns:
+                    income_stmt = {}
+                    
+                    # Map YFinance fields to our standardized field names
+                    income_field_mapping = {
+                        'Total Revenue': 'revenues',
+                        'Cost Of Revenue': 'cost_of_revenue',
+                        'Gross Profit': 'gross_profit',
+                        'Operating Expense': 'operating_expenses',
+                        'Operating Income': 'operating_income',
+                        'Pretax Income': 'pretax_income',
+                        'Tax Provision': 'tax_expense',
+                        'Net Income': 'net_income',
+                        'Net Income Common Stockholders': 'net_income',
+                        'Basic EPS': 'earnings_per_share',
+                        'Diluted EPS': 'diluted_eps',
+                        'Basic Average Shares': 'outstanding_shares',
+                        'Diluted Average Shares': 'diluted_shares',
+                        'EBIT': 'ebit',
+                        'EBITDA': 'ebitda',
+                        'Research And Development': 'research_development_expense',
+                        'Selling General And Administration': 'selling_general_admin_expense',
+                        'Interest Expense': 'interest_expense',
+                        'Interest Income': 'interest_income',
+                        'Other Income Expense': 'other_income_expense',
+                        'Total Expenses': 'total_expenses',
+                        'Total Operating Income As Reported': 'total_operating_income'
+                    }
+                    
+                    for yf_field, std_field in income_field_mapping.items():
+                        if yf_field in quarterly_income.index:
+                            value = quarterly_income.loc[yf_field, date_col]
+                            if pd.notna(value):
+                                income_stmt[std_field] = float(value)
+                    
+                    quarter_data['income_statement'] = income_stmt
+                
+                # Extract Balance Sheet data
+                if quarterly_balance is not None and date_col in quarterly_balance.columns:
+                    balance_sheet = {}
+                    
+                    balance_field_mapping = {
+                        'Cash And Cash Equivalents': 'cash',
+                        'Cash Cash Equivalents And Short Term Investments': 'cash_and_short_term_investments',
+                        'Current Assets': 'current_assets',
+                        'Total Assets': 'total_assets',
+                        'Total Non Current Assets': 'noncurrent_assets',
+                        'Current Liabilities': 'current_liabilities',
+                        'Total Liabilities Net Minority Interest': 'total_liabilities',
+                        'Total Non Current Liabilities Net Minority Interest': 'noncurrent_liabilities',
+                        'Stockholders Equity': 'stockholders_equity',
+                        'Total Equity Gross Minority Interest': 'total_equity',
+                        'Retained Earnings': 'retained_earnings',
+                        'Common Stock': 'common_stock',
+                        'Treasury Stock': 'treasury_stock',
+                        'Additional Paid In Capital': 'additional_paid_in_capital',
+                        'Accounts Receivable': 'accounts_receivable',
+                        'Inventory': 'inventory',
+                        'Accounts Payable': 'accounts_payable',
+                        'Long Term Debt': 'long_term_debt',
+                        'Current Debt': 'current_debt',
+                        'Total Debt': 'total_debt',
+                        'Net Debt': 'net_debt',
+                        'Working Capital': 'working_capital',
+                        'Invested Capital': 'invested_capital',
+                        'Tangible Book Value': 'tangible_book_value',
+                        'Ordinary Shares Number': 'shares_outstanding'
+                    }
+                    
+                    for yf_field, std_field in balance_field_mapping.items():
+                        if yf_field in quarterly_balance.index:
+                            value = quarterly_balance.loc[yf_field, date_col]
+                            if pd.notna(value):
+                                balance_sheet[std_field] = float(value)
+                    
+                    quarter_data['balance_sheet'] = balance_sheet
+                
+                # Extract Cash Flow Statement data
+                if quarterly_cashflow is not None and date_col in quarterly_cashflow.columns:
+                    cash_flow = {}
+                    
+                    cashflow_field_mapping = {
+                        'Operating Cash Flow': 'operating_cash_flow',
+                        'Investing Cash Flow': 'investing_cash_flow',
+                        'Financing Cash Flow': 'financing_cash_flow',
+                        'End Cash Position': 'cash_ending',
+                        'Beginning Cash Position': 'cash_beginning',
+                        'Free Cash Flow': 'free_cash_flow',
+                        'Capital Expenditure': 'capex',
+                        'Depreciation And Amortization': 'depreciation_amortization',
+                        'Stock Based Compensation': 'stock_based_compensation',
+                        'Change In Working Capital': 'working_capital_change',
+                        'Change In Accounts Payable': 'accounts_payable_change',
+                        'Change In Accounts Receivable': 'accounts_receivable_change',
+                        'Change In Inventory': 'inventory_change',
+                        'Issuance Of Debt': 'debt_issuance',
+                        'Repayment Of Debt': 'debt_repayment',
+                        'Repurchase Of Capital Stock': 'stock_repurchase',
+                        'Common Stock Issuance': 'stock_issuance',
+                        'Common Stock Dividend Paid': 'dividends_paid',
+                        'Net Income From Continuing Operations': 'net_income_continuing_ops',
+                        'Deferred Income Tax': 'deferred_income_tax',
+                        'Cash Flow From Continuing Operating Activities': 'operating_cash_flow_continuing',
+                        'Cash Flow From Continuing Investing Activities': 'investing_cash_flow_continuing',
+                        'Cash Flow From Continuing Financing Activities': 'financing_cash_flow_continuing'
+                    }
+                    
+                    for yf_field, std_field in cashflow_field_mapping.items():
+                        if yf_field in quarterly_cashflow.index:
+                            value = quarterly_cashflow.loc[yf_field, date_col]
+                            if pd.notna(value):
+                                cash_flow[std_field] = float(value)
+                    
+                    quarter_data['cash_flow_statement'] = cash_flow
+                
+                # Only include quarter if it has at least some financial data
+                has_data = (
+                    len(quarter_data['income_statement']) > 0 or
+                    len(quarter_data['balance_sheet']) > 0 or
+                    len(quarter_data['cash_flow_statement']) > 0
+                )
+                
+                if has_data:
+                    # Validate the data format before adding
+                    validation_result = validate_financial_data_format(quarter_data)
+                    if not validation_result['valid']:
+                        print(f"Warning: Data validation failed for {quarter_key}:")
+                        for error in validation_result['errors']:
+                            print(f"  ERROR: {error}")
+                    if validation_result.get('warnings'):
+                        for warning in validation_result['warnings']:
+                            print(f"  WARNING: {warning}")
+                    
+                    quarterly_data.append(quarter_data)
+            
+            return quarterly_data
+            
+        except Exception as e:
+            print(f"Error fetching quarterly financial data: {e}")
+            return []
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Extract Yahoo Finance data for specific quarter',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Extract specific quarter
+  python yfinance_service.py AAPL 2024Q1 --pretty
+  
+  # Verbose output with extraction details
+  python yfinance_service.py AAPL 2025Q3 --verbose --pretty
+        '''
+    )
+    parser.add_argument('ticker', help='Stock ticker symbol (e.g., AAPL, MSFT, GOOGL)')
+    parser.add_argument('quarter_key', help='Quarter in format YYYYQN (e.g., 2024Q1, 2025Q3)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser.add_argument('--pretty', action='store_true', help='Pretty print JSON output')
+    parser.add_argument('--cache-dir', default='./sec_data_cache', help='Directory containing cached SEC data')
+    
+    args = parser.parse_args()
+    
+    ticker = args.ticker.upper()
+    
+    # Parse quarter_key (e.g., "2024Q1" -> year=2024, quarter=1)
+    try:
+        if 'Q' not in args.quarter_key:
+            raise ValueError("Quarter must be in format YYYYQN (e.g., 2024Q1)")
+        year_str, quarter_str = args.quarter_key.split('Q')
+        year = int(year_str)
+        quarter = int(quarter_str)
+        if quarter not in [1, 2, 3, 4]:
+            raise ValueError("Quarter must be 1-4")
+    except (ValueError, IndexError) as e:
+        print(f"❌ Invalid quarter format: {args.quarter_key}", file=sys.stderr)
+        print(f"   Expected format: YYYYQN (e.g., 2024Q1, 2025Q3)", file=sys.stderr)
+        sys.exit(1)
+    
+    # Initialize service
+    service = YFinanceService(cache_dir=args.cache_dir)
+    
+    # Fetch data
+    try:
+        if args.verbose:
+            print(f"Fetching data for {ticker} Q{quarter} {year}...")
+        
+        data = service.fetch_quarterly_earnings(ticker)
+        
+        if not data:
+            result = {
+                'error': f"No financial data available for {ticker}",
+                'note': 'Yahoo Finance only provides the most recent 4-5 quarters of data'
+            }
         else:
-            end_date = datetime(year, end_month + 1, 1) - timedelta(days=1)
-        return end_date.strftime('%Y-%m-%d')
-    
-    def _create_financial_data_from_earnings(self, row: pd.Series, quarter_key: str, date_index) -> Dict[str, Any]:
-        """Create financial data structure from earnings data"""
-        year = int(quarter_key[:4])
-        quarter = int(quarter_key[5:])
+            # Find specific quarter
+            filtered_data = None
+            for item in data:
+                if item.get('fiscal_year') == year and item.get('fiscal_quarter') == quarter:
+                    filtered_data = {
+                        'ticker': ticker,
+                        'data': item
+                    }
+                    break
+            
+            if not filtered_data:
+                available_quarters = [f"{q['fiscal_year']}Q{q['fiscal_quarter']}" for q in data]
+                result = {
+                    'error': f"Quarter {year}Q{quarter} not found for {ticker}",
+                    'note': 'Yahoo Finance only provides the most recent 4-5 quarters of data',
+                    'available_quarters': available_quarters
+                }
+            else:
+                result = filtered_data
         
-        start_month = (quarter - 1) * 3
-        end_month = start_month + 2
-        
-        earnings_data = {}
-        if 'Earnings' in row and pd.notna(row['Earnings']):
-            earnings_data['eps_actual'] = float(row['Earnings'])
-        
-        financials = {
-            'data_source': 'yfinance_actual',
-            'estimated': False
-        }
-        
-        if 'Earnings' in row and pd.notna(row['Earnings']):
-            financials['eps_diluted'] = float(row['Earnings'])
-        
-        if 'Revenue' in row and pd.notna(row['Revenue']):
-            financials['revenue'] = float(row['Revenue'])
-        
-        result = {
-            'fiscal_year': year,
-            'fiscal_quarter': quarter,
-            'start_date': datetime(year, start_month + 1, 1).strftime('%Y-%m-%d'),
-            'end_date': datetime(year, end_month + 1, 1).replace(day=1) - timedelta(days=1),
-            'report_date': date_index.strftime('%Y-%m-%d') if hasattr(date_index, 'strftime') else None
-        }
-        
-        if earnings_data:
-            result['earnings'] = earnings_data
-        if len(financials) > 2:  # More than just data_source and estimated
-            result['financials'] = financials
-        
-        return result
-    
-    def _create_financial_data_from_forecast(self, row: pd.Series, quarter_key: str, date_index) -> Dict[str, Any]:
-        """Create financial data structure from forecast data"""
-        year = int(quarter_key[:4])
-        quarter = int(quarter_key[5:])
-        
-        start_month = (quarter - 1) * 3
-        end_month = start_month + 2
-        
-        forecast_data = {}
-        if 'Earnings Estimate' in row and pd.notna(row['Earnings Estimate']):
-            forecast_data['estimate'] = float(row['Earnings Estimate'])
-        
-        financials = {
-            'data_source': 'yfinance_forecast',
-            'estimated': True
-        }
-        
-        if 'Earnings Estimate' in row and pd.notna(row['Earnings Estimate']):
-            financials['eps_diluted'] = float(row['Earnings Estimate'])
-        
-        result = {
-            'fiscal_year': year,
-            'fiscal_quarter': quarter,
-            'start_date': datetime(year, start_month + 1, 1).strftime('%Y-%m-%d'),
-            'end_date': (datetime(year, end_month + 1, 1).replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
-        }
-        
-        if forecast_data:
-            result['forecast'] = forecast_data
-        if len(financials) > 2:
-            result['financials'] = financials
-        
-        return result
-    
-    def _get_company_name_fallback(self, ticker: str) -> str:
-        """Fallback company names for well-known tickers"""
-        company_names = {
-            'AAPL': 'Apple Inc.',
-            'MSFT': 'Microsoft Corporation',
-            'GOOGL': 'Alphabet Inc.',
-            'GOOG': 'Alphabet Inc.',
-            'AMZN': 'Amazon.com Inc.',
-            'TSLA': 'Tesla Inc.',
-            'META': 'Meta Platforms Inc.',
-            'NVDA': 'NVIDIA Corporation',
-            'NFLX': 'Netflix Inc.',
-            'AMD': 'Advanced Micro Devices Inc.'
-        }
-        
-        return company_names.get(ticker.upper(), f'{ticker.upper()} Inc.')
+        # Print results
+        if args.pretty:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(json.dumps(result, default=str))
+            
+    except Exception as e:
+        error_result = {'error': str(e)}
+        if args.pretty:
+            print(json.dumps(error_result, indent=2))
+        else:
+            print(json.dumps(error_result))
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

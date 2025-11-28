@@ -7,3 +7,4 @@ venv/
 .venv/
 __pycache__/
 tsconfig.tsbuildinfo
+sec_data_cache/

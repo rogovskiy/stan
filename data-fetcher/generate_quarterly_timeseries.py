@@ -15,7 +15,8 @@ from typing import Dict, List, Optional, Any, Tuple
 from dotenv import load_dotenv
 
 # Load environment variables first
-load_dotenv('.env.local')
+env_path = os.path.join(os.path.dirname(__file__), '.env.local')
+load_dotenv(env_path)
 
 from firebase_cache import FirebaseCache
 
@@ -99,51 +100,83 @@ class QuarterlyTimeSeriesGenerator:
     
     def _extract_timeseries_data(self, quarterly_data: List[Dict[str, Any]], 
                                 ticker: str, verbose: bool) -> Dict[str, Any]:
-        """Extract and organize time series data from quarterly records"""
+        """Extract and organize time series data from unified quarterly records"""
         
         eps_data = []
         revenue_data = []
         dividends_data = []
+        fair_value_data = []
         
         for quarter in quarterly_data:
             try:
-                # Create common quarter info using period_end_date
+                # Create common quarter info using the unified format
                 quarter_info = {
                     'quarter': f"Q{quarter['fiscal_quarter']}",
                     'year': quarter['fiscal_year'],
-                    'quarter_key': f"{quarter['fiscal_year']}Q{quarter['fiscal_quarter']}",
+                    'quarter_key': quarter.get('quarter_key', f"{quarter['fiscal_year']}Q{quarter['fiscal_quarter']}"),
                     'period_end_date': quarter.get('period_end_date'),
                     'report_date': quarter.get('report_date')
                 }
                 
-                # Extract EPS data
-                eps_value = self._extract_eps_value(quarter)
+                # Extract EPS data from unified format (try multiple locations)
+                eps_value = None
+                if 'eps' in quarter and quarter['eps'] is not None:
+                    eps_value = quarter['eps']
+                elif 'financials' in quarter and quarter['financials'] and 'eps' in quarter['financials']:
+                    eps_value = quarter['financials']['eps']
+                elif 'financials' in quarter and quarter['financials'] and 'epsDiluted' in quarter['financials']:
+                    eps_value = quarter['financials']['epsDiluted']
+                elif 'earnings' in quarter and quarter['earnings'] and 'eps_actual' in quarter['earnings']:
+                    eps_value = quarter['earnings']['eps_actual']
+                
                 if eps_value is not None:
                     eps_data.append({
                         **quarter_info,
-                        'value': eps_value,
+                        'value': float(eps_value),
                         'estimated': quarter.get('estimated', False),
                         'data_source': quarter.get('data_source', 'unknown')
                     })
                 
-                # Extract revenue data
-                revenue_value = self._extract_revenue_value(quarter)
+                # Extract revenue data from unified format
+                revenue_value = None
+                if 'revenue' in quarter and quarter['revenue'] is not None:
+                    revenue_value = quarter['revenue']
+                elif 'financials' in quarter and quarter['financials'] and 'revenue' in quarter['financials']:
+                    revenue_value = quarter['financials']['revenue']
+                
                 if revenue_value is not None:
                     revenue_data.append({
                         **quarter_info,
-                        'value': revenue_value,
+                        'value': float(revenue_value),
                         'estimated': quarter.get('estimated', False),
                         'data_source': quarter.get('data_source', 'unknown')
                     })
                 
-                # Extract dividends data
-                dividend_value = self._extract_dividend_value(quarter)
-                if dividend_value is not None:
+                # Extract dividends data from unified format
+                if 'dividend_per_share' in quarter and quarter['dividend_per_share'] is not None:
                     dividends_data.append({
                         **quarter_info,
-                        'value': dividend_value,
+                        'value': float(quarter['dividend_per_share']),
                         'estimated': quarter.get('estimated', False),
                         'data_source': quarter.get('data_source', 'unknown')
+                    })
+                elif 'dividends' in quarter and quarter['dividends'] is not None:
+                    dividends_data.append({
+                        **quarter_info,
+                        'value': float(quarter['dividends']),
+                        'estimated': quarter.get('estimated', False),
+                        'data_source': quarter.get('data_source', 'unknown')
+                    })
+                
+                # Calculate and extract fair value estimate
+                fair_value = self._calculate_fair_value(quarter)
+                if fair_value is not None:
+                    fair_value_data.append({
+                        **quarter_info,
+                        'value': fair_value,
+                        'estimated': quarter.get('estimated', False),
+                        'data_source': quarter.get('data_source', 'unknown'),
+                        'calculation_method': 'pe_based'
                     })
                 
             except Exception as e:
@@ -155,6 +188,7 @@ class QuarterlyTimeSeriesGenerator:
         eps_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
         revenue_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
         dividends_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
+        fair_value_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
         
         return {
             'ticker': ticker.upper(),
@@ -175,95 +209,14 @@ class QuarterlyTimeSeriesGenerator:
                 'count': len(dividends_data),
                 'latest_value': dividends_data[-1]['value'] if dividends_data else None,
                 'latest_quarter': dividends_data[-1]['quarter_key'] if dividends_data else None
+            },
+            'fair_value': {
+                'data': fair_value_data,
+                'count': len(fair_value_data),
+                'latest_value': fair_value_data[-1]['value'] if fair_value_data else None,
+                'latest_quarter': fair_value_data[-1]['quarter_key'] if fair_value_data else None
             }
         }
-    
-    def _extract_eps_value(self, quarter: Dict[str, Any]) -> Optional[float]:
-        """Extract EPS value from quarter data"""
-        # Try multiple potential sources for EPS
-        sources = [
-            # From earnings section
-            ('earnings', 'eps_actual'),
-            ('earnings', 'eps_diluted'),
-            ('earnings', 'eps'),
-            # From earnings section
-            ('earnings', 'eps_actual'),
-            ('earnings', 'eps_diluted'),
-            ('earnings', 'eps'),
-            # From financials section
-            ('financials', 'eps_diluted'),
-            ('financials', 'eps'),
-            ('financials', 'eps_basic'),
-            # Direct from quarter
-            ('eps_actual',),
-            ('eps_diluted',),
-            ('eps',)
-        ]
-        
-        for source_path in sources:
-            value = self._get_nested_value(quarter, source_path)
-            if value is not None and isinstance(value, (int, float)):
-                return float(value)
-        
-        return None
-    
-    def _extract_revenue_value(self, quarter: Dict[str, Any]) -> Optional[float]:
-        """Extract revenue value from quarter data"""
-        # Try multiple potential sources for revenue
-        sources = [
-            # From financials section
-            ('financials', 'revenue'),
-            ('financials', 'total_revenue'),
-            ('financials', 'revenues'),
-            ('financials', 'sales_revenue_net'),
-            # Direct from quarter
-            ('revenue',),
-            ('total_revenue',),
-            ('revenues',)
-        ]
-        
-        for source_path in sources:
-            value = self._get_nested_value(quarter, source_path)
-            if value is not None and isinstance(value, (int, float)):
-                return float(value)
-        
-        return None
-    
-    def _extract_dividend_value(self, quarter: Dict[str, Any]) -> Optional[float]:
-        """Extract dividend value from quarter data"""
-        # Try multiple potential sources for dividends
-        sources = [
-            # From financials section
-            ('financials', 'dividends_per_share'),
-            ('financials', 'dividend_per_share'),
-            ('financials', 'dividends'),
-            ('financials', 'dividend'),
-            # From earnings section
-            ('earnings', 'dividends_per_share'),
-            ('earnings', 'dividend'),
-            # Direct from quarter
-            ('dividends_per_share',),
-            ('dividend_per_share',),
-            ('dividends',),
-            ('dividend',)
-        ]
-        
-        for source_path in sources:
-            value = self._get_nested_value(quarter, source_path)
-            if value is not None and isinstance(value, (int, float)):
-                return float(value)
-        
-        return None
-    
-    def _get_nested_value(self, data: Dict[str, Any], path: Tuple[str, ...]) -> Any:
-        """Get nested value from dictionary using path tuple"""
-        current = data
-        for key in path:
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            else:
-                return None
-        return current
     
     def _create_empty_timeseries(self, ticker: str) -> Dict[str, Any]:
         """Create empty time series structure"""
@@ -272,6 +225,7 @@ class QuarterlyTimeSeriesGenerator:
             'eps': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
             'revenue': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
             'dividends': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
+            'fair_value': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
             'metadata': {
                 'ticker': ticker.upper(),
                 'quarters_processed': 0,
@@ -279,6 +233,48 @@ class QuarterlyTimeSeriesGenerator:
                 'data_sources': []
             }
         }
+    
+    def _calculate_fair_value(self, quarter: Dict[str, Any]) -> Optional[float]:
+        """Calculate simple fair value estimate based on EPS and PE ratio"""
+        try:
+            # Get EPS from quarter data (try multiple locations)
+            eps = None
+            if 'eps' in quarter and quarter['eps'] is not None:
+                eps = float(quarter['eps'])
+            elif 'financials' in quarter and quarter['financials'] and 'eps' in quarter['financials']:
+                eps = float(quarter['financials']['eps'])
+            elif 'financials' in quarter and quarter['financials'] and 'epsDiluted' in quarter['financials']:
+                eps = float(quarter['financials']['epsDiluted'])
+            elif 'earnings' in quarter and quarter['earnings'] and 'eps_actual' in quarter['earnings']:
+                eps = float(quarter['earnings']['eps_actual'])
+            
+            if eps is None or eps <= 0:
+                return None
+            
+            # Use a reasonable PE ratio estimate based on data source and sector
+            # For SEC/actual data: use conservative PE
+            # For forecasts: use slightly higher PE
+            data_source = quarter.get('data_source', 'unknown')
+            is_estimated = quarter.get('estimated', False)
+            
+            if 'sec' in data_source.lower():
+                # SEC data - use conservative PE of 16-18
+                base_pe = 17.0
+            elif is_estimated:
+                # Forecast data - use slightly higher PE for growth expectation
+                base_pe = 19.0
+            else:
+                # Other actual data - use moderate PE
+                base_pe = 18.0
+            
+            # Calculate fair value: EPS * PE ratio
+            fair_value = eps * base_pe
+            
+            # Round to 2 decimal places
+            return round(fair_value, 2)
+            
+        except (ValueError, TypeError, KeyError):
+            return None
     
     def _print_summary(self, timeseries: Dict[str, Any]) -> None:
         """Print summary of generated time series"""
@@ -295,6 +291,10 @@ class QuarterlyTimeSeriesGenerator:
         print(f'   Dividends: {timeseries["dividends"]["count"]} quarters')
         if timeseries["dividends"]["latest_value"]:
             print(f'       Latest: ${timeseries["dividends"]["latest_value"]:.2f} ({timeseries["dividends"]["latest_quarter"]})')
+        
+        print(f'   Fair Value: {timeseries["fair_value"]["count"]} quarters')
+        if timeseries["fair_value"]["latest_value"]:
+            print(f'       Latest: ${timeseries["fair_value"]["latest_value"]:.2f} ({timeseries["fair_value"]["latest_quarter"]})')
     
     def get_cached_quarterly_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
         """Get cached quarterly time series"""
@@ -379,8 +379,9 @@ Examples:
             eps_count = data.get('eps', {}).get('count', 0)
             revenue_count = data.get('revenue', {}).get('count', 0)
             dividends_count = data.get('dividends', {}).get('count', 0)
+            fair_value_count = data.get('fair_value', {}).get('count', 0)
             
-            print(f'   {ticker}: {quarters} quarters → EPS: {eps_count}, Revenue: {revenue_count}, Dividends: {dividends_count}')
+            print(f'   {ticker}: {quarters} quarters → EPS: {eps_count}, Revenue: {revenue_count}, Dividends: {dividends_count}, Fair Value: {fair_value_count}')
         
         sys.exit(0)
         

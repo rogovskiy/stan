@@ -322,11 +322,15 @@ class FirebaseCache:
                 # Delete all storage files
                 for year_data in consolidated_data.get('years', {}).values():
                     try:
-                        blob = self.bucket.blob(year_data['storage_ref'])
-                        blob.delete()
-                        print(f'Deleted storage file: {year_data["storage_ref"]}')
+                        if isinstance(year_data, dict) and 'storage_ref' in year_data:
+                            blob = self.bucket.blob(year_data['storage_ref'])
+                            blob.delete()
+                            print(f'Deleted storage file: {year_data["storage_ref"]}')
+                        else:
+                            print(f'Skipping invalid year_data structure: {type(year_data)}')
                     except Exception as error:
-                        print(f'Could not delete storage file {year_data["storage_ref"]}: {error}')
+                        storage_ref = year_data.get('storage_ref', 'unknown') if isinstance(year_data, dict) else 'unknown'
+                        print(f'Could not delete storage file {storage_ref}: {error}')
                 
                 # Delete consolidated price data document
                 price_data_ref.delete()
@@ -437,6 +441,91 @@ class FirebaseCache:
         except Exception as error:
             print(f'Error getting quarterly timeseries for {ticker}: {error}')
             return None
+    
+    def set_sec_financial_data(self, ticker: str, period_key: str, data: Dict[str, Any]) -> None:
+        """Cache SEC comprehensive financial statement data
+        
+        Args:
+            ticker: Stock ticker symbol
+            period_key: Period identifier (e.g., '2021Q1', '2021_ANNUAL')
+            data: Financial statement data including income statement, balance sheet, and cash flow
+        """
+        try:
+            # Store in tickers/{ticker}/sec_financials/{period_key}
+            doc_ref = (self.db.collection('tickers')
+                      .document(ticker.upper())
+                      .collection('sec_financials')
+                      .document(period_key))
+            
+            doc_ref.set(data)
+            
+        except Exception as error:
+            print(f'Error caching SEC financial data for {ticker} {period_key}: {error}')
+            raise error
+    
+    def get_sec_financial_data(self, ticker: str, period_key: str) -> Optional[Dict[str, Any]]:
+        """Get SEC comprehensive financial statement data for a specific period
+        
+        Args:
+            ticker: Stock ticker symbol
+            period_key: Period identifier (e.g., '2021Q1', '2021_ANNUAL')
+            
+        Returns:
+            Financial statement data or None if not found
+        """
+        try:
+            doc_ref = (self.db.collection('tickers')
+                      .document(ticker.upper())
+                      .collection('sec_financials')
+                      .document(period_key))
+            
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
+            
+        except Exception as error:
+            print(f'Error getting SEC financial data for {ticker} {period_key}: {error}')
+            return None
+    
+    def get_all_sec_financial_data(self, ticker: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Get all SEC financial statement data for a ticker
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dict with 'quarterly' and 'annual' lists of financial data
+        """
+        try:
+            collection_ref = (self.db.collection('tickers')
+                            .document(ticker.upper())
+                            .collection('sec_financials'))
+            
+            docs = collection_ref.stream()
+            
+            quarterly_data = []
+            annual_data = []
+            
+            for doc in docs:
+                data = doc.to_dict()
+                if data.get('is_annual'):
+                    annual_data.append(data)
+                else:
+                    quarterly_data.append(data)
+            
+            # Sort by fiscal year and quarter
+            quarterly_data.sort(key=lambda x: (x.get('fiscal_year', 0), x.get('fiscal_quarter', 0)))
+            annual_data.sort(key=lambda x: x.get('fiscal_year', 0))
+            
+            return {
+                'quarterly': quarterly_data,
+                'annual': annual_data
+            }
+            
+        except Exception as error:
+            print(f'Error getting all SEC financial data for {ticker}: {error}')
+            return {'quarterly': [], 'annual': []}
     
     
     def _get_years_in_range(self, start_date: datetime, end_date: datetime) -> List[int]:

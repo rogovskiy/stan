@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+  import { NextRequest, NextResponse } from 'next/server';
 import { FirebaseCache } from '../../lib/cache';
+import { YFinanceService } from '../../lib/yfinance';
 import { DailyPriceResponse } from '../../types/api';
 
 const cache = new FirebaseCache();
+const yfinanceService = new YFinanceService();
 
 // Helper function to calculate date range based on period
 function getPeriodDateRange(period: string): { startDate: Date; endDate: Date } {
@@ -43,20 +45,31 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`Daily Prices API Request: ${ticker}, period: ${period} - using cached data only`);
+    console.log(`Daily Prices API Request: ${ticker}, period: ${period}`);
 
     try {
-      // Get ticker metadata from cache
-      const metadata = await cache.getTickerMetadata(ticker);
-      if (!metadata) {
-        return NextResponse.json(
-          { error: `No cached data found for ticker ${ticker}. Please run data fetcher first.` },
-          { status: 404 }
-        );
-      }
-
       // Calculate date range based on period
       const { startDate, endDate } = getPeriodDateRange(period);
+      
+      // Check cache status
+      const cacheStatus = await cache.hasCachedDataForRange(ticker, startDate, endDate);
+      console.log(`Cache status for ${ticker}:`, cacheStatus);
+
+      // Get ticker metadata (fetch and cache if needed)
+      let metadata = await cache.getTickerMetadata(ticker);
+      if (!metadata) {
+        console.log(`No cached metadata for ${ticker}, fetching from Yahoo Finance...`);
+        metadata = await yfinanceService.fetchAndCacheTickerMetadata(ticker);
+      }
+
+      // Fetch missing data if needed
+      if (!cacheStatus.hasAllPriceData || cacheStatus.missingYears.length > 0) {
+        console.log(`Missing price data for ${ticker}, fetching from Yahoo Finance...`);
+        console.log(`Missing years: ${cacheStatus.missingYears.join(', ')}`);
+        
+        // Use YFinanceService to fetch and cache missing data
+        await yfinanceService.fetchStockData(ticker, period);
+      }
       
       console.log(`Fetching cached price data for ${ticker} from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
 

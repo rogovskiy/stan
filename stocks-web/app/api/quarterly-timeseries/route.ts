@@ -83,45 +83,73 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(`Filtering quarterly data from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
+    if (Array.isArray(timeseriesData) && timeseriesData.length > 0) {
+      console.log(`Sample data point keys: ${Object.keys(timeseriesData[0]).join(', ')}`);
+    }
 
-    // Process EPS data and calculate additional metrics
-    // For 'max' period, don't filter by date - return all available data
-    if (timeseriesData.eps && timeseriesData.eps.data) {
-      const dataToProcess = normalizedPeriod === 'max' 
-        ? timeseriesData.eps.data
-        : timeseriesData.eps.data.filter((item: any) => {
-            const itemDate = new Date(item.period_end_date);
+    // Handle new format: timeseriesData is an array with all metrics combined
+    // Check if it's the new format (array) or old format (object with eps.data)
+    let dataToProcess: any[] = [];
+
+    if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
+      // Alternative format: data property contains array
+      dataToProcess = normalizedPeriod === 'max'
+        ? timeseriesData.data
+        : timeseriesData.data.filter((item: any) => {
+            const itemDate = new Date(item.date || item.period_end_date);
             return itemDate >= startDate && itemDate <= endDate;
           });
-          
-      dataToProcess.forEach((item: any) => {
-          // Calculate metrics similar to the original YFinance service
-          const currentPE = 15 + Math.random() * 20; // Generate PE between 15-35
-          const eps = item.value || 0;
-          const fairValue = eps * currentPE;
-          const dividendsPOR = Math.random() * 15 + 10; // Random value between 10-25
-          
-          quarterlyDataPoints.push({
-            date: item.period_end_date,
-            fyDate: item.period_end_date,
-            year: item.year,
-            quarter: item.quarter,
-            eps: eps,
-            normalPE: Math.round(currentPE * 100) / 100,
-            fairValue: Math.round(fairValue * 100) / 100,
-            dividendsPOR: Math.round(dividendsPOR * 100) / 100,
-            estimated: item.estimated
-          });
-        });
     }
+    // sort by date 
+    dataToProcess.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    // Process each data point
+    dataToProcess.forEach((item: any, index: number) => {
+      const eps = item.eps;
+      
+      // Extract date fields - handle different property names
+      const date = item.date || item.period_end_date;
+      const year = item.year || new Date(date).getFullYear();
+      const quarter = item.quarter || `Q${item.fiscal_quarter || 1}`;
+      
+      // Extract dividend_per_share if available (new format)
+      const dividendPerShare = item.dividend_per_share;
+      
+      let currentPE = item.normalPE || item.pe_ratio || 18.0;
+      
+      // sum of last 4 quarters before the current item
+      const annualEps = dataToProcess.slice(Math.max(0, index - 4), index).reduce((sum, item) => sum + item.eps, 0);
+      const fairValue = annualEps * currentPE;
+      
+      // Calculate dividendsPOR (Payout Ratio) from dividend_per_share if available
+      const dividendsPOR = dataToProcess.slice(Math.max(0, index - 4), index).reduce((sum, item) => sum + item.dividend_per_share, 0);
+      quarterlyDataPoints.push({
+        date: date,
+        fyDate: date,
+        year: year,
+        quarter: quarter,
+        eps: eps,
+        normalPE: Math.round(currentPE * 100) / 100,
+        fairValue: fairValue ? Math.round(fairValue * 100) / 100 : undefined,
+        dividendsPOR: Math.round(dividendsPOR * 100) / 100,
+        estimated: item.estimated || false
+      });
+    });
     
-    // TODO: Merge in other quarterly data (revenue, dividends, etc.) if available
+    // Extract ticker symbol - handle both old and new format
+    const tickerSymbol = Array.isArray(timeseriesData) 
+      ? (timeseriesData[0]?.ticker || ticker.toUpperCase())
+      : (timeseriesData.ticker || timeseriesData.metadata?.ticker || ticker.toUpperCase());
+    
+    // Extract metadata - handle both old and new format
+    const metadata = Array.isArray(timeseriesData)
+      ? { updated_at: new Date().toISOString() }
+      : (timeseriesData.metadata || { updated_at: new Date().toISOString() });
     
     const response: QuarterlyDataResponse = {
-      symbol: timeseriesData.ticker,
+      symbol: tickerSymbol,
       data: quarterlyDataPoints,
       metadata: {
-        lastUpdated: timeseriesData.metadata?.updated_at || new Date().toISOString(),
+        lastUpdated: metadata.updated_at || metadata.generated_at || new Date().toISOString(),
         dataRange: {
           start: quarterlyDataPoints.length > 0 ? quarterlyDataPoints[0].date : '',
           end: quarterlyDataPoints.length > 0 ? quarterlyDataPoints[quarterlyDataPoints.length - 1].date : ''

@@ -73,8 +73,8 @@ class QuarterlyTimeSeriesGenerator:
             timeseries = self._extract_timeseries_data(quarterly_data, ticker, verbose)
             
             # Show missing dividends in verbose mode
-            if verbose and timeseries['dividends']['count'] < len(quarterly_data):
-                self._print_missing_dividends(quarterly_data, timeseries['dividends']['data'])
+            if verbose and timeseries.get('missing_dividends'):
+                self._print_missing_dividends(timeseries['missing_dividends'])
             
             # Add metadata
             timeseries['metadata'] = {
@@ -106,19 +106,16 @@ class QuarterlyTimeSeriesGenerator:
                                 ticker: str, verbose: bool) -> Dict[str, Any]:
         """Extract and organize time series data from unified quarterly records"""
         
-        eps_data = []
-        revenue_data = []
-        dividends_data = []
+        timeseries_data = []
+        quarters_with_reasons = []  # Track quarters missing dividends with reasons
         
         for quarter in quarterly_data:
             try:
-                # Create common quarter info using the unified format
-                quarter_info = {
-                    'quarter': f"Q{quarter['fiscal_quarter']}",
-                    'year': quarter['fiscal_year'],
+                # Create data point with all metrics
+                data_point = {
+                    'date': quarter.get('period_end_date'),  # Date when metrics are measured (quarter end)
                     'quarter_key': quarter.get('quarter_key', f"{quarter['fiscal_year']}Q{quarter['fiscal_quarter']}"),
-                    'period_end_date': quarter.get('period_end_date'),
-                    'report_date': quarter.get('report_date')
+                    'data_source': quarter.get('data_source', 'unknown')
                 }
                 
                 # Extract EPS data from unified format (try multiple locations)
@@ -139,12 +136,7 @@ class QuarterlyTimeSeriesGenerator:
                     eps_value = quarter['earnings']['eps_actual']
                 
                 if eps_value is not None:
-                    eps_data.append({
-                        **quarter_info,
-                        'value': float(eps_value),
-                        'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown')
-                    })
+                    data_point['eps'] = float(eps_value)
                 
                 # Extract revenue data from unified format
                 revenue_value = None
@@ -160,12 +152,7 @@ class QuarterlyTimeSeriesGenerator:
                     revenue_value = quarter['financials']['revenue']
                 
                 if revenue_value is not None:
-                    revenue_data.append({
-                        **quarter_info,
-                        'value': float(revenue_value),
-                        'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown')
-                    })
+                    data_point['revenue'] = float(revenue_value)
                 
                 # Calculate dividend per share using outstanding_shares
                 cash_flow = quarter.get('cash_flow_statement', {})
@@ -185,54 +172,64 @@ class QuarterlyTimeSeriesGenerator:
                 if dividends_paid is not None and dividends_paid != 0 and outstanding_shares and outstanding_shares > 0:
                     # Calculate dividend per share: dividends_paid / outstanding_shares
                     dividend_per_share = abs(float(dividends_paid)) / float(outstanding_shares)
-                    dividends_data.append({
-                        **quarter_info,
-                        'value': dividend_per_share,
-                        'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown')
-                    })
+                    data_point['dividend_per_share'] = dividend_per_share
+                else:
+                    # Track reason for missing dividend
+                    reason = None
+                    if dividends_paid is None or dividends_paid == 0:
+                        if not cash_flow:
+                            reason = 'no_cash_flow_statement'
+                        else:
+                            reason = 'no_dividends_paid'
+                    elif not outstanding_shares or outstanding_shares <= 0:
+                        reason = 'no_outstanding_shares'
+                    
+                    if reason:
+                        quarter_info_with_reason = {
+                            'quarter_key': data_point['quarter_key'],
+                            'missing_dividend_reason': reason
+                        }
+                        quarters_with_reasons.append(quarter_info_with_reason)
+                
+                # Only add data point if it has at least one metric
+                if 'eps' in data_point or 'revenue' in data_point or 'dividend_per_share' in data_point:
+                    timeseries_data.append(data_point)
                 
             except Exception as e:
                 if verbose:
                     print(f'   ⚠️  Error processing quarter {quarter.get("quarter_key", "unknown")}: {e}')
                 continue
         
-        # Sort all data by fiscal year and quarter
-        eps_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
-        revenue_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
-        dividends_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
+        # Sort by quarter_key (format: YYYYQN)
+        timeseries_data.sort(key=lambda x: x['quarter_key'])
         
         # Calculate growth rates (YoY - comparing to same quarter previous year)
-        self._calculate_growth_rates(eps_data)
-        self._calculate_growth_rates(revenue_data)
-        self._calculate_growth_rates(dividends_data)
+        self._calculate_growth_rates_unified(timeseries_data)
+        
+        # Calculate summary stats
+        eps_count = sum(1 for d in timeseries_data if 'eps' in d)
+        revenue_count = sum(1 for d in timeseries_data if 'revenue' in d)
+        dividend_count = sum(1 for d in timeseries_data if 'dividend_per_share' in d)
+        
+        latest_with_eps = next((d for d in reversed(timeseries_data) if 'eps' in d), None)
+        latest_with_revenue = next((d for d in reversed(timeseries_data) if 'revenue' in d), None)
+        latest_with_dividend = next((d for d in reversed(timeseries_data) if 'dividend_per_share' in d), None)
         
         return {
             'ticker': ticker.upper(),
-            'eps': {
-                'data': eps_data,
-                'count': len(eps_data),
-                'latest_value': eps_data[-1]['value'] if eps_data else None,
-                'latest_quarter': eps_data[-1]['quarter_key'] if eps_data else None,
-                'latest_growth_rate': eps_data[-1].get('growth_rate') if eps_data else None
+            'data': timeseries_data,
+            'summary': {
+                'total_quarters': len(timeseries_data),
+                'eps_count': eps_count,
+                'revenue_count': revenue_count,
+                'dividend_count': dividend_count,
+                'latest_eps': latest_with_eps['eps'] if latest_with_eps else None,
+                'latest_revenue': latest_with_revenue['revenue'] if latest_with_revenue else None,
+                'latest_dividend': latest_with_dividend['dividend_per_share'] if latest_with_dividend else None,
+                'latest_quarter': timeseries_data[-1]['quarter_key'] if timeseries_data else None
             },
-            'revenue': {
-                'data': revenue_data,
-                'count': len(revenue_data),
-                'latest_value': revenue_data[-1]['value'] if revenue_data else None,
-                'latest_quarter': revenue_data[-1]['quarter_key'] if revenue_data else None,
-                'latest_growth_rate': revenue_data[-1].get('growth_rate') if revenue_data else None
-            },
-            'dividends': {
-                'data': dividends_data,
-                'count': len(dividends_data),
-                'latest_value': dividends_data[-1]['value'] if dividends_data else None,
-                'latest_quarter': dividends_data[-1]['quarter_key'] if dividends_data else None,
-                'latest_growth_rate': dividends_data[-1].get('growth_rate') if dividends_data else None
-            }
+            'missing_dividends': quarters_with_reasons
         }
-    
-    def _create_empty_timeseries(self, ticker: str) -> Dict[str, Any]:
         """Create empty time series structure"""
         return {
             'ticker': ticker.upper(),
@@ -246,6 +243,41 @@ class QuarterlyTimeSeriesGenerator:
                 'data_sources': []
             }
         }
+    
+    def _calculate_growth_rates_unified(self, data: List[Dict[str, Any]]) -> None:
+        """Calculate YoY growth rates for unified time series data
+        
+        Args:
+            data: List of quarter data points with eps, revenue, dividend_per_share fields
+        """
+        # Create lookup by quarter key for faster access
+        data_by_key = {d['quarter_key']: d for d in data}
+        
+        for item in data:
+            quarter_key = item['quarter_key']  # Format: YYYYQN
+            year = int(quarter_key[:4])
+            quarter_num = int(quarter_key[5])  # Extract N from YYYYQN
+            
+            # Look for same quarter in previous year
+            previous_year_key = f"{year - 1}Q{quarter_num}"
+            
+            if previous_year_key in data_by_key:
+                prev_item = data_by_key[previous_year_key]
+                
+                # Calculate EPS growth
+                if 'eps' in item and 'eps' in prev_item and prev_item['eps'] != 0:
+                    growth_rate = ((item['eps'] - prev_item['eps']) / prev_item['eps']) * 100
+                    item['eps_growth'] = round(growth_rate, 2)
+                
+                # Calculate Revenue growth
+                if 'revenue' in item and 'revenue' in prev_item and prev_item['revenue'] != 0:
+                    growth_rate = ((item['revenue'] - prev_item['revenue']) / prev_item['revenue']) * 100
+                    item['revenue_growth'] = round(growth_rate, 2)
+                
+                # Calculate Dividend growth
+                if 'dividend_per_share' in item and 'dividend_per_share' in prev_item and prev_item['dividend_per_share'] != 0:
+                    growth_rate = ((item['dividend_per_share'] - prev_item['dividend_per_share']) / prev_item['dividend_per_share']) * 100
+                    item['dividend_growth'] = round(growth_rate, 2)
     
     def _calculate_growth_rates(self, data: List[Dict[str, Any]]) -> None:
         """Calculate YoY growth rates for time series data (comparing to same quarter previous year)
@@ -275,54 +307,51 @@ class QuarterlyTimeSeriesGenerator:
             else:
                 item['growth_rate'] = None  # No comparison data available
     
-    def _print_missing_dividends(self, quarterly_data: List[Dict[str, Any]], dividends_data: List[Dict[str, Any]]) -> None:
-        """Print which quarters are missing dividend data"""
-        # Create set of quarter keys that have dividends
-        quarters_with_dividends = {d['quarter_key'] for d in dividends_data}
-        
-        # Find quarters without dividends
-        missing_quarters = []
-        for quarter in quarterly_data:
-            quarter_key = f"{quarter['fiscal_year']}Q{quarter['fiscal_quarter']}"
-            if quarter_key not in quarters_with_dividends:
-                missing_quarters.append(quarter_key)
-        
-        if missing_quarters:
-            print(f'\n⚠️  Quarters missing dividends data ({len(missing_quarters)}):')
-            # Group by year for better readability
-            by_year = {}
-            for q in missing_quarters:
-                year = q[:4]
-                if year not in by_year:
-                    by_year[year] = []
-                by_year[year].append(q)
+    def _print_missing_dividends(self, missing_dividends: List[Dict[str, Any]]) -> None:
+        """Print which quarters are missing dividend data with reasons"""
+        if not missing_dividends:
+            return
             
-            for year in sorted(by_year.keys()):
-                quarters = ', '.join(by_year[year])
-                print(f'   {year}: {quarters}')
+        print(f'\n⚠️  Quarters missing dividends data ({len(missing_dividends)}):')
+        
+        # Group by year and reason
+        by_year = {}
+        for q in missing_dividends:
+            quarter_key = q['quarter_key']  # Format: YYYYQN
+            year = quarter_key[:4]
+            if year not in by_year:
+                by_year[year] = []
+            
+            reason_text = {
+                'no_cash_flow_statement': 'no cash flow',
+                'no_dividends_paid': 'no dividends',
+                'no_outstanding_shares': 'no shares data'
+            }.get(q['missing_dividend_reason'], 'unknown')
+            
+            by_year[year].append(f"{quarter_key} ({reason_text})")
+        
+        for year in sorted(by_year.keys()):
+            quarters = ', '.join(by_year[year])
+            print(f'   {year}: {quarters}')
     
     def _print_summary(self, timeseries: Dict[str, Any]) -> None:
         """Print summary of generated time series"""
+        summary = timeseries.get('summary', {})
+        
         print(f'\n📈 Time Series Summary for {timeseries["ticker"]}:')
-        print(f'   EPS: {timeseries["eps"]["count"]} quarters')
-        if timeseries["eps"]["latest_value"]:
-            latest_growth = timeseries["eps"].get("latest_growth_rate")
-            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
-            print(f'       Latest: ${timeseries["eps"]["latest_value"]:.2f} ({timeseries["eps"]["latest_quarter"]}){growth_str}')
+        print(f'   Total quarters: {summary.get("total_quarters", 0)}')
+        print(f'   EPS: {summary.get("eps_count", 0)} quarters')
+        if summary.get('latest_eps'):
+            print(f'       Latest: ${summary["latest_eps"]:.2f}')
         
-        print(f'   Revenue: {timeseries["revenue"]["count"]} quarters')
-        if timeseries["revenue"]["latest_value"]:
-            revenue_b = timeseries["revenue"]["latest_value"] / 1_000_000_000
-            latest_growth = timeseries["revenue"].get("latest_growth_rate")
-            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
-            print(f'       Latest: ${revenue_b:.2f}B ({timeseries["revenue"]["latest_quarter"]}){growth_str}')
+        print(f'   Revenue: {summary.get("revenue_count", 0)} quarters')
+        if summary.get('latest_revenue'):
+            revenue_b = summary['latest_revenue'] / 1_000_000_000
+            print(f'       Latest: ${revenue_b:.2f}B')
         
-        print(f'   Dividends: {timeseries["dividends"]["count"]} quarters')
-        if timeseries["dividends"]["latest_value"]:
-            dividends_b = timeseries["dividends"]["latest_value"] / 1_000_000_000
-            latest_growth = timeseries["dividends"].get("latest_growth_rate")
-            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
-            print(f'       Latest: ${dividends_b:.3f}B ({timeseries["dividends"]["latest_quarter"]}){growth_str}')
+        print(f'   Dividends: {summary.get("dividend_count", 0)} quarters')
+        if summary.get('latest_dividend'):
+            print(f'       Latest: ${summary["latest_dividend"]:.4f} per share')
     
     def get_cached_quarterly_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
         """Get cached quarterly time series"""
@@ -403,10 +432,11 @@ Examples:
         print(f'\n📊 Generation Summary:')
         for ticker, data in results.items():
             metadata = data.get('metadata', {})
+            summary = data.get('summary', {})
             quarters = metadata.get('quarters_processed', 0)
-            eps_count = data.get('eps', {}).get('count', 0)
-            revenue_count = data.get('revenue', {}).get('count', 0)
-            dividends_count = data.get('dividends', {}).get('count', 0)
+            eps_count = summary.get('eps_count', 0)
+            revenue_count = summary.get('revenue_count', 0)
+            dividends_count = summary.get('dividend_count', 0)
             
             print(f'   {ticker}: {quarters} quarters → EPS: {eps_count}, Revenue: {revenue_count}, Dividends: {dividends_count}')
         

@@ -59,12 +59,162 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
   // Use stockData directly - no client-side filtering since API handles period filtering
   const filteredStockData = stockData;
 
+  // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
+  const { xAxisTicks, isQuarterlyMode } = useMemo(() => {
+    if (filteredStockData.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
+    
+    const quarterlyDates = filteredStockData
+      .filter(item => item.hasQuarterlyData)
+      .map(item => item.fullDate);
+    
+    if (quarterlyDates.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
+    
+    // Calculate time range in years
+    const firstDate = new Date(quarterlyDates[0]);
+    const lastDate = new Date(quarterlyDates[quarterlyDates.length - 1]);
+    const yearsDiff = (lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    
+    // If <= 3 years, show all quarterly ticks
+    if (yearsDiff <= 3) {
+      return { xAxisTicks: quarterlyDates, isQuarterlyMode: true };
+    }
+    
+    // If > 3 years, show only Q4 dates (last quarter of each year)
+    // Group by year and take the last quarterly date from each year
+    const quarterlyByYear = new Map<number, string[]>();
+    quarterlyDates.forEach(dateStr => {
+      const date = new Date(dateStr);
+      const year = date.getFullYear();
+      if (!quarterlyByYear.has(year)) {
+        quarterlyByYear.set(year, []);
+      }
+      quarterlyByYear.get(year)!.push(dateStr);
+    });
+    
+    // Get the last quarterly date from each year (sorted to ensure we get the latest)
+    const q4Dates = Array.from(quarterlyByYear.values())
+      .map(yearDates => yearDates.sort().pop()!)
+      .filter(Boolean)
+      .sort();
+    
+    return { xAxisTicks: q4Dates, isQuarterlyMode: false };
+  }, [filteredStockData]);
+
+  // Helper function to get quarter number from date (1-4)
+  const getQuarter = (date: Date): number => {
+    const month = date.getMonth() + 1; // getMonth() returns 0-11
+    return Math.ceil(month / 3);
+  };
+
+  // Filter table data to match chart ticks and aggregate when in yearly mode
+  const tableData = useMemo(() => {
+    if (xAxisTicks.length === 0) return [];
+    
+    // If quarterly mode, filter by exact tick dates
+    if (isQuarterlyMode) {
+      const tickDatesSet = new Set(xAxisTicks);
+      return filteredStockData.filter(item => 
+        tickDatesSet.has(item.fullDate) && item.hasQuarterlyData
+      );
+    }
+    
+    // If yearly mode, extract years from ticks and get ALL quarterly data for those years
+    const tickYears = new Set(xAxisTicks.map(dateStr => new Date(dateStr).getFullYear()));
+    
+    // Get all quarterly data points for the years in ticks
+    const quarterlyDataPoints = filteredStockData.filter(item => {
+      if (!item.hasQuarterlyData) return false;
+      const itemYear = new Date(item.fullDate).getFullYear();
+      return tickYears.has(itemYear);
+    });
+    
+    // Aggregate data by year
+    const yearlyData = new Map<number, {
+      fullDate: string;
+      year: number;
+      peRatio: number[];
+      earnings: number[];
+      dividend: number[];
+    }>();
+    
+    quarterlyDataPoints.forEach(item => {
+      const year = new Date(item.fullDate).getFullYear();
+      
+      if (!yearlyData.has(year)) {
+        yearlyData.set(year, {
+          fullDate: item.fullDate, // Keep the last date of the year
+          year,
+          peRatio: [],
+          earnings: [],
+          dividend: []
+        });
+      }
+      
+      const yearData = yearlyData.get(year)!;
+      
+      if (item.peRatio !== null) {
+        yearData.peRatio.push(item.peRatio);
+      }
+      if (item.earnings !== null) {
+        yearData.earnings.push(item.earnings);
+      }
+      if (item.dividend !== null) {
+        yearData.dividend.push(item.dividend);
+      }
+      
+      // Update fullDate to the latest date in the year
+      if (new Date(item.fullDate) > new Date(yearData.fullDate)) {
+        yearData.fullDate = item.fullDate;
+      }
+    });
+    console.log('Yearly data:', yearlyData);
+    // Convert aggregated data back to TransformedDataPoint format
+    return Array.from(yearlyData.values())
+      .sort((a, b) => a.year - b.year)
+      .map(yearData => ({
+        fullDate: yearData.fullDate,
+        date: yearData.year.toString(),
+        stockPrice: null,
+        estimated: false,
+        year: yearData.year,
+        frequency: 'yearly',
+        marketCap: null,
+        volume: 0,
+        earnings: yearData.earnings.length > 0 
+          ? yearData.earnings.reduce((sum, val) => sum + val, 0) 
+          : null,
+        normalPE: null,
+        dividendsPOR: null,
+        hasQuarterlyData: true,
+        peRatio: yearData.peRatio.length > 0 
+          ? yearData.peRatio.reduce((sum, val) => sum + val, 0) / yearData.peRatio.length 
+          : null,
+        revenue: null,
+        dividend: yearData.dividend.length > 0 
+          ? yearData.dividend.reduce((sum, val) => sum + val, 0) 
+          : null
+      }));
+  }, [filteredStockData, xAxisTicks, isQuarterlyMode]);
+
+  // Format date for table header (matches chart tick formatter)
+  const formatTableDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    if (isQuarterlyMode) {
+      const year = date.getFullYear();
+      const quarter = getQuarter(date);
+      return `${year}Q${quarter}`;
+    } else {
+      return date.getFullYear().toString();
+    }
+  };
+
   // Debug logging for chart data
   console.log('Chart data debug:', {
     totalPoints: filteredStockData.length,
     firstDate: filteredStockData.length > 0 ? filteredStockData[0].fullDate : 'none',
     lastDate: filteredStockData.length > 0 ? filteredStockData[filteredStockData.length - 1].fullDate : 'none',
-    sampleDates: filteredStockData.slice(0, 5).map(p => p.fullDate)
+    sampleDates: filteredStockData.slice(0, 5).map(p => p.fullDate),
+    xAxisTicksCount: xAxisTicks.length
   });
 
   // Handle legend click to toggle series visibility
@@ -130,6 +280,27 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     return null;
   };
 
+  // Custom dot component for quarterly data points on the area chart
+  const QuarterlyDot = (props: any) => {
+    const { cx, cy, payload } = props;
+    
+    // Only show dot if this data point has quarterly data
+    if (!payload || !payload.hasQuarterlyData) {
+      return null;
+    }
+    
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={5}
+        fill="#f97316"
+        stroke="#fff"
+        strokeWidth={2}
+      />
+    );
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
       {/* Header with title and interval picker */}
@@ -173,10 +344,18 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                 type="category"
                 scale="point"
                 tick={{ fontSize: 12 }}
-                interval="preserveStartEnd"
+                ticks={xAxisTicks}
                 tickFormatter={(value) => {
                   const date = new Date(value);
-                  return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                  if (isQuarterlyMode) {
+                    // Format as yyyyQQ (e.g., "2024Q1")
+                    const year = date.getFullYear();
+                    const quarter = getQuarter(date);
+                    return `${year}Q${quarter}`;
+                  } else {
+                    // Format as year only (e.g., "2024")
+                    return date.getFullYear().toString();
+                  }
                 }}
               />
               <YAxis tick={{ fontSize: 12 }} />
@@ -185,7 +364,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
               {/* Fair Value Area */}
               {visibleSeries.fairValue && (
                 <Area
-                  type="monotone"
+                  type="linear"
                   dataKey="fairValue"
                   stroke="#f97316"
                   fill="#f97316"
@@ -193,7 +372,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                   strokeWidth={1}
                   name="Fair Value (Quarterly)"
                   connectNulls={true}
-                  dot={false}
+                  dot={<QuarterlyDot />}
                 />
               )}
               
@@ -206,7 +385,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                   fill="#fbbf24"
                   fillOpacity={0.1}
                   strokeWidth={1}
-                  name="Dividend (Quarterly)"
+                  name="Dividend"
                   connectNulls={true}
                   dot={false}
                 />
@@ -240,45 +419,37 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
             <table className="w-full">
               <thead>
                 <tr className="border-b-2 border-gray-200">
-                  <th className="text-left py-3 px-2 font-bold text-gray-900 w-20 text-sm uppercase tracking-wide">Metric</th>
-                  {filteredStockData.filter(item => item.fairValue !== null).map((item) => (
-                    <th key={item.date} className="text-center py-3 px-3 font-bold text-gray-900 text-sm tracking-tight" 
-                        style={{ width: `${100 / filteredStockData.filter(item => item.fairValue !== null).length}%` }}>
-                      {item.fullDate}
+                  <th className="text-left py-3 px-1.5 font-bold text-gray-900 w-16 text-sm uppercase tracking-wide">&nbsp;</th>
+                  {tableData.map((item, index) => (
+                    <th key={item.fullDate} className={`text-left py-3 font-bold text-gray-900 text-sm tracking-tight ${index === tableData.length - 1 ? 'w-16 px-1.5' : 'px-3'}`}
+                        style={index === tableData.length - 1 ? {} : { width: `${100 / tableData.length}%` }}>
+                      {formatTableDate(item.fullDate)}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="text-sm">
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white transition-colors">
-                  <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">P/E</td>
-                  {filteredStockData.filter(item => item.fairValue !== null).map((item) => (
-                    <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
+                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">PE</td>
+                  {tableData.map((item, index) => (
+                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
                       {item.peRatio?.toFixed(1) || '0.0'}
                     </td>
                   ))}
                 </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
-                  <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">Fair Val</td>
-                  {filteredStockData.filter(item => item.fairValue !== null).map((item) => (
-                    <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                      ${item.fairValue?.toFixed(0) || '0'}
-                    </td>
-                  ))}
-                </tr>
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-                  <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">EPS</td>
-                  {filteredStockData.filter(item => item.fairValue !== null).map((item) => (
-                    <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                      ${item.earnings?.toFixed(2) || '0.00'}
+                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS</td>
+                  {tableData.map((item, index) => (
+                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                      ${item.earnings?.toFixed(2) || '-'}
                     </td>
                   ))}
                 </tr>
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
-                  <td className="py-3 px-2 font-bold text-gray-900 uppercase tracking-wide">Div</td>
-                  {filteredStockData.filter(item => item.fairValue !== null).map((item) => (
-                    <td key={item.date} className="py-3 px-3 text-center text-gray-700 font-semibold">
-                      ${item.dividend?.toFixed(2) || '0.00'}
+                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">Dividend</td>
+                  {tableData.map((item, index) => (
+                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                      ${item.dividend?.toFixed(2) || '-'}
                     </td>
                   ))}
                 </tr>

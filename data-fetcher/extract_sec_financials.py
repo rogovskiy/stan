@@ -659,9 +659,58 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
         print(f"  Unique (ddate, qtrs) combinations: {is_standardized_df[['ddate', 'qtrs']].drop_duplicates().to_dict('records')}")
     
     # Deduplicate: Multiple filings can have same (ddate, qtrs) due to amendments/restatements
-    # Keep the latest filing (largest adsh = most recent accession number) for each (ddate, qtrs)
+    # Filter out restatements with substantial changes in outstanding_shares (e.g., stock splits)
+    # This ensures we use original filings, not post-split restatements
     if len(is_standardized_df) > 0:
-        is_standardized_df = is_standardized_df.sort_values('adsh', ascending=False).drop_duplicates(subset=['ddate', 'qtrs'], keep='first')
+        # Process each unique (ddate, qtrs) combination separately to avoid FutureWarning
+        unique_periods = is_standardized_df[['ddate', 'qtrs']].drop_duplicates()
+        filtered_results = []
+        
+        for _, period in unique_periods.iterrows():
+            ddate = period['ddate']
+            qtrs = period['qtrs']
+            
+            # Get all filings for this period
+            period_data = is_standardized_df[
+                (is_standardized_df['ddate'] == ddate) & 
+                (is_standardized_df['qtrs'] == qtrs)
+            ].copy()
+            
+            if len(period_data) == 1:
+                # Only one filing, keep it
+                filtered_results.append(period_data)
+            else:
+                # Multiple filings - filter by share count changes
+                period_with_shares = period_data[period_data['OutstandingShares'].notna()].copy()
+                
+                if len(period_with_shares) == 0:
+                    # No share data, keep latest
+                    filtered_results.append(period_data.sort_values('adsh', ascending=False).head(1))
+                elif len(period_with_shares) == 1:
+                    # Only one with share data, keep it
+                    filtered_results.append(period_with_shares)
+                else:
+                    # Calculate share count statistics
+                    shares = period_with_shares['OutstandingShares'].values
+                    min_shares = shares.min()
+                    max_shares = shares.max()
+                    
+                    # If there's a substantial change (>50% difference), prefer the smaller share count
+                    # (original filing, not post-split restatement)
+                    if max_shares > 0 and (max_shares / min_shares) > 1.5:
+                        # Substantial change detected - prefer original (smaller share count)
+                        filtered_results.append(
+                            period_with_shares.sort_values('OutstandingShares', ascending=True).head(1)
+                        )
+                    else:
+                        # No substantial change, keep latest filing
+                        filtered_results.append(
+                            period_with_shares.sort_values('adsh', ascending=False).head(1)
+                        )
+        
+        # Combine all filtered results
+        if filtered_results:
+            is_standardized_df = pd.concat(filtered_results, ignore_index=True)
     if len(bs_standardized_df) > 0:
         bs_standardized_df = bs_standardized_df.sort_values('adsh', ascending=False).drop_duplicates(subset=['ddate', 'qtrs'], keep='first')
     if len(cf_standardized_df) > 0:
@@ -900,15 +949,6 @@ def _derive_q4_quarters(quarters, cumulative_data, annual_data_records):
         
         q4_stmt = {}
         
-        # Derive Q4 EPS by subtracting Q3 cumulative from annual
-        # Try both 'earnings_per_share_annual' and 'earnings_per_share' fields
-        annual_eps = annual_stmt.get('earnings_per_share_annual') or annual_stmt.get('earnings_per_share')
-        q3_cumulative_eps = cumulative_stmt.get('earnings_per_share')
-        
-        if annual_eps is not None and q3_cumulative_eps is not None:
-            # Q4 EPS = Annual EPS - Q3_cumulative EPS (where Q3_cumulative = Q1+Q2+Q3)
-            q4_stmt['earnings_per_share'] = annual_eps - q3_cumulative_eps
-        
         # Calculate Q4 for other income statement fields
         for field in annual_stmt.keys():
             if field.endswith('_percent') or field.endswith('_annual') or field == 'earnings_per_share_annual':
@@ -924,6 +964,16 @@ def _derive_q4_quarters(quarters, cumulative_data, annual_data_records):
             cumulative_value = cumulative_stmt.get(field)
             if annual_value is not None and cumulative_value is not None:
                 q4_stmt[field] = annual_value - cumulative_value
+        
+        # Calculate Q4 EPS from Q4 net income and outstanding shares
+        # This is more accurate than subtracting EPS values, which can be incorrect
+        # if share counts differ between periods or EPS is calculated differently
+        # This also prevents negative EPS that can occur from EPS subtraction
+        if 'net_income' in q4_stmt and 'outstanding_shares' in q4_stmt:
+            net_income = q4_stmt['net_income']
+            shares = q4_stmt['outstanding_shares']
+            if shares is not None and shares > 0:
+                q4_stmt['earnings_per_share'] = round(net_income / shares, 2)
         
         # Calculate Q4 cash flow
         q4_cf = {}

@@ -94,7 +94,7 @@ class FirebaseCache:
             print(f'Error getting metadata for {ticker}: {error}')
             return None
     
-    def cache_annual_price_data(self, ticker: str, year: int, price_data: Dict[str, Any]) -> None:
+    def cache_annual_price_data(self, ticker: str, year: int, price_data: Dict[str, Any], verbose: bool = True) -> None:
         """Cache annual price data to Firebase Storage and update consolidated reference"""
         try:
             upper_ticker = ticker.upper()
@@ -103,7 +103,8 @@ class FirebaseCache:
             storage_path = f'price_data/{upper_ticker}/{year}.json'
             json_data = json.dumps(price_data, indent=2)
             
-            print(f'Uploading price data for {ticker} {year} to Storage...')
+            if verbose:
+                print(f'Uploading price data for {ticker} {year} to Storage...')
             blob = self.bucket.blob(storage_path)
             blob.upload_from_string(json_data, content_type='application/json')
             
@@ -152,7 +153,8 @@ class FirebaseCache:
             
             price_data_ref.set(consolidated_data)
             
-            print(f'Cached annual price data for {ticker} {year} ({len(json_data.encode("utf-8"))} bytes)')
+            if verbose:
+                print(f'Cached annual price data for {ticker} {year} ({len(json_data.encode("utf-8"))} bytes)')
         except Exception as error:
             print(f'Error caching annual price data for {ticker} {year}: {error}')
             raise error
@@ -218,55 +220,16 @@ class FirebaseCache:
         return price_data
     
     def cache_quarterly_financial_data(self, ticker: str, quarter_key: str, financial_data: Dict[str, Any]) -> None:
-        """Cache quarterly financial data to Firestore"""
-        try:
-            doc_ref = self.db.collection('tickers').document(ticker.upper()).collection('quarters').document(quarter_key)
-            financial_data_with_timestamp = {
-                **financial_data,
-                'last_updated': datetime.now().isoformat()
-            }
-            doc_ref.set(financial_data_with_timestamp)
-            print(f'Cached financial data for {ticker} {quarter_key}')
-        except Exception as error:
-            print(f'Error caching financial data for {ticker} {quarter_key}: {error}')
-            raise error
+        """Cache quarterly financial data to Firestore (alias for set_sec_financial_data)"""
+        self.set_sec_financial_data(ticker, quarter_key, financial_data)
     
     def get_quarterly_financial_data(self, ticker: str, quarter_key: str) -> Optional[Dict[str, Any]]:
-        """Get quarterly financial data from Firestore"""
-        try:
-            doc_ref = self.db.collection('tickers').document(ticker.upper()).collection('quarters').document(quarter_key)
-            doc = doc_ref.get()
-            
-            if doc.exists:
-                data = doc.to_dict()
-                
-                # Return the data if it exists (no expiration logic)
-                print(f'Retrieved financial data for {ticker} {quarter_key}')
-                # Remove last_updated from returned data if it exists
-                financial_data = {k: v for k, v in data.items() if k != 'last_updated'}
-                return financial_data
-            
-            return None
-        except Exception as error:
-            print(f'Error getting financial data for {ticker} {quarter_key}: {error}')
-            return None
+        """Get quarterly financial data from Firestore (alias for get_sec_financial_data)"""
+        return self.get_sec_financial_data(ticker, quarter_key)
 
     def get_all_financial_data(self, ticker: str) -> List[Dict[str, Any]]:
-        """Get all available financial data for a ticker (no date restrictions)"""
-        financial_data = []
-        
-        # Check a wide range of years to find all available data
-        # Starting from 1990 to current year + 5 should cover everything
-        current_year = datetime.now().year
-        for year in range(1990, current_year + 6):
-            for quarter in range(1, 5):
-                quarter_key = f'{year}Q{quarter}'
-                quarter_data = self.get_quarterly_financial_data(ticker, quarter_key)
-                
-                if quarter_data:
-                    financial_data.append(quarter_data)
-        
-        return financial_data
+        """Get all available financial data for a ticker"""
+        return self.get_all_sec_financial_data(ticker)
 
     def get_financial_data_range(self, ticker: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
         """Get financial data for multiple quarters"""
@@ -278,7 +241,7 @@ class FirebaseCache:
         for year in range(start_year, end_year + 1):
             for quarter in range(1, 5):
                 quarter_key = f'{year}Q{quarter}'
-                quarter_data = self.get_quarterly_financial_data(ticker, quarter_key)
+                quarter_data = self.get_sec_financial_data(ticker, quarter_key)
                 
                 if quarter_data:
                     # Check if quarter falls within date range using period_end_date
@@ -393,7 +356,7 @@ class FirebaseCache:
         for year in range(start_year, end_year + 1):
             for quarter in range(1, 5):
                 quarter_key = f'{year}Q{quarter}'
-                quarter_data = self.get_quarterly_financial_data(ticker, quarter_key)
+                quarter_data = self.get_sec_financial_data(ticker, quarter_key)
                 
                 if not quarter_data:
                     has_financial_data = False
@@ -451,10 +414,10 @@ class FirebaseCache:
             data: Financial statement data including income statement, balance sheet, and cash flow
         """
         try:
-            # Store in tickers/{ticker}/sec_financials/{period_key}
+            # Store in tickers/{ticker}/quarters/{period_key}
             doc_ref = (self.db.collection('tickers')
                       .document(ticker.upper())
-                      .collection('sec_financials')
+                      .collection('quarters')
                       .document(period_key))
             
             doc_ref.set(data)
@@ -476,7 +439,7 @@ class FirebaseCache:
         try:
             doc_ref = (self.db.collection('tickers')
                       .document(ticker.upper())
-                      .collection('sec_financials')
+                      .collection('quarters')
                       .document(period_key))
             
             doc = doc_ref.get()
@@ -488,44 +451,36 @@ class FirebaseCache:
             print(f'Error getting SEC financial data for {ticker} {period_key}: {error}')
             return None
     
-    def get_all_sec_financial_data(self, ticker: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Get all SEC financial statement data for a ticker
+    def get_all_sec_financial_data(self, ticker: str) -> List[Dict[str, Any]]:
+        """Get all financial statement data for a ticker
         
         Args:
             ticker: Stock ticker symbol
             
         Returns:
-            Dict with 'quarterly' and 'annual' lists of financial data
+            List of all financial data (quarterly and annual)
         """
         try:
             collection_ref = (self.db.collection('tickers')
                             .document(ticker.upper())
-                            .collection('sec_financials'))
+                            .collection('quarters'))
             
             docs = collection_ref.stream()
             
-            quarterly_data = []
-            annual_data = []
+            all_data = []
             
             for doc in docs:
                 data = doc.to_dict()
-                if data.get('is_annual'):
-                    annual_data.append(data)
-                else:
-                    quarterly_data.append(data)
+                all_data.append(data)
             
             # Sort by fiscal year and quarter
-            quarterly_data.sort(key=lambda x: (x.get('fiscal_year', 0), x.get('fiscal_quarter', 0)))
-            annual_data.sort(key=lambda x: x.get('fiscal_year', 0))
+            all_data.sort(key=lambda x: (x.get('fiscal_year', 0), x.get('fiscal_quarter', 0)))
             
-            return {
-                'quarterly': quarterly_data,
-                'annual': annual_data
-            }
+            return all_data
             
         except Exception as error:
-            print(f'Error getting all SEC financial data for {ticker}: {error}')
-            return {'quarterly': [], 'annual': []}
+            print(f'Error getting all financial data for {ticker}: {error}')
+            return []
     
     
     def _get_years_in_range(self, start_date: datetime, end_date: datetime) -> List[int]:

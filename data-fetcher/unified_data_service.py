@@ -23,7 +23,6 @@ class UnifiedDataService:
     def __init__(self, cache_dir: str = './sec_data_cache'):
         self.cache_dir = cache_dir
         self.yfinance_service = YFinanceService(cache_dir=cache_dir)
-        print("✅ Unified data service initialized")
     
     def _is_recent_quarter(self, year: int, quarter: int) -> bool:
         """

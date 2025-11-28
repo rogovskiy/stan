@@ -8,7 +8,7 @@ import pandas as pd
 import json
 from pathlib import Path
 
-def load_cached_data(cache_dir: str = './sec_data_cache'):
+def load_cached_data(cache_dir: str = './sec_data_cache', verbose: bool = True):
     """
     Load cached SEC data from disk
     
@@ -22,8 +22,9 @@ def load_cached_data(cache_dir: str = './sec_data_cache'):
         print(f"Run 'python save_filtered_sec_data.py' first to create the cache")
         return None
     
-    print(f"Loading cached SEC data from: {cache_path.absolute()}")
-    print("=" * 70)
+    if verbose:
+        print(f"Loading cached SEC data from: {cache_path.absolute()}")
+        print("=" * 70)
     
     data = {}
     
@@ -32,40 +33,47 @@ def load_cached_data(cache_dir: str = './sec_data_cache'):
     if pickle_file.exists():
         with open(pickle_file, 'rb') as f:
             data['raw_data_bag'] = pickle.load(f)
-        print(f"✓ Loaded raw_data_bag from pickle")
+        if verbose:
+            print(f"✓ Loaded raw_data_bag from pickle")
     
     # Load parquet files
     num_df_file = cache_path / 'num_df.parquet'
     if num_df_file.exists():
         data['num_df'] = pd.read_parquet(num_df_file)
-        print(f"✓ Loaded num_df: {data['num_df'].shape}")
+        if verbose:
+            print(f"✓ Loaded num_df: {data['num_df'].shape}")
     
     pre_df_file = cache_path / 'pre_df.parquet'
     if pre_df_file.exists():
         data['pre_df'] = pd.read_parquet(pre_df_file)
-        print(f"✓ Loaded pre_df: {data['pre_df'].shape}")
+        if verbose:
+            print(f"✓ Loaded pre_df: {data['pre_df'].shape}")
     
     sub_df_file = cache_path / 'sub_df.parquet'
     if sub_df_file.exists():
         data['sub_df'] = pd.read_parquet(sub_df_file)
-        print(f"✓ Loaded sub_df: {data['sub_df'].shape}")
+        if verbose:
+            print(f"✓ Loaded sub_df: {data['sub_df'].shape}")
     
     # Load metadata
     metadata_file = cache_path / 'metadata.json'
     if metadata_file.exists():
         with open(metadata_file, 'r') as f:
             data['metadata'] = json.load(f)
-        print(f"✓ Loaded metadata")
+        if verbose:
+            print(f"✓ Loaded metadata")
     
     # Load summary
     summary_file = cache_path / 'summary.json'
     if summary_file.exists():
         with open(summary_file, 'r') as f:
             data['summary'] = json.load(f)
-        print(f"✓ Loaded summary")
+        if verbose:
+            print(f"✓ Loaded summary")
     
-    print("=" * 70)
-    print(f"✓ All cached data loaded successfully!")
+    if verbose:
+        print("=" * 70)
+        print(f"✓ All cached data loaded successfully!")
     
     return data
 
@@ -117,7 +125,7 @@ def inspect_cached_data(cache_dir: str = './sec_data_cache'):
     
     return data
 
-def filter_by_ticker(data, ticker: str):
+def filter_by_ticker(data, ticker: str, verbose: bool = True):
     """Filter cached data for a specific ticker"""
     if 'summary' not in data:
         print("Error: Summary data not found")
@@ -135,17 +143,20 @@ def filter_by_ticker(data, ticker: str):
     
     if 'num_df' in data:
         filtered_data['num_df'] = data['num_df'][data['num_df']['adsh'].str.startswith(cik_padded)]
-        print(f"✓ Filtered num_df for {ticker}: {filtered_data['num_df'].shape}")
+        if verbose:
+            print(f"✓ Filtered num_df for {ticker}: {filtered_data['num_df'].shape}")
     
     if 'pre_df' in data:
         # pre_df filtering requires matching adsh values
         ticker_adsh = filtered_data['num_df']['adsh'].unique()
         filtered_data['pre_df'] = data['pre_df'][data['pre_df']['adsh'].isin(ticker_adsh)]
-        print(f"✓ Filtered pre_df for {ticker}: {filtered_data['pre_df'].shape}")
+        if verbose:
+            print(f"✓ Filtered pre_df for {ticker}: {filtered_data['pre_df'].shape}")
     
     if 'sub_df' in data:
         filtered_data['sub_df'] = data['sub_df'][data['sub_df']['adsh'].isin(ticker_adsh)]
-        print(f"✓ Filtered sub_df for {ticker}: {filtered_data['sub_df'].shape}")
+        if verbose:
+            print(f"✓ Filtered sub_df for {ticker}: {filtered_data['sub_df'].shape}")
     
     return filtered_data
 

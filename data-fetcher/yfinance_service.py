@@ -19,7 +19,6 @@ class YFinanceService:
     
     def __init__(self, cache_dir: str = './sec_data_cache'):
         self.cache_dir = cache_dir
-        print("✅ YFinance service initialized")
     
     def _get_fiscal_quarter_from_date(self, date, fiscal_year_end_month: int) -> tuple:
         """Calculate fiscal year and quarter from date based on fiscal year-end month

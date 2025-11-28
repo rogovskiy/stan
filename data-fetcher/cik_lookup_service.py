@@ -32,10 +32,11 @@ class CIKLookupService:
             print(f"Error getting CIK for {ticker}: {e}")
             return None
     
-    def _load_sec_company_tickers(self):
+    def _load_sec_company_tickers(self, verbose: bool = True):
         """Load company tickers from SEC's official API"""
         try:
-            print("📥 Downloading SEC company tickers database...")
+            if verbose:
+                print("📥 Downloading SEC company tickers database...")
             
             # SEC's official endpoint
             url = "https://www.sec.gov/files/company_tickers.json"
@@ -62,7 +63,8 @@ class CIKLookupService:
             
             self._last_cache_update = time.time()
             
-            print(f"✅ Loaded {len(self._ticker_cache)} companies from SEC")
+            if verbose:
+                print(f"✅ Loaded {len(self._ticker_cache)} companies from SEC")
             
         except Exception as e:
             print(f"❌ Error loading SEC company tickers: {e}")

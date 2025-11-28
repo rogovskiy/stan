@@ -463,7 +463,7 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
         if _sec_data_cache is None:
             if verbose:
                 print(f"Loading cached SEC data for {ticker}...")
-            _sec_data_cache = load_cached_data(cache_dir)
+            _sec_data_cache = load_cached_data(cache_dir, verbose=False)  # Always suppress load messages
         cached_data = _sec_data_cache
         
     if not cached_data:
@@ -474,8 +474,8 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
     if cache_key in _ticker_data_cache:
         ticker_data = _ticker_data_cache[cache_key]
     else:
-        # Filter for this ticker and cache it
-        ticker_data = filter_by_ticker(cached_data, ticker)
+        # Filter for this ticker and cache it (suppress filter messages)
+        ticker_data = filter_by_ticker(cached_data, ticker, verbose=False)
         if not ticker_data:
             return None, None, None, None, None
         _ticker_data_cache[cache_key] = ticker_data
@@ -1100,22 +1100,42 @@ class SECFinancialsService:
             return True  # Already loaded
         
         try:
-            # Extract all data for this ticker (no year/quarter filter)
-            result = _extract_single_ticker_data(
-                ticker=ticker,
-                fiscal_year=None,
-                fiscal_quarter=None,
-                verbose=verbose,
-                cache_dir=self.cache_dir
+            # Load and standardize all data for this ticker
+            cik, is_df, bs_df, cf_df, fiscal_year_end = _load_and_standardize_data(
+                ticker, self.cache_dir, verbose, None, None, None
             )
             
-            if 'error' in result:
+            if cik is None:
                 if verbose:
-                    print(f"Error loading {ticker}: {result['error']}")
+                    print(f"Error loading {ticker}: Failed to load data")
                 return False
             
+            # Process each statement type
+            quarters, cumulative_data, annual_data_records = _process_income_statements(is_df, fiscal_year_end, verbose)
+            _process_balance_sheets(bs_df, quarters, cumulative_data, annual_data_records, fiscal_year_end, verbose)
+            _process_cash_flows(cf_df, quarters, cumulative_data, annual_data_records, fiscal_year_end, verbose)
+            
+            # Derive Q4 quarters and calculate margins
+            _derive_q4_quarters(quarters, cumulative_data, annual_data_records)
+            
+            # Derive individual Q2 and Q3 quarters from cumulative data
+            _derive_individual_quarters_from_cumulative(quarters, cumulative_data)
+            
+            for quarter_data in quarters.values():
+                _calculate_margins(quarter_data['income_statement'])
+            
+            # Convert to sorted lists
+            quarters_list = sorted(quarters.values(), key=lambda x: (x['fiscal_year'], x['fiscal_quarter']))
+            quarterly_data = [q for q in quarters_list if not q.get('is_annual', False)]
+            annual_data = [q for q in quarters_list if q.get('is_annual', False)]
+            
             # Store the processed data
-            self._loaded_tickers[ticker] = result
+            self._loaded_tickers[ticker] = {
+                'ticker': ticker,
+                'cik': cik,
+                'quarterly_data': quarterly_data,
+                'annual_data': annual_data
+            }
             return True
             
         except Exception as e:

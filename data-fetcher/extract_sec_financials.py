@@ -406,15 +406,33 @@ def _extract_single_ticker_data(
         return {'error': f"Failed to load data for {ticker}"}
     
     # Process each statement type
+    # IMPORTANT: Different statements are reported differently in SEC filings:
+    # 
+    # 1. INCOME STATEMENTS:
+    #    - Q1, Q2, Q3: Available as individual quarters (qtrs=1)
+    #    - Q4: NOT reported separately, must derive from Annual - Q3_cumulative
+    #    - We use qtrs=1 for Q1-Q3 to get clean individual quarter data
+    #
+    # 2. BALANCE SHEETS:
+    #    - Point-in-time snapshots (qtrs=0)
+    #    - Match to quarters by exact period end date
+    #    - Many companies only file balance sheets at fiscal year-end (Q4)
+    #
+    # 3. CASH FLOW STATEMENTS:
+    #    - Q1: Individual quarter (qtrs=1)
+    #    - Q2: Cumulative Q1+Q2 (qtrs=2) - must derive individual Q2 = Q2_cumulative - Q1
+    #    - Q3: Cumulative Q1+Q2+Q3 (qtrs=3) - must derive individual Q3 = Q3_cumulative - Q2_cumulative
+    #    - Q4: Must derive from Annual - Q3_cumulative
+    #
     quarters, cumulative_data, annual_data_records = _process_income_statements(is_df, fiscal_year_end, verbose)
     _process_balance_sheets(bs_df, quarters, cumulative_data, annual_data_records, fiscal_year_end, verbose)
     _process_cash_flows(cf_df, quarters, cumulative_data, annual_data_records, fiscal_year_end, verbose)
     
-    # Derive Q4 quarters and calculate margins (necessary for data completeness)
+    # Derive Q4 quarters (for both income statement and cash flow)
     _derive_q4_quarters(quarters, cumulative_data, annual_data_records)
     
-    # Derive individual Q2 and Q3 quarters from cumulative data
-    _derive_individual_quarters_from_cumulative(quarters, cumulative_data)
+    # Derive individual cash flow values from cumulative (Q2 and Q3)
+    _derive_individual_cash_flows(quarters, verbose)
     
     for quarter_data in quarters.values():
         _calculate_margins(quarter_data['income_statement'])
@@ -507,27 +525,11 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
     if verbose:
         print(f"Detected fiscal year-end: {fiscal_year_end[0]:02d}-{fiscal_year_end[1]:02d}")
     
-    # If target quarter specified, filter to only relevant periods
+    # If target quarter specified, filter to only relevant periods using fiscal calendar
     if target_fiscal_year and target_fiscal_quarter:
-        # Strategy:
-        # Q1: Need qtrs=1 (individual) + qtrs=0 (balance sheet)
-        # Q2: Need qtrs=2 (cumulative Q1+Q2) + qtrs=1 (individual Q1 for subtraction) + qtrs=0 (balance sheet)
-        # Q3: Need qtrs=3 (cumulative Q1+Q2+Q3) + qtrs=2 (cumulative Q1+Q2 for subtraction) + qtrs=0 (balance sheet)
-        # Q4: Need qtrs=4 (annual) + qtrs=3 (cumulative Q1+Q2+Q3 for subtraction) + qtrs=0 (balance sheet)
-        
-        if target_fiscal_quarter == 1:
-            relevant_qtrs = [0, 1]
-        elif target_fiscal_quarter == 2:
-            relevant_qtrs = [0, 1, 2]
-        elif target_fiscal_quarter == 3:
-            relevant_qtrs = [0, 2, 3]
-        elif target_fiscal_quarter == 4:
-            relevant_qtrs = [0, 3, 4]
-        
-        # Filter by qtrs first
-        merged_df = merged_df[merged_df['qtrs'].isin(relevant_qtrs)].copy()
-        
-        # Now filter by fiscal year/quarter using detected fiscal year-end
+        # Filter by fiscal year/quarter using detected fiscal year-end
+        # This function handles all the logic for which qtrs values to include
+        # based on how different statement types are reported in SEC filings
         def matches_target_period(row):
             fiscal_info = parse_date_with_fiscal_year_end(
                 row['ddate'], fiscal_year_end[0], fiscal_year_end[1]
@@ -541,31 +543,36 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
                 return (fiscal_info['fiscal_year'] == target_fiscal_year and 
                        fiscal_info['fiscal_quarter'] == target_fiscal_quarter)
             
-            # For Q1: need qtrs=1 matching Q1
-            if target_fiscal_quarter == 1:
+            # For Q1, Q2, Q3: use qtrs=1 for income statement (individual quarter data)
+            # Also need qtrs=2 for Q2 cash flow, qtrs=3 for Q3 cash flow
+            # Cash flow derivation needs previous quarters: Q2 needs Q1, Q3 needs Q1+Q2
+            if target_fiscal_quarter in [1, 2, 3]:
                 if row['qtrs'] == 1:
-                    return (fiscal_info['fiscal_year'] == target_fiscal_year and 
-                           fiscal_info['fiscal_quarter'] == 1)
-            
-            # For Q2: need qtrs=1 (Q1) and qtrs=2 (Q1+Q2 cumulative)
-            elif target_fiscal_quarter == 2:
-                if row['qtrs'] == 1:
-                    return (fiscal_info['fiscal_year'] == target_fiscal_year and 
-                           fiscal_info['fiscal_quarter'] == 1)
-                elif row['qtrs'] == 2:
+                    # For Q2: need Q1 and Q2 for cash flow derivation
+                    if target_fiscal_quarter == 2:
+                        return (fiscal_info['fiscal_year'] == target_fiscal_year and 
+                               fiscal_info['fiscal_quarter'] in [1, 2])
+                    # For Q3: need Q1, Q2, Q3 for cash flow derivation
+                    elif target_fiscal_quarter == 3:
+                        return (fiscal_info['fiscal_year'] == target_fiscal_year and 
+                               fiscal_info['fiscal_quarter'] in [1, 2, 3])
+                    # For Q1: just need Q1
+                    else:
+                        return (fiscal_info['fiscal_year'] == target_fiscal_year and 
+                               fiscal_info['fiscal_quarter'] == 1)
+                # Q2 needs qtrs=2 for cash flow (cumulative)
+                if target_fiscal_quarter == 2 and row['qtrs'] == 2:
                     return (fiscal_info['fiscal_year'] == target_fiscal_year and 
                            fiscal_info['fiscal_quarter'] == 2)
-            
-            # For Q3: need qtrs=2 (Q1+Q2) and qtrs=3 (Q1+Q2+Q3 cumulative)
-            elif target_fiscal_quarter == 3:
-                if row['qtrs'] == 2:
+                # Q3 needs qtrs=2 (Q2 cumulative for derivation) AND qtrs=3 for Q3 cash flow
+                if target_fiscal_quarter == 3 and row['qtrs'] == 2:
                     return (fiscal_info['fiscal_year'] == target_fiscal_year and 
                            fiscal_info['fiscal_quarter'] == 2)
-                elif row['qtrs'] == 3:
+                if target_fiscal_quarter == 3 and row['qtrs'] == 3:
                     return (fiscal_info['fiscal_year'] == target_fiscal_year and 
                            fiscal_info['fiscal_quarter'] == 3)
             
-            # For Q4: need qtrs=3 (Q1+Q2+Q3) and qtrs=4 (annual)
+            # For Q4: need qtrs=3 (Q1+Q2+Q3 cumulative) and qtrs=4 (annual) to derive Q4
             elif target_fiscal_quarter == 4:
                 if row['qtrs'] == 3:
                     return (fiscal_info['fiscal_year'] == target_fiscal_year and 
@@ -580,6 +587,9 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
         
         if verbose:
             print(f"Filtered to {len(merged_df)} data points for target {target_fiscal_year}Q{target_fiscal_quarter}")
+            if len(merged_df) > 0:
+                qtrs_counts = merged_df['qtrs'].value_counts().to_dict()
+                print(f"  qtrs distribution: {qtrs_counts}")
     
     # WORKAROUND for secfsdstools bug: Process each period separately to prevent
     # standardizer from picking comparative periods instead of main periods
@@ -605,6 +615,9 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
         # Filter to this specific period
         period_data = merged_df[(merged_df['ddate'] == ddate) & (merged_df['qtrs'] == qtrs)].copy()
         
+        if verbose:
+            print(f"  Processing period ddate={ddate}, qtrs={qtrs}, rows={len(period_data)}")
+        
         if len(period_data) == 0:
             continue
         
@@ -612,7 +625,10 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
         try:
             is_standardizer.process(period_data.copy())
             if len(is_standardizer.result) > 0:
-                is_results.append(is_standardizer.result.copy())
+                result_copy = is_standardizer.result.copy()
+                if verbose:
+                    print(f"    IS result: {len(result_copy)} rows, qtrs values: {result_copy['qtrs'].unique()}")
+                is_results.append(result_copy)
         except Exception:
             pass  # Skip periods that fail standardization
         
@@ -637,6 +653,10 @@ def _load_and_standardize_data(ticker: str, cache_dir: str, verbose: bool = Fals
     is_standardized_df = pd.concat(is_results, ignore_index=True) if is_results else pd.DataFrame()
     bs_standardized_df = pd.concat(bs_results, ignore_index=True) if bs_results else pd.DataFrame()
     cf_standardized_df = pd.concat(cf_results, ignore_index=True) if cf_results else pd.DataFrame()
+    
+    if verbose and len(is_standardized_df) > 0:
+        print(f"Before deduplication: {len(is_standardized_df)} income statements")
+        print(f"  Unique (ddate, qtrs) combinations: {is_standardized_df[['ddate', 'qtrs']].drop_duplicates().to_dict('records')}")
     
     # Deduplicate: Multiple filings can have same (ddate, qtrs) due to amendments/restatements
     # Keep the latest filing (largest adsh = most recent accession number) for each (ddate, qtrs)
@@ -701,56 +721,13 @@ def _process_income_statements(is_standardized_df, fiscal_year_end, verbose: boo
                 quarters[quarter_key]['income_statement'] = _extract_income_statement_fields(period, is_annual=False)
             
             elif qtrs == 2 and fiscal_quarter == 2:
-                # Cumulative Q1+Q2 - create Q2 quarter if it doesn't exist
-                quarter_key = f"{fiscal_year}Q2"
-                if quarter_key not in quarters:
-                    quarters[quarter_key] = {
-                        'quarter_key': quarter_key,
-                        'fiscal_year': fiscal_year,
-                        'fiscal_quarter': 2,
-                        'period_end_date': fiscal_info['period_end_date'],
-                        'accession_number': period.get('adsh', ''),
-                        'data_source': 'sec_is_standardized_cumulative_q2',
-                        'qtrs': qtrs,
-                        'is_annual': False,
-                        'is_cumulative': True,
-                        'income_statement': {},
-                        'balance_sheet': {},
-                        'cash_flow_statement': {}
-                    }
-                quarters[quarter_key]['income_statement'] = _extract_income_statement_fields(period, is_annual=False)
-                
-                # Also store in cumulative_data for Q3 derivation
-                cumulative_key = f"{fiscal_year}_Q2_CUMULATIVE"
-                cumulative_data[cumulative_key] = {
-                    'fiscal_year': fiscal_year,
-                    'period_end_date': fiscal_info['period_end_date'],
-                    'income_statement': _extract_income_statement_fields(period, is_annual=False),
-                    'balance_sheet': {},
-                    'cash_flow_statement': {}
-                }
+                # Q2 cumulative data - skip it, we use qtrs=1 for individual Q2
+                if verbose:
+                    print(f"   ⏭️  Skipping Q2 cumulative (qtrs=2) for {fiscal_year}Q2 - using qtrs=1 for individual quarter")
                 
             elif qtrs == 3 and fiscal_quarter == 3:
-                # Cumulative Q1+Q2+Q3 - create Q3 quarter AND store for Q4 derivation
-                quarter_key = f"{fiscal_year}Q3"
-                if quarter_key not in quarters:
-                    quarters[quarter_key] = {
-                        'quarter_key': quarter_key,
-                        'fiscal_year': fiscal_year,
-                        'fiscal_quarter': 3,
-                        'period_end_date': fiscal_info['period_end_date'],
-                        'accession_number': period.get('adsh', ''),
-                        'data_source': 'sec_is_standardized_cumulative_q3',
-                        'qtrs': qtrs,
-                        'is_annual': False,
-                        'is_cumulative': True,
-                        'income_statement': {},
-                        'balance_sheet': {},
-                        'cash_flow_statement': {}
-                    }
-                quarters[quarter_key]['income_statement'] = _extract_income_statement_fields(period, is_annual=False)
-                
-                # Also store in cumulative_data for Q4 derivation
+                # Q3 cumulative data - only store for Q4 derivation, don't create Q3 quarter
+                # (we use qtrs=1 for individual Q3)
                 cumulative_key = f"{fiscal_year}_Q3_CUMULATIVE"
                 cumulative_data[cumulative_key] = {
                     'fiscal_year': fiscal_year,
@@ -759,6 +736,9 @@ def _process_income_statements(is_standardized_df, fiscal_year_end, verbose: boo
                     'balance_sheet': {},
                     'cash_flow_statement': {}
                 }
+                
+                if verbose:
+                    print(f"   📊 Stored Q3 cumulative (qtrs=3) for {fiscal_year}Q3 (for Q4 derivation only)")
                 
             elif qtrs == 4:
                 # Annual report
@@ -864,22 +844,31 @@ def _process_cash_flows(cf_standardized_df, quarters, cumulative_data, annual_da
                 if quarter_key in quarters:
                     quarters[quarter_key]['cash_flow_statement'] = _extract_cash_flow_fields(period)
             
-            # For qtrs=2 (Q1+Q2 cumulative), save to Q2
+            # For qtrs=2 (Q1+Q2 cumulative) - match to Q2 quarter (will need to derive individual later)
             elif qtrs == 2 and fiscal_quarter == 2:
                 quarter_key = f"{fiscal_year}Q2"
                 if quarter_key in quarters:
-                    quarters[quarter_key]['cash_flow_statement'] = _extract_cash_flow_fields(period)
+                    cf_fields = _extract_cash_flow_fields(period)
+                    # Mark as cumulative so we know to derive individual values
+                    quarters[quarter_key]['cash_flow_statement'] = cf_fields
+                    quarters[quarter_key]['cash_flow_is_cumulative'] = True
             
-            # For qtrs=3 (Q1+Q2+Q3 cumulative), save to Q3 AND store for Q4 derivation
+            # For qtrs=3 (Q1+Q2+Q3 cumulative) - match to Q3 AND store for Q4 derivation
             elif qtrs == 3 and fiscal_quarter == 3:
                 quarter_key = f"{fiscal_year}Q3"
                 if quarter_key in quarters:
-                    quarters[quarter_key]['cash_flow_statement'] = _extract_cash_flow_fields(period)
+                    cf_fields = _extract_cash_flow_fields(period)
+                    # Mark as cumulative so we know to derive individual values
+                    quarters[quarter_key]['cash_flow_statement'] = cf_fields
+                    quarters[quarter_key]['cash_flow_is_cumulative'] = True
                 
                 # Also store in cumulative_data for Q4 derivation
                 cumulative_key = f"{fiscal_year}_Q3_CUMULATIVE"
                 if cumulative_key in cumulative_data:
                     cumulative_data[cumulative_key]['cash_flow_statement'] = _extract_cash_flow_fields(period)
+                
+                if verbose:
+                    print(f"   📊 Stored Q3 cumulative cash flow (qtrs=3) for Q4 derivation")
             
             # For qtrs=4 (annual), save to annual data
             elif qtrs == 4:
@@ -911,19 +900,24 @@ def _derive_q4_quarters(quarters, cumulative_data, annual_data_records):
         
         q4_stmt = {}
         
-        # Derive Q4 EPS by subtracting Q1+Q2+Q3 from annual
-        if 'earnings_per_share_annual' in annual_stmt:
-            annual_eps = annual_stmt['earnings_per_share_annual']
-            q123_eps_sum = sum(
-                quarters[f"{fiscal_year}Q{q}"].get('income_statement', {}).get('earnings_per_share', 0)
-                for q in [1, 2, 3] if f"{fiscal_year}Q{q}" in quarters
-            )
-            if sum(1 for q in [1, 2, 3] if f"{fiscal_year}Q{q}" in quarters and 'earnings_per_share' in quarters[f"{fiscal_year}Q{q}"].get('income_statement', {})) == 3:
-                q4_stmt['earnings_per_share'] = annual_eps - q123_eps_sum
+        # Derive Q4 EPS by subtracting Q3 cumulative from annual
+        # Try both 'earnings_per_share_annual' and 'earnings_per_share' fields
+        annual_eps = annual_stmt.get('earnings_per_share_annual') or annual_stmt.get('earnings_per_share')
+        q3_cumulative_eps = cumulative_stmt.get('earnings_per_share')
+        
+        if annual_eps is not None and q3_cumulative_eps is not None:
+            # Q4 EPS = Annual EPS - Q3_cumulative EPS (where Q3_cumulative = Q1+Q2+Q3)
+            q4_stmt['earnings_per_share'] = annual_eps - q3_cumulative_eps
         
         # Calculate Q4 for other income statement fields
         for field in annual_stmt.keys():
             if field.endswith('_percent') or field.endswith('_annual') or field == 'earnings_per_share_annual':
+                continue
+            
+            # Outstanding shares is a point-in-time value, use annual value directly
+            if field == 'outstanding_shares':
+                if annual_stmt.get(field) is not None:
+                    q4_stmt[field] = annual_stmt[field]
                 continue
             
             annual_value = annual_stmt.get(field)
@@ -959,6 +953,105 @@ def _derive_q4_quarters(quarters, cumulative_data, annual_data_records):
                 'cash_flow_statement': q4_cf
             }
             _calculate_margins(q4_stmt)
+
+
+def _derive_individual_cash_flows(quarters, verbose: bool = False):
+    """Derive individual cash flow values from cumulative data for Q2 and Q3
+    
+    SEC reports cash flow statements cumulatively:
+    - Q1: qtrs=1 (individual Q1 values)
+    - Q2: qtrs=2 (Q1+Q2 cumulative)
+    - Q3: qtrs=3 (Q1+Q2+Q3 cumulative)
+    
+    We derive individual quarters by subtraction:
+    - Individual Q2 = Q2_cumulative - Q1
+    - Individual Q3 = Q3_cumulative - Q2_cumulative
+    """
+    if verbose:
+        print("Deriving individual cash flow values from cumulative data...")
+    
+    # Group quarters by fiscal year
+    quarters_by_year = {}
+    for quarter_key, quarter_data in quarters.items():
+        if quarter_data.get('is_annual'):
+            continue
+        fiscal_year = quarter_data['fiscal_year']
+        if fiscal_year not in quarters_by_year:
+            quarters_by_year[fiscal_year] = {}
+        quarters_by_year[fiscal_year][quarter_data['fiscal_quarter']] = quarter_key
+    
+    # Process each fiscal year
+    for fiscal_year, year_quarters in quarters_by_year.items():
+        if verbose:
+            print(f"  Processing fiscal year {fiscal_year}, quarters: {list(year_quarters.keys())}")
+        
+        # Store Q2_cumulative for Q3 derivation (before we overwrite it)
+        q2_cumulative_stored = None
+        
+        # Derive Q2 cash flow if we have Q1 and Q2 (and Q2 is marked as cumulative)
+        if 1 in year_quarters and 2 in year_quarters:
+            q1_key = year_quarters[1]
+            q2_key = year_quarters[2]
+            
+            q1_data = quarters[q1_key]
+            q2_data = quarters[q2_key]
+            
+            # Check if Q2 cash flow is cumulative
+            if q2_data.get('cash_flow_is_cumulative'):
+                q1_cf = q1_data.get('cash_flow_statement', {})
+                q2_cumulative_cf = q2_data['cash_flow_statement']
+                
+                # Store Q2_cumulative for Q3 derivation (actual SEC value)
+                q2_cumulative_stored = dict(q2_cumulative_cf)
+                
+                # Derive individual Q2 = Q2_cumulative - Q1
+                q2_individual_cf = {}
+                for field, cumulative_value in q2_cumulative_cf.items():
+                    q1_value = q1_cf.get(field, 0)
+                    q2_individual_cf[field] = cumulative_value - q1_value
+                
+                # Update Q2 with individual cash flow values
+                quarters[q2_key]['cash_flow_statement'] = q2_individual_cf
+                del quarters[q2_key]['cash_flow_is_cumulative']
+        
+        # Derive Q3 cash flow if we have Q2 and Q3 (and Q3 is marked as cumulative)
+        if 2 in year_quarters and 3 in year_quarters:
+            q2_key = year_quarters[2]
+            q3_key = year_quarters[3]
+            
+            q2_data = quarters[q2_key]
+            q3_data = quarters[q3_key]
+            
+            # Check if Q3 cash flow is cumulative
+            if q3_data.get('cash_flow_is_cumulative'):
+                # Use the stored Q2_cumulative from SEC (not reconstructed from Q1+Q2_derived)
+                if q2_cumulative_stored is not None:
+                    q2_cumulative_cf = q2_cumulative_stored
+                elif 1 in year_quarters:
+                    # Fallback: reconstruct from Q1 + Q2 individual (if Q2 wasn't cumulative)
+                    q1_cf = quarters[year_quarters[1]].get('cash_flow_statement', {})
+                    q2_individual_cf = q2_data.get('cash_flow_statement', {})
+                    
+                    q2_cumulative_cf = {}
+                    for field in set(list(q1_cf.keys()) + list(q2_individual_cf.keys())):
+                        q1_value = q1_cf.get(field, 0)
+                        q2_value = q2_individual_cf.get(field, 0)
+                        q2_cumulative_cf[field] = q1_value + q2_value
+                else:
+                    # No Q1, use Q2 as-is
+                    q2_cumulative_cf = q2_data.get('cash_flow_statement', {})
+                
+                # Derive individual Q3 = Q3_cumulative - Q2_cumulative
+                q3_cumulative_cf = q3_data['cash_flow_statement']
+                
+                q3_individual_cf = {}
+                for field, cumulative_value in q3_cumulative_cf.items():
+                    q2_cum_value = q2_cumulative_cf.get(field, 0)
+                    q3_individual_cf[field] = cumulative_value - q2_cum_value
+                
+                # Update Q3 with individual cash flow values
+                quarters[q3_key]['cash_flow_statement'] = q3_individual_cf
+                del quarters[q3_key]['cash_flow_is_cumulative']
 
 
 def _derive_individual_quarters_from_cumulative(quarters, cumulative_data):

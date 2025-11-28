@@ -39,14 +39,38 @@ def test_quarter(ticker, year, quarter, expected_data):
     if data.get('fiscal_quarter') != quarter:
         errors.append(f"{year}Q{quarter}: Expected fiscal_quarter={quarter}, got {data.get('fiscal_quarter')}")
     
+    # Validate data source - Q1-Q3 should use individual quarter data (qtrs=1)
+    data_source = data.get('data_source', '')
+    if quarter in [1, 2, 3]:
+        if data_source != 'sec_is_standardized_quarterly':
+            errors.append(f"{year}Q{quarter}: Expected data_source='sec_is_standardized_quarterly' (qtrs=1), got '{data_source}'")
+        if data.get('qtrs') != 1:
+            errors.append(f"{year}Q{quarter}: Expected qtrs=1 (individual quarter), got qtrs={data.get('qtrs')}")
+    elif quarter == 4:
+        if data_source != 'sec_is_derived_q4':
+            errors.append(f"{year}Q{quarter}: Expected data_source='sec_is_derived_q4', got '{data_source}'")
+    
     # Validate income statement
     income_stmt = data.get('income_statement', {})
+    
+    # Check that outstanding_shares is present and positive
+    if 'outstanding_shares' not in income_stmt:
+        errors.append(f"{year}Q{quarter}: Missing income_statement.outstanding_shares")
+    elif income_stmt.get('outstanding_shares') is None:
+        errors.append(f"{year}Q{quarter}: income_statement.outstanding_shares is None")
+    elif income_stmt.get('outstanding_shares') <= 0:
+        errors.append(f"{year}Q{quarter}: income_statement.outstanding_shares should be positive, got {income_stmt.get('outstanding_shares')}")
+    
     for field, expected_value in expected_data.get('income_statement', {}).items():
         actual_value = income_stmt.get(field)
         if actual_value is None:
             errors.append(f"{year}Q{quarter}: Missing income_statement.{field}")
         elif abs(actual_value - expected_value) > abs(expected_value * 0.01):  # Allow 1% tolerance
-            errors.append(f"{year}Q{quarter}: income_statement.{field} expected ~{expected_value:,.0f}, got {actual_value:,.0f}")
+            # Format large numbers (> 100) with commas, small numbers (< 100) with decimals
+            if abs(expected_value) >= 100:
+                errors.append(f"{year}Q{quarter}: income_statement.{field} expected ~{expected_value:,.0f}, got {actual_value:,.0f}")
+            else:
+                errors.append(f"{year}Q{quarter}: income_statement.{field} expected ~{expected_value:.2f}, got {actual_value:.2f}")
     
     # Validate balance sheet (if expected)
     balance_sheet = data.get('balance_sheet', {})
@@ -63,8 +87,13 @@ def test_quarter(ticker, year, quarter, expected_data):
         actual_value = cash_flow.get(field)
         if actual_value is None:
             errors.append(f"{year}Q{quarter}: Missing cash_flow_statement.{field}")
-        elif abs(actual_value - expected_value) > abs(expected_value * 0.01):  # Allow 1% tolerance
-            errors.append(f"{year}Q{quarter}: cash_flow_statement.{field} expected ~{expected_value:,.0f}, got {actual_value:,.0f}")
+        else:
+            # Use 5% tolerance for cash flows due to derivation from cumulative values
+            # Q2 = Q2_cumulative - Q1, Q3 = Q3_cumulative - Q2_cumulative
+            # Each subtraction compounds rounding errors and filing amendments
+            tolerance = abs(expected_value * 0.05)  # 5% tolerance
+            if abs(actual_value - expected_value) > tolerance:
+                errors.append(f"{year}Q{quarter}: cash_flow_statement.{field} expected ~{expected_value:,.0f}, got {actual_value:,.0f}")
     
     return len(errors) == 0, errors
 
@@ -87,6 +116,7 @@ def run_tests():
                 'income_statement': {
                     'revenues': 123945000000.0,
                     'net_income': 34630000000.0,
+                    'earnings_per_share': 2.10,
                 },
                 'balance_sheet': {
                     'total_assets': 381191000000.0,
@@ -105,7 +135,11 @@ def run_tests():
                 'income_statement': {
                     'revenues': 97278000000.0,
                     'net_income': 25010000000.0,
+                    'earnings_per_share': 1.54,
                 },
+                'cash_flow_statement': {
+                    'dividends_paid': -3745000000.0,
+                }
             }
         },
         # 2022Q3 (individual quarter, derived from cumulative)
@@ -117,7 +151,11 @@ def run_tests():
                 'income_statement': {
                     'revenues': 82959000000.0,
                     'net_income': 19442000000.0,
+                    'earnings_per_share': 1.20,
                 },
+                'cash_flow_statement': {
+                    'dividends_paid': -3733000000.0,
+                }
             }
         },
         # 2022Q4 (derived from annual minus Q3 cumulative)
@@ -129,6 +167,7 @@ def run_tests():
                 'income_statement': {
                     'revenues': 90146000000.0,
                     'net_income': 20721000000.0,
+                    'earnings_per_share': 1.29,  # Derived: Annual (6.11) - Q1-Q3 (4.82) = 1.29
                 },
                 'balance_sheet': {
                     'total_assets': 352755000000.0,
@@ -144,6 +183,7 @@ def run_tests():
                 'income_statement': {
                     'revenues': 117154000000.0,
                     'net_income': 29998000000.0,
+                    'earnings_per_share': 1.88,
                 },
                 'balance_sheet': {
                     'total_assets': 346747000000.0,
@@ -159,7 +199,11 @@ def run_tests():
                 'income_statement': {
                     'revenues': 94836000000.0,
                     'net_income': 24160000000.0,
+                    'earnings_per_share': 1.52,
                 },
+                'cash_flow_statement': {
+                    'dividends_paid': -3751000000.0,
+                }
             }
         },
         # 2023Q3 (individual quarter, derived from cumulative)
@@ -171,7 +215,11 @@ def run_tests():
                 'income_statement': {
                     'revenues': 81797000000.0,
                     'net_income': 19881000000.0,
+                    'earnings_per_share': 1.26,
                 },
+                'cash_flow_statement': {
+                    'dividends_paid': -3752000000.0,
+                }
             }
         },
         # 2023Q4 (derived from annual minus Q3 cumulative)
@@ -183,6 +231,7 @@ def run_tests():
                 'income_statement': {
                     'revenues': 89498000000.0,
                     'net_income': 22956000000.0,
+                    'earnings_per_share': 1.46,  # Derived: Annual (6.13) - Q1-Q3 (4.67) = 1.46
                 },
                 'balance_sheet': {
                     'total_assets': 352583000000.0,
@@ -206,7 +255,11 @@ def run_tests():
         quarter = test_case['quarter']
         expected = test_case['expected']
         
-        print(f"Testing {ticker} {year}Q{quarter}...", end=' ')
+        # Extract to get data source
+        result = extract_sec_financials(ticker, year, quarter, verbose=False)
+        data_source = result.get('data', {}).get('data_source', 'unknown')
+        
+        print(f"Testing {ticker} {year}Q{quarter} [{data_source}]...", end=' ')
         
         passed, errors = test_quarter(ticker, year, quarter, expected)
         

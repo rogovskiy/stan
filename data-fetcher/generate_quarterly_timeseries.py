@@ -72,6 +72,10 @@ class QuarterlyTimeSeriesGenerator:
             # Extract time series data
             timeseries = self._extract_timeseries_data(quarterly_data, ticker, verbose)
             
+            # Show missing dividends in verbose mode
+            if verbose and timeseries['dividends']['count'] < len(quarterly_data):
+                self._print_missing_dividends(quarterly_data, timeseries['dividends']['data'])
+            
             # Add metadata
             timeseries['metadata'] = {
                 'ticker': ticker.upper(),
@@ -105,7 +109,6 @@ class QuarterlyTimeSeriesGenerator:
         eps_data = []
         revenue_data = []
         dividends_data = []
-        fair_value_data = []
         
         for quarter in quarterly_data:
             try:
@@ -122,6 +125,12 @@ class QuarterlyTimeSeriesGenerator:
                 eps_value = None
                 if 'eps' in quarter and quarter['eps'] is not None:
                     eps_value = quarter['eps']
+                elif 'income_statement' in quarter and quarter['income_statement']:
+                    income_stmt = quarter['income_statement']
+                    if 'earnings_per_share' in income_stmt and income_stmt['earnings_per_share'] is not None:
+                        eps_value = income_stmt['earnings_per_share']
+                    elif 'eps' in income_stmt and income_stmt['eps'] is not None:
+                        eps_value = income_stmt['eps']
                 elif 'financials' in quarter and quarter['financials'] and 'eps' in quarter['financials']:
                     eps_value = quarter['financials']['eps']
                 elif 'financials' in quarter and quarter['financials'] and 'epsDiluted' in quarter['financials']:
@@ -141,6 +150,12 @@ class QuarterlyTimeSeriesGenerator:
                 revenue_value = None
                 if 'revenue' in quarter and quarter['revenue'] is not None:
                     revenue_value = quarter['revenue']
+                elif 'income_statement' in quarter and quarter['income_statement']:
+                    income_stmt = quarter['income_statement']
+                    if 'revenues' in income_stmt and income_stmt['revenues'] is not None:
+                        revenue_value = income_stmt['revenues']
+                    elif 'revenue' in income_stmt and income_stmt['revenue'] is not None:
+                        revenue_value = income_stmt['revenue']
                 elif 'financials' in quarter and quarter['financials'] and 'revenue' in quarter['financials']:
                     revenue_value = quarter['financials']['revenue']
                 
@@ -152,31 +167,29 @@ class QuarterlyTimeSeriesGenerator:
                         'data_source': quarter.get('data_source', 'unknown')
                     })
                 
-                # Extract dividends data from unified format
-                if 'dividend_per_share' in quarter and quarter['dividend_per_share'] is not None:
-                    dividends_data.append({
-                        **quarter_info,
-                        'value': float(quarter['dividend_per_share']),
-                        'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown')
-                    })
-                elif 'dividends' in quarter and quarter['dividends'] is not None:
-                    dividends_data.append({
-                        **quarter_info,
-                        'value': float(quarter['dividends']),
-                        'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown')
-                    })
+                # Calculate dividend per share using outstanding_shares
+                cash_flow = quarter.get('cash_flow_statement', {})
+                income_stmt = quarter.get('income_statement', {})
                 
-                # Calculate and extract fair value estimate
-                fair_value = self._calculate_fair_value(quarter)
-                if fair_value is not None:
-                    fair_value_data.append({
+                dividends_paid = cash_flow.get('dividends_paid')
+                outstanding_shares = income_stmt.get('outstanding_shares')
+                
+                # For older quarters without outstanding_shares, calculate from EPS and net_income
+                if not outstanding_shares or outstanding_shares <= 0:
+                    eps = income_stmt.get('earnings_per_share')
+                    net_income = income_stmt.get('net_income')
+                    if eps and eps != 0 and net_income:
+                        outstanding_shares = abs(float(net_income)) / abs(float(eps))
+                
+                # Use outstanding_shares directly if available and positive
+                if dividends_paid is not None and dividends_paid != 0 and outstanding_shares and outstanding_shares > 0:
+                    # Calculate dividend per share: dividends_paid / outstanding_shares
+                    dividend_per_share = abs(float(dividends_paid)) / float(outstanding_shares)
+                    dividends_data.append({
                         **quarter_info,
-                        'value': fair_value,
+                        'value': dividend_per_share,
                         'estimated': quarter.get('estimated', False),
-                        'data_source': quarter.get('data_source', 'unknown'),
-                        'calculation_method': 'pe_based'
+                        'data_source': quarter.get('data_source', 'unknown')
                     })
                 
             except Exception as e:
@@ -188,7 +201,11 @@ class QuarterlyTimeSeriesGenerator:
         eps_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
         revenue_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
         dividends_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
-        fair_value_data.sort(key=lambda x: (x['year'], int(x['quarter'][1:])))
+        
+        # Calculate growth rates (YoY - comparing to same quarter previous year)
+        self._calculate_growth_rates(eps_data)
+        self._calculate_growth_rates(revenue_data)
+        self._calculate_growth_rates(dividends_data)
         
         return {
             'ticker': ticker.upper(),
@@ -196,25 +213,22 @@ class QuarterlyTimeSeriesGenerator:
                 'data': eps_data,
                 'count': len(eps_data),
                 'latest_value': eps_data[-1]['value'] if eps_data else None,
-                'latest_quarter': eps_data[-1]['quarter_key'] if eps_data else None
+                'latest_quarter': eps_data[-1]['quarter_key'] if eps_data else None,
+                'latest_growth_rate': eps_data[-1].get('growth_rate') if eps_data else None
             },
             'revenue': {
                 'data': revenue_data,
                 'count': len(revenue_data),
                 'latest_value': revenue_data[-1]['value'] if revenue_data else None,
-                'latest_quarter': revenue_data[-1]['quarter_key'] if revenue_data else None
+                'latest_quarter': revenue_data[-1]['quarter_key'] if revenue_data else None,
+                'latest_growth_rate': revenue_data[-1].get('growth_rate') if revenue_data else None
             },
             'dividends': {
                 'data': dividends_data,
                 'count': len(dividends_data),
                 'latest_value': dividends_data[-1]['value'] if dividends_data else None,
-                'latest_quarter': dividends_data[-1]['quarter_key'] if dividends_data else None
-            },
-            'fair_value': {
-                'data': fair_value_data,
-                'count': len(fair_value_data),
-                'latest_value': fair_value_data[-1]['value'] if fair_value_data else None,
-                'latest_quarter': fair_value_data[-1]['quarter_key'] if fair_value_data else None
+                'latest_quarter': dividends_data[-1]['quarter_key'] if dividends_data else None,
+                'latest_growth_rate': dividends_data[-1].get('growth_rate') if dividends_data else None
             }
         }
     
@@ -222,10 +236,9 @@ class QuarterlyTimeSeriesGenerator:
         """Create empty time series structure"""
         return {
             'ticker': ticker.upper(),
-            'eps': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
-            'revenue': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
-            'dividends': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
-            'fair_value': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None},
+            'eps': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None, 'latest_growth_rate': None},
+            'revenue': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None, 'latest_growth_rate': None},
+            'dividends': {'data': [], 'count': 0, 'latest_value': None, 'latest_quarter': None, 'latest_growth_rate': None},
             'metadata': {
                 'ticker': ticker.upper(),
                 'quarters_processed': 0,
@@ -234,67 +247,82 @@ class QuarterlyTimeSeriesGenerator:
             }
         }
     
-    def _calculate_fair_value(self, quarter: Dict[str, Any]) -> Optional[float]:
-        """Calculate simple fair value estimate based on EPS and PE ratio"""
-        try:
-            # Get EPS from quarter data (try multiple locations)
-            eps = None
-            if 'eps' in quarter and quarter['eps'] is not None:
-                eps = float(quarter['eps'])
-            elif 'financials' in quarter and quarter['financials'] and 'eps' in quarter['financials']:
-                eps = float(quarter['financials']['eps'])
-            elif 'financials' in quarter and quarter['financials'] and 'epsDiluted' in quarter['financials']:
-                eps = float(quarter['financials']['epsDiluted'])
-            elif 'earnings' in quarter and quarter['earnings'] and 'eps_actual' in quarter['earnings']:
-                eps = float(quarter['earnings']['eps_actual'])
+    def _calculate_growth_rates(self, data: List[Dict[str, Any]]) -> None:
+        """Calculate YoY growth rates for time series data (comparing to same quarter previous year)
+        
+        Args:
+            data: List of quarter data points, must be sorted by year and quarter
+        """
+        # Create lookup by quarter key for faster access
+        data_by_key = {d['quarter_key']: d for d in data}
+        
+        for item in data:
+            year = item['year']
+            quarter_num = int(item['quarter'][1:])  # Extract quarter number from 'Q1', 'Q2', etc.
             
-            if eps is None or eps <= 0:
-                return None
+            # Look for same quarter in previous year
+            previous_year_key = f"{year - 1}Q{quarter_num}"
             
-            # Use a reasonable PE ratio estimate based on data source and sector
-            # For SEC/actual data: use conservative PE
-            # For forecasts: use slightly higher PE
-            data_source = quarter.get('data_source', 'unknown')
-            is_estimated = quarter.get('estimated', False)
-            
-            if 'sec' in data_source.lower():
-                # SEC data - use conservative PE of 16-18
-                base_pe = 17.0
-            elif is_estimated:
-                # Forecast data - use slightly higher PE for growth expectation
-                base_pe = 19.0
+            if previous_year_key in data_by_key:
+                previous_value = data_by_key[previous_year_key]['value']
+                current_value = item['value']
+                
+                if previous_value != 0:
+                    growth_rate = ((current_value - previous_value) / previous_value) * 100
+                    item['growth_rate'] = round(growth_rate, 2)  # Percentage
+                else:
+                    item['growth_rate'] = None
             else:
-                # Other actual data - use moderate PE
-                base_pe = 18.0
+                item['growth_rate'] = None  # No comparison data available
+    
+    def _print_missing_dividends(self, quarterly_data: List[Dict[str, Any]], dividends_data: List[Dict[str, Any]]) -> None:
+        """Print which quarters are missing dividend data"""
+        # Create set of quarter keys that have dividends
+        quarters_with_dividends = {d['quarter_key'] for d in dividends_data}
+        
+        # Find quarters without dividends
+        missing_quarters = []
+        for quarter in quarterly_data:
+            quarter_key = f"{quarter['fiscal_year']}Q{quarter['fiscal_quarter']}"
+            if quarter_key not in quarters_with_dividends:
+                missing_quarters.append(quarter_key)
+        
+        if missing_quarters:
+            print(f'\n⚠️  Quarters missing dividends data ({len(missing_quarters)}):')
+            # Group by year for better readability
+            by_year = {}
+            for q in missing_quarters:
+                year = q[:4]
+                if year not in by_year:
+                    by_year[year] = []
+                by_year[year].append(q)
             
-            # Calculate fair value: EPS * PE ratio
-            fair_value = eps * base_pe
-            
-            # Round to 2 decimal places
-            return round(fair_value, 2)
-            
-        except (ValueError, TypeError, KeyError):
-            return None
+            for year in sorted(by_year.keys()):
+                quarters = ', '.join(by_year[year])
+                print(f'   {year}: {quarters}')
     
     def _print_summary(self, timeseries: Dict[str, Any]) -> None:
         """Print summary of generated time series"""
         print(f'\n📈 Time Series Summary for {timeseries["ticker"]}:')
         print(f'   EPS: {timeseries["eps"]["count"]} quarters')
         if timeseries["eps"]["latest_value"]:
-            print(f'       Latest: ${timeseries["eps"]["latest_value"]:.2f} ({timeseries["eps"]["latest_quarter"]})')
+            latest_growth = timeseries["eps"].get("latest_growth_rate")
+            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
+            print(f'       Latest: ${timeseries["eps"]["latest_value"]:.2f} ({timeseries["eps"]["latest_quarter"]}){growth_str}')
         
         print(f'   Revenue: {timeseries["revenue"]["count"]} quarters')
         if timeseries["revenue"]["latest_value"]:
             revenue_b = timeseries["revenue"]["latest_value"] / 1_000_000_000
-            print(f'       Latest: ${revenue_b:.2f}B ({timeseries["revenue"]["latest_quarter"]})')
+            latest_growth = timeseries["revenue"].get("latest_growth_rate")
+            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
+            print(f'       Latest: ${revenue_b:.2f}B ({timeseries["revenue"]["latest_quarter"]}){growth_str}')
         
         print(f'   Dividends: {timeseries["dividends"]["count"]} quarters')
         if timeseries["dividends"]["latest_value"]:
-            print(f'       Latest: ${timeseries["dividends"]["latest_value"]:.2f} ({timeseries["dividends"]["latest_quarter"]})')
-        
-        print(f'   Fair Value: {timeseries["fair_value"]["count"]} quarters')
-        if timeseries["fair_value"]["latest_value"]:
-            print(f'       Latest: ${timeseries["fair_value"]["latest_value"]:.2f} ({timeseries["fair_value"]["latest_quarter"]})')
+            dividends_b = timeseries["dividends"]["latest_value"] / 1_000_000_000
+            latest_growth = timeseries["dividends"].get("latest_growth_rate")
+            growth_str = f' ({latest_growth:+.1f}% YoY)' if latest_growth is not None else ''
+            print(f'       Latest: ${dividends_b:.3f}B ({timeseries["dividends"]["latest_quarter"]}){growth_str}')
     
     def get_cached_quarterly_timeseries(self, ticker: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
         """Get cached quarterly time series"""
@@ -379,9 +407,8 @@ Examples:
             eps_count = data.get('eps', {}).get('count', 0)
             revenue_count = data.get('revenue', {}).get('count', 0)
             dividends_count = data.get('dividends', {}).get('count', 0)
-            fair_value_count = data.get('fair_value', {}).get('count', 0)
             
-            print(f'   {ticker}: {quarters} quarters → EPS: {eps_count}, Revenue: {revenue_count}, Dividends: {dividends_count}, Fair Value: {fair_value_count}')
+            print(f'   {ticker}: {quarters} quarters → EPS: {eps_count}, Revenue: {revenue_count}, Dividends: {dividends_count}')
         
         sys.exit(0)
         

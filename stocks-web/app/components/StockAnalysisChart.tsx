@@ -56,8 +56,146 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
   // Use currentPeriod prop instead of local state
   const selectedInterval = currentPeriod;
 
-  // Use stockData directly - no client-side filtering since API handles period filtering
-  const filteredStockData = stockData;
+  // Helper function to determine fiscal year end month from quarterly data
+  // This looks at the pattern of quarterly dates to infer when fiscal year ends
+  const inferFiscalYearEndMonth = useMemo(() => {
+    if (stockData.length === 0) return 12; // Default to December
+    
+    // Find all quarterly data points
+    const quarterlyPoints = stockData.filter(item => item.hasQuarterlyData);
+    if (quarterlyPoints.length === 0) return 12;
+    
+    // Group by calendar year and find the latest quarter in each year
+    const quartersByYear = new Map<number, Date[]>();
+    quarterlyPoints.forEach(item => {
+      const date = new Date(item.fullDate);
+      const year = date.getFullYear();
+      if (!quartersByYear.has(year)) {
+        quartersByYear.set(year, []);
+      }
+      quartersByYear.get(year)!.push(date);
+    });
+    
+    // Find the most common month for the latest quarter in each year
+    // This should be the fiscal year end month
+    const latestQuarterMonths: number[] = [];
+    quartersByYear.forEach((dates, year) => {
+      const latestDate = dates.sort((a, b) => b.getTime() - a.getTime())[0];
+      latestQuarterMonths.push(latestDate.getMonth() + 1); // getMonth() returns 0-11
+    });
+    
+    // Find the most common month (fiscal year end)
+    const monthCounts = new Map<number, number>();
+    latestQuarterMonths.forEach(month => {
+      monthCounts.set(month, (monthCounts.get(month) || 0) + 1);
+    });
+    
+    let maxCount = 0;
+    let fiscalYearEndMonth = 12;
+    monthCounts.forEach((count, month) => {
+      if (count > maxCount) {
+        maxCount = count;
+        fiscalYearEndMonth = month;
+      }
+    });
+    
+    return fiscalYearEndMonth;
+  }, [stockData]);
+
+  // Helper function to get fiscal year and quarter from a date
+  const getFiscalYearAndQuarter = (date: Date, fiscalYearEndMonth: number): { fiscalYear: number; fiscalQuarter: number } => {
+    const month = date.getMonth() + 1; // getMonth() returns 0-11
+    const year = date.getFullYear();
+    
+    // Fiscal year starts the month after fiscal year end
+    const fiscalYearStartMonth = (fiscalYearEndMonth % 12) + 1;
+    
+    // Determine fiscal year
+    // If current month is after fiscal year-end month, we're in next fiscal year
+    // If current month is before fiscal year start, we're in previous fiscal year
+    let fiscalYear: number;
+    let monthsIntoFiscalYear: number;
+    
+    if (month > fiscalYearEndMonth) {
+      // After fiscal year end, so we're in the next fiscal year
+      fiscalYear = year + 1;
+      monthsIntoFiscalYear = month - fiscalYearEndMonth;
+    } else if (month < fiscalYearStartMonth) {
+      // Before fiscal year start, so we're in the previous fiscal year
+      fiscalYear = year - 1;
+      monthsIntoFiscalYear = (12 - fiscalYearEndMonth) + month;
+    } else {
+      // Between fiscal year start and end
+      fiscalYear = year;
+      monthsIntoFiscalYear = month - fiscalYearStartMonth + 1;
+    }
+    
+    // Determine quarter (1-4) based on months into fiscal year
+    // Q1: months 1-3, Q2: months 4-6, Q3: months 7-9, Q4: months 10-12
+    const fiscalQuarter = Math.ceil(monthsIntoFiscalYear / 3);
+    
+    return { fiscalYear, fiscalQuarter: Math.min(4, Math.max(1, fiscalQuarter)) };
+  };
+
+  // Calculate the start date as Q1 of N fiscal years back
+  const fiscalYearStartDate = useMemo(() => {
+    if (stockData.length === 0) return null;
+    
+    // Get the period number (e.g., "10y" -> 10)
+    const periodMatch = currentPeriod.match(/(\d+)y/);
+    const yearsBack = periodMatch ? parseInt(periodMatch[1]) : (currentPeriod === 'max' ? 50 : 8);
+    
+    // Find all quarterly data points with their fiscal year info
+    const quarterlyPoints = stockData
+      .filter(item => item.hasQuarterlyData)
+      .map(item => {
+        const date = new Date(item.fullDate);
+        const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+        return {
+          date,
+          fiscalYear: fiscalInfo.fiscalYear,
+          fiscalQuarter: fiscalInfo.fiscalQuarter,
+          fullDate: item.fullDate
+        };
+      });
+    
+    if (quarterlyPoints.length === 0) return null;
+    
+    // Find the latest fiscal year
+    const latestFiscalYear = Math.max(...quarterlyPoints.map(p => p.fiscalYear));
+    
+    // Calculate target fiscal year (N years back)
+    const targetFiscalYear = latestFiscalYear - (yearsBack - 1); // -1 because current year is included
+    
+    // Find Q1 of the target fiscal year
+    // Q1 starts the month after fiscal year end
+    const fiscalYearStartMonth = (inferFiscalYearEndMonth % 12) + 1;
+    const q1StartDate = new Date(targetFiscalYear, fiscalYearStartMonth - 1, 1); // month is 0-indexed
+    
+    // Find the actual Q1 data point closest to this date
+    const q1Points = quarterlyPoints.filter(p => 
+      p.fiscalYear === targetFiscalYear && p.fiscalQuarter === 1
+    );
+    
+    if (q1Points.length > 0) {
+      // Return the earliest Q1 date
+      return q1Points.sort((a, b) => a.date.getTime() - b.date.getTime())[0].fullDate;
+    }
+    
+    // If no Q1 found, return the calculated Q1 start date
+    return q1StartDate.toISOString().split('T')[0];
+  }, [stockData, currentPeriod, inferFiscalYearEndMonth]);
+
+  // Filter stock data to start from the fiscal year Q1 date
+  const filteredStockData = useMemo(() => {
+    if (!fiscalYearStartDate) return stockData;
+    
+    const startDate = new Date(fiscalYearStartDate);
+    return stockData.filter(item => {
+      const itemDate = new Date(item.fullDate);
+      return itemDate >= startDate;
+    });
+  }, [stockData, fiscalYearStartDate]);
 
   // Create chart data with scaled dividends for proportional display
   // Dividends are scaled by PE ratio to match the scale of fairValue (which is EPS * PE)
@@ -71,51 +209,63 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
   }, [filteredStockData]);
 
   // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
+  // Now aligned with fiscal year boundaries
   const { xAxisTicks, isQuarterlyMode } = useMemo(() => {
     if (filteredStockData.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
     
     const quarterlyDates = filteredStockData
       .filter(item => item.hasQuarterlyData)
-      .map(item => item.fullDate);
+      .map(item => {
+        const date = new Date(item.fullDate);
+        const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+        return {
+          fullDate: item.fullDate,
+          date,
+          fiscalYear: fiscalInfo.fiscalYear,
+          fiscalQuarter: fiscalInfo.fiscalQuarter
+        };
+      });
     
     if (quarterlyDates.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
     
-    // Calculate time range in years
-    const firstDate = new Date(quarterlyDates[0]);
-    const lastDate = new Date(quarterlyDates[quarterlyDates.length - 1]);
-    const yearsDiff = (lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    // Calculate time range in fiscal years
+    const fiscalYears = quarterlyDates.map(q => q.fiscalYear);
+    const minFiscalYear = Math.min(...fiscalYears);
+    const maxFiscalYear = Math.max(...fiscalYears);
+    const fiscalYearsDiff = maxFiscalYear - minFiscalYear + 1;
     
-    // If <= 3 years, show all quarterly ticks
-    if (yearsDiff <= 3) {
-      return { xAxisTicks: quarterlyDates, isQuarterlyMode: true };
+    // If <= 3 fiscal years, show all quarterly ticks
+    if (fiscalYearsDiff <= 3) {
+      return { 
+        xAxisTicks: quarterlyDates.map(q => q.fullDate).sort(), 
+        isQuarterlyMode: true 
+      };
     }
     
-    // If > 3 years, show only Q4 dates (last quarter of each year)
-    // Group by year and take the last quarterly date from each year
-    const quarterlyByYear = new Map<number, string[]>();
-    quarterlyDates.forEach(dateStr => {
-      const date = new Date(dateStr);
-      const year = date.getFullYear();
-      if (!quarterlyByYear.has(year)) {
-        quarterlyByYear.set(year, []);
+    // If > 3 fiscal years, show only Q4 dates (last quarter of each fiscal year)
+    // Group by fiscal year and take the last quarterly date from each fiscal year
+    const quarterlyByFiscalYear = new Map<number, typeof quarterlyDates>();
+    quarterlyDates.forEach(q => {
+      if (!quarterlyByFiscalYear.has(q.fiscalYear)) {
+        quarterlyByFiscalYear.set(q.fiscalYear, []);
       }
-      quarterlyByYear.get(year)!.push(dateStr);
+      quarterlyByFiscalYear.get(q.fiscalYear)!.push(q);
     });
     
-    // Get the last quarterly date from each year (sorted to ensure we get the latest)
-    const q4Dates = Array.from(quarterlyByYear.values())
-      .map(yearDates => yearDates.sort().pop()!)
+    // Get the last quarterly date (Q4) from each fiscal year
+    const q4Dates = Array.from(quarterlyByFiscalYear.values())
+      .map(yearQuarters => {
+        // Find Q4, or if not available, the latest quarter
+        const q4 = yearQuarters.find(q => q.fiscalQuarter === 4);
+        if (q4) return q4.fullDate;
+        // If no Q4, return the latest quarter
+        return yearQuarters.sort((a, b) => b.date.getTime() - a.date.getTime())[0].fullDate;
+      })
       .filter(Boolean)
       .sort();
     
     return { xAxisTicks: q4Dates, isQuarterlyMode: false };
-  }, [filteredStockData]);
-
-  // Helper function to get quarter number from date (1-4)
-  const getQuarter = (date: Date): number => {
-    const month = date.getMonth() + 1; // getMonth() returns 0-11
-    return Math.ceil(month / 3);
-  };
+  }, [filteredStockData, inferFiscalYearEndMonth]);
 
   // Filter table data to match chart ticks and aggregate when in yearly mode
   const tableData = useMemo(() => {
@@ -129,20 +279,26 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
       );
     }
     
-    // If yearly mode, extract years from ticks and get ALL quarterly data for those years
-    const tickYears = new Set(xAxisTicks.map(dateStr => new Date(dateStr).getFullYear()));
+    // If yearly mode, extract fiscal years from ticks and get ALL quarterly data for those fiscal years
+    const tickFiscalYears = new Set(
+      xAxisTicks.map(dateStr => {
+        const date = new Date(dateStr);
+        return getFiscalYearAndQuarter(date, inferFiscalYearEndMonth).fiscalYear;
+      })
+    );
     
-    // Get all quarterly data points for the years in ticks
+    // Get all quarterly data points for the fiscal years in ticks
     const quarterlyDataPoints = filteredStockData.filter(item => {
       if (!item.hasQuarterlyData) return false;
-      const itemYear = new Date(item.fullDate).getFullYear();
-      return tickYears.has(itemYear);
+      const date = new Date(item.fullDate);
+      const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+      return tickFiscalYears.has(fiscalInfo.fiscalYear);
     });
     
-    // Aggregate data by year
+    // Aggregate data by fiscal year
     const yearlyData = new Map<number, {
       fullDate: string;
-      year: number;
+      fiscalYear: number;
       peRatio: number[];
       earnings: number[];
       eps_adjusted: number[];
@@ -150,12 +306,14 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     }>();
     
     quarterlyDataPoints.forEach(item => {
-      const year = new Date(item.fullDate).getFullYear();
+      const date = new Date(item.fullDate);
+      const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+      const fiscalYear = fiscalInfo.fiscalYear;
       
-      if (!yearlyData.has(year)) {
-        yearlyData.set(year, {
-          fullDate: item.fullDate, // Keep the last date of the year
-          year,
+      if (!yearlyData.has(fiscalYear)) {
+        yearlyData.set(fiscalYear, {
+          fullDate: item.fullDate, // Keep the last date of the fiscal year
+          fiscalYear,
           peRatio: [],
           earnings: [],
           eps_adjusted: [],
@@ -163,7 +321,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
         });
       }
       
-      const yearData = yearlyData.get(year)!;
+      const yearData = yearlyData.get(fiscalYear)!;
       
       if (item.peRatio !== null) {
         yearData.peRatio.push(item.peRatio);
@@ -190,13 +348,13 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     console.log('Yearly data:', yearlyData);
     // Convert aggregated data back to TransformedDataPoint format
     return Array.from(yearlyData.values())
-      .sort((a, b) => a.year - b.year)
+      .sort((a, b) => a.fiscalYear - b.fiscalYear)
       .map(yearData => ({
         fullDate: yearData.fullDate,
-        date: yearData.year.toString(),
+        date: yearData.fiscalYear.toString(),
         stockPrice: null,
         estimated: false,
-        year: yearData.year,
+        year: yearData.fiscalYear,
         frequency: 'yearly',
         marketCap: null,
         volume: 0,
@@ -217,17 +375,17 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
           ? yearData.dividend.reduce((sum, val) => sum + val, 0) 
           : null
       }));
-  }, [filteredStockData, xAxisTicks, isQuarterlyMode]);
+  }, [filteredStockData, xAxisTicks, isQuarterlyMode, inferFiscalYearEndMonth]);
 
   // Format date for table header (matches chart tick formatter)
   const formatTableDate = (dateStr: string): string => {
     const date = new Date(dateStr);
     if (isQuarterlyMode) {
-      const year = date.getFullYear();
-      const quarter = getQuarter(date);
-      return `${year}Q${quarter}`;
+      const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+      return `${fiscalInfo.fiscalYear}Q${fiscalInfo.fiscalQuarter}`;
     } else {
-      return date.getFullYear().toString();
+      const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+      return fiscalInfo.fiscalYear.toString();
     }
   };
 
@@ -384,14 +542,13 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                 ticks={xAxisTicks}
                 tickFormatter={(value) => {
                   const date = new Date(value);
+                  const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
                   if (isQuarterlyMode) {
-                    // Format as yyyyQQ (e.g., "2024Q1")
-                    const year = date.getFullYear();
-                    const quarter = getQuarter(date);
-                    return `${year}Q${quarter}`;
+                    // Format as fiscal year and quarter (e.g., "2024Q1")
+                    return `${fiscalInfo.fiscalYear}Q${fiscalInfo.fiscalQuarter}`;
                   } else {
-                    // Format as year only (e.g., "2024")
-                    return date.getFullYear().toString();
+                    // Format as fiscal year only (e.g., "2024")
+                    return fiscalInfo.fiscalYear.toString();
                   }
                 }}
               />

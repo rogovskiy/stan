@@ -9,7 +9,8 @@ import {
   ResponsiveContainer,
   ComposedChart,
   Area,
-  ReferenceLine
+  ReferenceLine,
+  ReferenceArea
 } from 'recharts';
 import { DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from '../types/api';
 import { 
@@ -331,17 +332,61 @@ export default function StockAnalysisChart({
     return chartDataWithTimestamps.filter(p => p.estimated && p.hasQuarterlyData);
   }, [chartDataWithTimestamps]);
   
-  // Find the transition timestamp for reference line (last actual point before first estimated)
+  // Find the transition timestamp for reference line (last actual quarterly point before first estimated)
   const forecastStartTimestamp = useMemo(() => {
     if (estimatedPoints.length === 0) return null;
     const sortedData = [...chartDataWithTimestamps].sort((a, b) => 
       a.timestamp - b.timestamp
     );
-    const firstEstimated = sortedData.find(p => p.estimated && p.hasQuarterlyData);
-    if (!firstEstimated) return null;
-    const firstEstimatedIdx = sortedData.indexOf(firstEstimated);
-    return firstEstimatedIdx > 0 ? sortedData[firstEstimatedIdx - 1].timestamp : null;
+    
+    // Find the last actual quarterly data point (not estimated, has quarterly data)
+    const actualQuarterlyPoints = sortedData.filter(p => 
+      !p.estimated && p.hasQuarterlyData && 
+      (p.fairValue !== null || p.normalPEValue !== null || p.dividendScaled !== null)
+    );
+    
+    if (actualQuarterlyPoints.length === 0) return null;
+    
+    // Get the last actual quarterly point's timestamp
+    const lastActualQuarterly = actualQuarterlyPoints[actualQuarterlyPoints.length - 1];
+    return lastActualQuarterly.timestamp;
   }, [chartDataWithTimestamps, estimatedPoints]);
+
+  // Helper function to split data into actual and estimated segments for a given dataKey
+  // Includes the transition point (last actual point) in estimated data for smooth connection
+  const splitDataByEstimated = useMemo(() => {
+    return (dataKey: string) => {
+      const sortedData = [...chartDataWithTimestamps].sort((a, b) => a.timestamp - b.timestamp);
+      const actualData: any[] = [];
+      const estimatedData: any[] = [];
+      
+      // Separate actual and estimated points
+      sortedData.forEach((point) => {
+        const value = (point as any)[dataKey];
+        const hasValue = value !== null && value !== undefined;
+        
+        if (!hasValue) return;
+        
+        if (point.estimated) {
+          estimatedData.push(point);
+        } else {
+          actualData.push(point);
+        }
+      });
+      
+      // If we have both actual and estimated data, add the last actual point to estimated data
+      // to ensure the lines connect smoothly
+      if (actualData.length > 0 && estimatedData.length > 0) {
+        const lastActual = actualData[actualData.length - 1];
+        // Only add if not already in estimated data (shouldn't happen, but safe check)
+        if (!estimatedData.some(p => p.timestamp === lastActual.timestamp)) {
+          estimatedData.unshift(lastActual);
+        }
+      }
+      
+      return { actualData, estimatedData };
+    };
+  }, [chartDataWithTimestamps]);
 
   // Filter table data to match chart ticks and aggregate when in yearly mode
   const tableData = useMemo(() => {
@@ -512,6 +557,13 @@ export default function StockAnalysisChart({
         <>
           <ResponsiveContainer width="100%" height={400}>
             <ComposedChart data={chartDataWithTimestamps} margin={{ bottom: 20 }}>
+              <defs>
+                <linearGradient id="estimatedAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity={1} />
+                  <stop offset="30%" stopColor="#e5e7eb" stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#9ca3af" stopOpacity={0.35} />
+                </linearGradient>
+              </defs>
               <XAxis 
                 dataKey="timestamp" 
                 type="number"
@@ -562,48 +614,125 @@ export default function StockAnalysisChart({
                 />
               )}
               
-              {/* Fair Value Area */}
-              {visibleSeries.fairValue && (
-                <Area
-                  type="linear"
-                  dataKey="fairValue"
-                  stroke="#f97316"
-                  fill="#f97316"
-                  fillOpacity={0.15}
-                  strokeWidth={1}
-                  name="Fair Value"
-                  connectNulls={true}
-                  dot={<QuarterlyDot />}
+              {/* Background overlay for estimated/future period */}
+              {forecastStartTimestamp && chartDomain[1] && (
+                <ReferenceArea
+                  x1={forecastStartTimestamp}
+                  x2={chartDomain[1]}
+                  fill="url(#estimatedAreaGradient)"
+                  stroke="none"
                 />
               )}
               
-              {/* Normal PE Value Line - blue */}
-              {visibleSeries.normalPEValue && (
-                <Line
-                  type="linear"
-                  dataKey="normalPEValue"
-                  stroke="#3b82f6"
-                  strokeWidth={1}
-                  name="Normal PE"
-                  connectNulls={true}
-                  dot={<BlueQuarterlyDot />}
-                />
-              )}
+              {/* Fair Value Area - Actual (solid) */}
+              {visibleSeries.fairValue && (() => {
+                const { actualData, estimatedData } = splitDataByEstimated('fairValue');
+                return (
+                  <>
+                    {actualData.length > 0 && (
+                      <Area
+                        type="linear"
+                        dataKey="fairValue"
+                        stroke="#f97316"
+                        fill="#f97316"
+                        fillOpacity={0.15}
+                        strokeWidth={1}
+                        name="Fair Value"
+                        connectNulls={true}
+                        dot={<QuarterlyDot />}
+                        data={actualData}
+                      />
+                    )}
+                    {estimatedData.length > 0 && (
+                      <Area
+                        type="linear"
+                        dataKey="fairValue"
+                        stroke="#f97316"
+                        fill="#f97316"
+                        fillOpacity={0.15}
+                        strokeWidth={1}
+                        name="Fair Value (est.)"
+                        connectNulls={true}
+                        strokeDasharray="5 5"
+                        dot={<QuarterlyDot />}
+                        data={estimatedData}
+                      />
+                    )}
+                  </>
+                );
+              })()}
               
-              {/* Dividends Line - scaled by PE ratio for proportional display */}
-              {visibleSeries.dividendsPOR && (
-                <Line
-                  type="linear"
-                  dataKey="dividendScaled"
-                  stroke="#fbbf24"
-                  fill="#fbbf24"
-                  fillOpacity={0.1}
-                  strokeWidth={1}
-                  name="Dividend"
-                  connectNulls={true}
-                  dot={false}
-                />
-              )}
+              {/* Normal PE Value Line - Actual (solid) */}
+              {visibleSeries.normalPEValue && (() => {
+                const { actualData, estimatedData } = splitDataByEstimated('normalPEValue');
+                return (
+                  <>
+                    {actualData.length > 0 && (
+                      <Line
+                        type="linear"
+                        dataKey="normalPEValue"
+                        stroke="#3b82f6"
+                        strokeWidth={1}
+                        name="Normal PE"
+                        connectNulls={true}
+                        dot={<BlueQuarterlyDot />}
+                        data={actualData}
+                      />
+                    )}
+                    {estimatedData.length > 0 && (
+                      <Line
+                        type="linear"
+                        dataKey="normalPEValue"
+                        stroke="#3b82f6"
+                        strokeWidth={1}
+                        name="Normal PE (est.)"
+                        connectNulls={true}
+                        strokeDasharray="5 5"
+                        dot={<BlueQuarterlyDot />}
+                        data={estimatedData}
+                      />
+                    )}
+                  </>
+                );
+              })()}
+              
+              {/* Dividends Line - Actual (solid) */}
+              {visibleSeries.dividendsPOR && (() => {
+                const { actualData, estimatedData } = splitDataByEstimated('dividendScaled');
+                return (
+                  <>
+                    {actualData.length > 0 && (
+                      <Line
+                        type="linear"
+                        dataKey="dividendScaled"
+                        stroke="#fbbf24"
+                        fill="#fbbf24"
+                        fillOpacity={0.1}
+                        strokeWidth={1}
+                        name="Dividend"
+                        connectNulls={true}
+                        dot={false}
+                        data={actualData}
+                      />
+                    )}
+                    {estimatedData.length > 0 && (
+                      <Line
+                        type="linear"
+                        dataKey="dividendScaled"
+                        stroke="#fbbf24"
+                        fill="#fbbf24"
+                        fillOpacity={0.1}
+                        strokeWidth={1}
+                        name="Dividend (est.)"
+                        connectNulls={true}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        data={estimatedData}
+                      />
+                    )}
+                  </>
+                );
+              })()}
               
               {/* Stock Price Line - on top */}
               {visibleSeries.price && (

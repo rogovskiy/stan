@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useEffect } from 'react';
+
 interface SidebarCurrentData {
   stockPrice: number | null;
   fairValue: number | null;
@@ -11,57 +13,129 @@ interface SidebarCurrentData {
 }
 
 interface StockSidebarProps {
+  selectedTicker: string;
   currentData: SidebarCurrentData | undefined;
   growthRate: number | null;
   normalPERatio: number | null;
   fairValueRatio: number;
+  priceChange: number;
+  priceChangePercent: number;
 }
 
 export default function StockSidebar({ 
+  selectedTicker,
   currentData, 
   growthRate, 
   normalPERatio, 
-  fairValueRatio 
+  fairValueRatio,
+  priceChange,
+  priceChangePercent
 }: StockSidebarProps) {
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [exchange, setExchange] = useState<string | null>(null);
+
+  // Fetch company name when ticker changes
+  useEffect(() => {
+    const fetchCompanyInfo = async () => {
+      if (!selectedTicker) {
+        setCompanyName(null);
+        setExchange(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/tickers?ticker=${selectedTicker}`);
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          setCompanyName(result.data.name || null);
+          setExchange(result.data.exchange || null);
+        } else {
+          setCompanyName(null);
+          setExchange(null);
+        }
+      } catch (err) {
+        console.error('Error fetching company info:', err);
+        setCompanyName(null);
+        setExchange(null);
+      }
+    };
+
+    fetchCompanyInfo();
+  }, [selectedTicker]);
 
   return (
     <div className="space-y-6">
-      {/* Key Metrics Widget */}
-      {currentData && (
-        <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
-          <div className="flex gap-4">
-            {/* Growth Rate */}
-            <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
-              <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Growth Rate</div>
-              <div className={`text-lg font-bold text-center ${
-                growthRate !== null && growthRate >= 0 
-                  ? 'text-green-600' 
-                  : growthRate !== null 
-                  ? 'text-red-600'
-                  : 'text-gray-600'
-              }`}>
-                {growthRate !== null ? `${growthRate.toFixed(2)}%` : 'N/A'}
-              </div>
+      {/* Integrated Header with Ratios - Sharp Modern Design */}
+      <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+        {/* Company Info & Price Section */}
+        <div className="px-6 pt-6 pb-4 border-b border-gray-200">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-1">
+                {companyName || selectedTicker || 'Loading...'}
+              </h1>
+              <p className="text-gray-500 text-sm font-medium">
+                {exchange ? `${exchange}: ` : ''}{selectedTicker}
+              </p>
             </div>
-
-            {/* Fair Value Ratio */}
-            <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
-              <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Fair Value Ratio</div>
-              <div className="text-lg font-bold text-center text-orange-600">
-                {fairValueRatio.toFixed(2)}x
+            
+            {/* Price Display - Right aligned, less prominent */}
+            {currentData && (
+              <div className="text-right ml-4">
+                <div className="text-lg font-semibold text-gray-700 tracking-tight mb-1">
+                  ${currentData.stockPrice?.toFixed(2) || '0.00'}
+                </div>
+                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                  <span className={`text-xs font-medium ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}
+                  </span>
+                  <span className={`text-xs font-medium ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
+          </div>
+        </div>
 
-            {/* Normal P/E Ratio */}
-            <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
-              <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Normal P/E Ratio</div>
-              <div className="text-lg font-bold text-center text-blue-600">
-                {normalPERatio !== null ? `${normalPERatio.toFixed(2)}x` : 'N/A'}
+        {/* Ratios Grid - Integrated */}
+        {currentData && (
+          <div className="px-6 py-5">
+            <div className="grid grid-cols-3 gap-3">
+              {/* Growth Rate */}
+              <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                <div className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide text-center">Growth</div>
+                <div className={`text-xl font-bold text-center ${
+                  growthRate !== null && growthRate >= 0 
+                    ? 'text-green-600' 
+                    : growthRate !== null 
+                    ? 'text-red-600'
+                    : 'text-gray-400'
+                }`}>
+                  {growthRate !== null ? `${growthRate.toFixed(1)}%` : 'N/A'}
+                </div>
+              </div>
+
+              {/* Fair Value Ratio */}
+              <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                <div className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide text-center">Fair Value</div>
+                <div className="text-xl font-bold text-center text-orange-600">
+                  {fairValueRatio.toFixed(1)}x
+                </div>
+              </div>
+
+              {/* Normal P/E Ratio */}
+              <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                <div className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide text-center">Normal P/E</div>
+                <div className="text-xl font-bold text-center text-blue-600">
+                  {normalPERatio !== null ? `${normalPERatio.toFixed(1)}x` : 'N/A'}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Statistics Card */}
       <div className="bg-white rounded-2xl shadow-lg p-7 border border-gray-100">

@@ -6,7 +6,6 @@ import { DailyPriceResponse, QuarterlyDataResponse, DailyDataPoint, QuarterlyDat
 import StockAnalysisChart from './components/StockAnalysisChart';
 import PeriodSelector from './components/PeriodSelector';
 import StockSidebar from './components/StockSidebar';
-import StockHeader from './components/StockHeader';
 import TickerSearch from './components/TickerSearch';
 
 export default function Home() {
@@ -240,15 +239,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Stock Header Section */}
-      <StockHeader
-        selectedTicker={selectedTicker}
-        onTickerChange={handleTickerChange}
-        currentData={currentSnapshot}
-        priceChange={priceChange}
-        priceChangePercent={priceChangePercent}
-      />
-
       {/* Loading/Error States */}
       {loading && (
         <div className="w-full max-w-none px-6 py-8">
@@ -307,10 +297,13 @@ export default function Home() {
             {/* Right Sidebar - 1/4 width */}
             <div className="xl:col-span-1">
               <StockSidebar 
+                selectedTicker={selectedTicker}
                 currentData={currentSnapshot}
                 growthRate={growthRate}
                 normalPERatio={normalPERatio}
                 fairValueRatio={fairValueRatio}
+                priceChange={priceChange}
+                priceChangePercent={priceChangePercent}
               />
             </div>
           </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Line,
   XAxis,
@@ -10,12 +10,10 @@ import {
   ComposedChart,
   Area
 } from 'recharts';
-import { transformApiDataForChart, TransformedDataPoint } from '../lib/dataTransform';
-import { DailyPriceResponse, QuarterlyDataResponse } from '../types/api';
+import { TransformedDataPoint } from '../lib/dataTransform';
 
 interface StockAnalysisChartProps {
   stockData: TransformedDataPoint[];
-  onPeriodChange?: (period: string) => void;
   currentPeriod?: string;
 }
 
@@ -26,27 +24,7 @@ interface VisibleSeries {
   dividendsPOR: boolean;
 }
 
-type IntervalOption = {
-  value: string;
-  label: string;
-  months?: number;
-};
-
-const INTERVAL_OPTIONS = [
-  { value: 'max', label: 'Max' },
-  { value: '10y', label: '10Y' },
-  { value: '9y', label: '9Y' },
-  { value: '8y', label: '8Y' },
-  { value: '7y', label: '7Y' },
-  { value: '6y', label: '6Y' },
-  { value: '5y', label: '5Y' },
-  { value: '4y', label: '4Y' },
-  { value: '3y', label: '3Y' },
-  { value: '2y', label: '2Y' },
-  { value: '1y', label: '1Y' }
-];
-
-export default function StockAnalysisChart({ stockData, onPeriodChange, currentPeriod = '8y' }: StockAnalysisChartProps) {
+export default function StockAnalysisChart({ stockData, currentPeriod = '8y' }: StockAnalysisChartProps) {
   // State to track visibility of data series
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
     price: true,
@@ -54,9 +32,6 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     fairValueEpsAdjusted: true,
     dividendsPOR: true
   });
-
-  // Use currentPeriod prop instead of local state
-  const selectedInterval = currentPeriod;
 
   // Helper function to determine fiscal year end month from quarterly data
   // This looks at the pattern of quarterly dates to infer when fiscal year ends
@@ -556,16 +531,6 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     }));
   };
 
-  // Handle interval change - notify parent component to refetch data
-  const handleIntervalChange = (interval: string) => {
-    console.log(`Chart: handleIntervalChange called with: ${interval}`);
-    if (onPeriodChange) {
-      console.log(`Chart: Calling onPeriodChange(${interval})`);
-      onPeriodChange(interval);
-    } else {
-      console.log(`Chart: onPeriodChange callback is not provided`);
-    }
-  };
 
   // Custom Legend Component
   const CustomLegend = ({ legendItems }: { legendItems: Array<{ dataKey: string; color: string; name: string }> }) => (
@@ -680,29 +645,6 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
 
   return (
     <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-      {/* Header with title and interval picker */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-          Stock Price and Fair Value Analysis
-        </h2>
-        
-        {/* Interval Picker */}
-        <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-          {INTERVAL_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => handleIntervalChange(option.value)}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 ${
-                selectedInterval === option.value
-                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
 
             {/* No Data State */}
       {filteredStockData.length === 0 && (

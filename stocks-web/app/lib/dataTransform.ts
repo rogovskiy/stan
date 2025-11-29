@@ -1,4 +1,5 @@
 import { APIResponse, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
+import { calculateFairValue } from './calculations';
 
 export interface TransformedDataPoint {
   date: string;
@@ -24,7 +25,8 @@ export interface TransformedDataPoint {
 // New function signature for separated data
 export const transformApiDataForChart = (
   dailyData: DailyDataPoint[], 
-  quarterlyData: QuarterlyDataPoint[] = []
+  quarterlyData: QuarterlyDataPoint[] = [],
+  fairValueRatio: number = 18
 ): TransformedDataPoint[] => {
   console.log('Data transformation debug:', {
     dailyDataPoints: dailyData.length,
@@ -91,9 +93,37 @@ export const transformApiDataForChart = (
         : eps; // Fall back to eps if eps_adjusted is not available
       const normalPE = quarterlyDataForThisDate.normalPE || null;
       
+      // Calculate trailing 4 quarters EPS for fairValue calculation
+      const currentDate = new Date(dailyDate);
+      const trailing4Quarters = quarterlyData
+        .filter(q => {
+          const qDate = new Date(q.date);
+          return qDate <= currentDate;
+        })
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 4);
+      
+      let annualEps: number | null = null;
+      if (trailing4Quarters.length > 0) {
+        const trailingEps = trailing4Quarters.reduce((sum, q) => {
+          const epsValue = q.eps_adjusted !== undefined && q.eps_adjusted !== null 
+            ? q.eps_adjusted 
+            : (q.eps || 0);
+          return sum + epsValue;
+        }, 0);
+        
+        // Annualize if less than 4 quarters
+        annualEps = trailing4Quarters.length < 4
+          ? (trailingEps / trailing4Quarters.length) * 4
+          : trailingEps;
+      }
+      
+      // Calculate fairValue using fairValueRatio
+      const calculatedFairValue = calculateFairValue(annualEps, fairValueRatio);
+      
       Object.assign(basePoint, {
         // Quarterly data - only present on quarterly reporting dates
-        fairValue: quarterlyDataForThisDate.fairValue || null,
+        fairValue: calculatedFairValue,
         fairValueEpsAdjusted: (epsAdjusted !== null && normalPE !== null) 
           ? epsAdjusted * normalPE 
           : null,
@@ -109,7 +139,7 @@ export const transformApiDataForChart = (
       });
       
       console.log('Found quarterly data for date:', dailyDate, {
-        fairValue: quarterlyDataForThisDate.fairValue,
+        fairValue: calculatedFairValue,
         eps: quarterlyDataForThisDate.eps,
         hasData: true
       });
@@ -148,8 +178,36 @@ export const transformApiDataForChart = (
         : eps; // Fall back to eps if eps_adjusted is not available
       const normalPE = q.normalPE || null;
       
+      // Calculate trailing 4 quarters EPS for fairValue calculation
+      const currentDate = new Date(q.date);
+      const trailing4Quarters = quarterlyData
+        .filter(quarterly => {
+          const qDate = new Date(quarterly.date);
+          return qDate <= currentDate;
+        })
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 4);
+      
+      let annualEps: number | null = null;
+      if (trailing4Quarters.length > 0) {
+        const trailingEps = trailing4Quarters.reduce((sum, quarterly) => {
+          const epsValue = quarterly.eps_adjusted !== undefined && quarterly.eps_adjusted !== null 
+            ? quarterly.eps_adjusted 
+            : (quarterly.eps || 0);
+          return sum + epsValue;
+        }, 0);
+        
+        // Annualize if less than 4 quarters
+        annualEps = trailing4Quarters.length < 4
+          ? (trailingEps / trailing4Quarters.length) * 4
+          : trailingEps;
+      }
+      
+      // Calculate fairValue using fairValueRatio
+      const calculatedFairValue = calculateFairValue(annualEps, fairValueRatio);
+      
       Object.assign(chartData[closestIndex], {
-        fairValue: q.fairValue || null,
+        fairValue: calculatedFairValue,
         fairValueEpsAdjusted: (epsAdjusted !== null && normalPE !== null) 
           ? epsAdjusted * normalPE 
           : null,

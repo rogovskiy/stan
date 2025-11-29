@@ -2,12 +2,64 @@
 import { FirebaseCache } from '../../lib/cache';
 import { YFinanceService } from '../../lib/yfinance';
 import { DailyPriceResponse } from '../../types/api';
+import { firebaseService } from '../../lib/firebaseService';
 
 const cache = new FirebaseCache();
 const yfinanceService = new YFinanceService();
 
+// Helper function to calculate MAX period based on first fiscal year with quarterly data
+async function calculateMaxPeriodFromQuarterlyData(ticker: string): Promise<number> {
+  try {
+    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, 24);
+    
+    if (!timeseriesData) {
+      return 50; // Fallback to 50 years if no quarterly data
+    }
+    
+    let allDataPoints: any[] = [];
+    
+    // Extract all data points from different possible formats
+    if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
+      allDataPoints = timeseriesData.data;
+    } else if (Array.isArray(timeseriesData)) {
+      allDataPoints = timeseriesData;
+    }
+    
+    if (allDataPoints.length === 0) {
+      return 50; // Fallback to 50 years if no data
+    }
+    
+    // Find the earliest date in the quarterly data
+    const dates = allDataPoints
+      .map((item: any) => {
+        const dateStr = item.date || item.period_end_date;
+        return dateStr ? new Date(dateStr) : null;
+      })
+      .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
+    
+    if (dates.length === 0) {
+      return 50; // Fallback to 50 years if no valid dates
+    }
+    
+    const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
+    const endDate = new Date();
+    
+    // Calculate years difference
+    const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
+    const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
+    
+    // Add 1 to include the first year, and round up to ensure we include all data
+    const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
+    
+    return Math.max(1, yearsBack); // At least 1 year
+  } catch (error) {
+    console.error(`Error calculating MAX period for ${ticker}:`, error);
+    return 50; // Fallback to 50 years on error
+  }
+}
+
 // Helper function to calculate date range based on period
-function getPeriodDateRange(period: string): { startDate: Date; endDate: Date } {
+async function getPeriodDateRange(period: string, ticker?: string): Promise<{ startDate: Date; endDate: Date }> {
   const endDate = new Date();
   const startDate = new Date();
   
@@ -25,7 +77,16 @@ function getPeriodDateRange(period: string): { startDate: Date; endDate: Date } 
     case '8y': startDate.setFullYear(endDate.getFullYear() - 8); break;
     case '9y': startDate.setFullYear(endDate.getFullYear() - 9); break;
     case '10y': startDate.setFullYear(endDate.getFullYear() - 10); break;
-    case 'max': startDate.setFullYear(endDate.getFullYear() - 50); break; // Max available data
+    case 'max':
+      // Calculate MAX based on first fiscal year with quarterly data
+      if (ticker) {
+        const yearsBack = await calculateMaxPeriodFromQuarterlyData(ticker);
+        startDate.setFullYear(endDate.getFullYear() - yearsBack);
+        console.log(`MAX period calculated for ${ticker}: ${yearsBack} years back to first fiscal year with quarterly data`);
+      } else {
+        startDate.setFullYear(endDate.getFullYear() - 50); // Fallback if no ticker
+      }
+      break;
     default: startDate.setFullYear(endDate.getFullYear() - 5);
   }
   
@@ -49,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     try {
       // Calculate date range based on period
-      const { startDate, endDate } = getPeriodDateRange(period);
+      const { startDate, endDate } = await getPeriodDateRange(period, ticker);
       
       // Check cache status
       const cacheStatus = await cache.hasCachedDataForRange(ticker, startDate, endDate);

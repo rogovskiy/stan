@@ -35,6 +35,46 @@ export async function GET(request: NextRequest) {
     // Transform data to our new quarterly format
     const quarterlyDataPoints: QuarterlyDataPoint[] = [];
     
+    // Helper function to calculate MAX period based on first fiscal year with quarterly data
+    const calculateMaxPeriod = (timeseriesData: any): number => {
+      let allDataPoints: any[] = [];
+      
+      // Extract all data points from different possible formats
+      if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
+        allDataPoints = timeseriesData.data;
+      } else if (Array.isArray(timeseriesData)) {
+        allDataPoints = timeseriesData;
+      }
+      
+      if (allDataPoints.length === 0) {
+        return 50; // Fallback to 50 years if no data
+      }
+      
+      // Find the earliest date in the quarterly data
+      const dates = allDataPoints
+        .map((item: any) => {
+          const dateStr = item.date || item.period_end_date;
+          return dateStr ? new Date(dateStr) : null;
+        })
+        .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
+      
+      if (dates.length === 0) {
+        return 50; // Fallback to 50 years if no valid dates
+      }
+      
+      const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
+      const endDate = new Date();
+      
+      // Calculate years difference
+      const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
+      const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
+      
+      // Add 1 to include the first year, and round up to ensure we include all data
+      const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
+      
+      return Math.max(1, yearsBack); // At least 1 year
+    };
+    
     // Calculate date range based on period
     const endDate = new Date();
     let startDate = new Date();
@@ -76,7 +116,10 @@ export async function GET(request: NextRequest) {
         startDate.setFullYear(endDate.getFullYear() - 10);
         break;
       case 'max':
-        startDate.setFullYear(endDate.getFullYear() - 50);
+        // Calculate MAX based on first fiscal year with quarterly data
+        const yearsBack = calculateMaxPeriod(timeseriesData);
+        startDate.setFullYear(endDate.getFullYear() - yearsBack);
+        console.log(`MAX period calculated: ${yearsBack} years back to first fiscal year with quarterly data`);
         break;
       default:
         startDate.setFullYear(endDate.getFullYear() - 5);

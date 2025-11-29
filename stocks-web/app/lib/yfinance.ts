@@ -1,6 +1,7 @@
 import YahooFinance from 'yahoo-finance2';
 import { DataPoint, HistoricalChartResponse } from '../types/api';
 import { FirebaseCache, AnnualPriceData, QuarterlyFinancialData, TickerMetadata } from './cache';
+import { firebaseService } from './firebaseService';
 
 export class YFinanceService {
   private yf: any;
@@ -20,7 +21,7 @@ export class YFinanceService {
       
       // Calculate date range
       const endDate = new Date();
-      const startDate = this.getPeriodStartDate(period);
+      const startDate = await this.getPeriodStartDate(period, ticker);
       
       // Check cache first
       const cacheStatus = await this.cache.hasCachedDataForRange(ticker, startDate, endDate);
@@ -608,7 +609,57 @@ export class YFinanceService {
     return periodMap[period] || '5y';
   }
 
-  private getPeriodStartDate(period: string): Date {
+  private async calculateMaxPeriodFromQuarterlyData(ticker: string): Promise<number> {
+    try {
+      const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, 24);
+      
+      if (!timeseriesData) {
+        return 50; // Fallback to 50 years if no quarterly data
+      }
+      
+      let allDataPoints: any[] = [];
+      
+      // Extract all data points from different possible formats
+      if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
+        allDataPoints = timeseriesData.data;
+      } else if (Array.isArray(timeseriesData)) {
+        allDataPoints = timeseriesData;
+      }
+      
+      if (allDataPoints.length === 0) {
+        return 50; // Fallback to 50 years if no data
+      }
+      
+      // Find the earliest date in the quarterly data
+      const dates = allDataPoints
+        .map((item: any) => {
+          const dateStr = item.date || item.period_end_date;
+          return dateStr ? new Date(dateStr) : null;
+        })
+        .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
+      
+      if (dates.length === 0) {
+        return 50; // Fallback to 50 years if no valid dates
+      }
+      
+      const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
+      const endDate = new Date();
+      
+      // Calculate years difference
+      const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
+      const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
+      
+      // Add 1 to include the first year, and round up to ensure we include all data
+      const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
+      
+      return Math.max(1, yearsBack); // At least 1 year
+    } catch (error) {
+      console.error(`Error calculating MAX period for ${ticker}:`, error);
+      return 50; // Fallback to 50 years on error
+    }
+  }
+
+  private async getPeriodStartDate(period: string, ticker?: string): Promise<Date> {
     const endDate = new Date();
     const startDate = new Date();
     
@@ -623,7 +674,16 @@ export class YFinanceService {
       case '8y': startDate.setFullYear(endDate.getFullYear() - 8); break;
       case '9y': startDate.setFullYear(endDate.getFullYear() - 9); break;
       case '10y': startDate.setFullYear(endDate.getFullYear() - 10); break;
-      case 'max': startDate.setFullYear(endDate.getFullYear() - 50); break; // Max available data
+      case 'max':
+        // Calculate MAX based on first fiscal year with quarterly data
+        if (ticker) {
+          const yearsBack = await this.calculateMaxPeriodFromQuarterlyData(ticker);
+          startDate.setFullYear(endDate.getFullYear() - yearsBack);
+          console.log(`MAX period calculated for ${ticker}: ${yearsBack} years back to first fiscal year with quarterly data`);
+        } else {
+          startDate.setFullYear(endDate.getFullYear() - 50); // Fallback if no ticker
+        }
+        break;
       default: startDate.setFullYear(endDate.getFullYear() - 5);
     }
     

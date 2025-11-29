@@ -116,6 +116,24 @@ class MaxDataDownloader:
             else:
                 print(f' ⚠️  Error: {sec_results.get("error", "Unknown error")}')
             
+            # Download stock split history
+            if not verbose:
+                print(f'📉 Downloading split history...', end='', flush=True)
+            split_results = self._fetch_split_history(ticker, verbose)
+            
+            if split_results['success']:
+                if verbose:
+                    print(f'\n✅ Cached {split_results["total_splits"]} stock splits')
+                    if split_results['total_splits'] > 0:
+                        print(f'   Latest split: {split_results["latest_split"]}')
+                else:
+                    print(f' {split_results["total_splits"]} splits cached')
+            else:
+                if not verbose:
+                    print(f' ⚠️  Error: {split_results.get("error", "Unknown error")}')
+                else:
+                    print(f'\n⚠️  Error fetching splits: {split_results.get("error", "Unknown error")}')
+            
             print(f'\n✅ Completed for {ticker.upper()}!')
             
         except Exception as error:
@@ -292,6 +310,41 @@ class MaxDataDownloader:
                 'success': False,
                 'error': str(e),
                 'quarterly_periods': 0
+            }
+    
+    def _fetch_split_history(self, ticker: str, verbose: bool) -> Dict[str, Any]:
+        """Fetch and cache stock split history"""
+        try:
+            if verbose:
+                print(f"\n   Fetching split history for {ticker}...")
+            
+            # Fetch split history using yfinance service
+            splits = self.yfinance_service.fetch_split_history(ticker)
+            
+            if not splits:
+                return {
+                    'success': True,
+                    'total_splits': 0,
+                    'latest_split': None
+                }
+            
+            # Cache splits to Firebase
+            self.cache.cache_split_history(ticker, splits, verbose=verbose)
+            
+            # Get latest split for reporting
+            latest_split = splits[0]['description'] if splits else None
+            
+            return {
+                'success': True,
+                'total_splits': len(splits),
+                'latest_split': latest_split
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'total_splits': 0
             }
     
 def main():

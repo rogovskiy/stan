@@ -11,6 +11,7 @@ export interface TransformedDataPoint {
   volume: number;
   fairValue: number | null;
   earnings: number | null;
+  eps_adjusted: number | null;
   normalPE: number | null;
   dividendsPOR: number | null;
   hasQuarterlyData: boolean;
@@ -65,6 +66,7 @@ export const transformApiDataForChart = (
       // Initialize quarterly fields
       fairValue: null,
       earnings: null,
+      eps_adjusted: null,
       normalPE: null,
       dividendsPOR: null,
       hasQuarterlyData: false,
@@ -86,6 +88,9 @@ export const transformApiDataForChart = (
         // Quarterly data - only present on quarterly reporting dates
         fairValue: quarterlyDataForThisDate.fairValue || null,
         earnings: eps,
+        eps_adjusted: quarterlyDataForThisDate.eps_adjusted !== undefined && quarterlyDataForThisDate.eps_adjusted !== null 
+          ? quarterlyDataForThisDate.eps_adjusted 
+          : eps, // Fall back to eps if eps_adjusted is not available
         normalPE: quarterlyDataForThisDate.normalPE || null,
         dividendsPOR: quarterlyDataForThisDate.dividendsPOR || null,
         hasQuarterlyData: true,
@@ -133,6 +138,9 @@ export const transformApiDataForChart = (
       Object.assign(chartData[closestIndex], {
         fairValue: q.fairValue || null,
         earnings: eps,
+        eps_adjusted: q.eps_adjusted !== undefined && q.eps_adjusted !== null 
+          ? q.eps_adjusted 
+          : eps, // Fall back to eps if eps_adjusted is not available
         normalPE: q.normalPE || null,
         dividendsPOR: q.dividendsPOR || null,
         hasQuarterlyData: true,

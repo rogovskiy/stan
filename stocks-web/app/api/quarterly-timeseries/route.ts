@@ -116,8 +116,14 @@ export async function GET(request: NextRequest) {
       
       let currentPE = item.normalPE || item.pe_ratio || 18.0;
       
-      // sum of last 4 quarters before the current item
-      const annualEps = dataToProcess.slice(Math.max(0, index - 4), index).reduce((sum, item) => sum + item.eps, 0);
+      // sum of last 4 quarters before the current item using adjusted EPS
+      const annualEps = dataToProcess.slice(Math.max(0, index - 4), index).reduce((sum, item) => {
+        // Use eps_adjusted if available, otherwise fall back to eps
+        const epsValue = item.eps_adjusted !== undefined && item.eps_adjusted !== null 
+          ? item.eps_adjusted 
+          : item.eps;
+        return sum + (epsValue || 0);
+      }, 0);
       const fairValue = annualEps * currentPE;
       
       // Calculate dividendsPOR (Payout Ratio) from dividend_per_share if available
@@ -128,6 +134,7 @@ export async function GET(request: NextRequest) {
         year: year,
         quarter: quarter,
         eps: eps,
+        eps_adjusted: item.eps_adjusted !== undefined && item.eps_adjusted !== null ? item.eps_adjusted : eps,
         normalPE: Math.round(currentPE * 100) / 100,
         fairValue: fairValue ? Math.round(fairValue * 100) / 100 : undefined,
         dividendsPOR: Math.round(dividendsPOR * 100) / 100,

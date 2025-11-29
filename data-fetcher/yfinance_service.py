@@ -264,6 +264,70 @@ class YFinanceService:
         except Exception as e:
             print(f"Error fetching quarterly financial data: {e}")
             return []
+    
+    def fetch_split_history(self, ticker: str) -> List[Dict[str, Any]]:
+        """Fetch historical stock split data from Yahoo Finance
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+            
+        Returns:
+            List of dictionaries containing split information with keys:
+            - date: Split date (YYYY-MM-DD format)
+            - split_ratio: Split ratio (e.g., 4.0 for a 4-for-1 split)
+            - description: Human-readable split description (e.g., "4-for-1")
+            
+        Example:
+            >>> service = YFinanceService()
+            >>> splits = service.fetch_split_history('AAPL')
+            >>> # Returns: [{'date': '2020-08-31', 'split_ratio': 4.0, 'description': '4-for-1'}, ...]
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            
+            # Get split history from yfinance
+            splits_series = stock.splits
+            
+            # Handle empty or None splits
+            if splits_series is None:
+                return []
+            
+            # Check if pandas Series is empty
+            if isinstance(splits_series, pd.Series) and splits_series.empty:
+                return []
+            
+            split_history = []
+            
+            # Iterate over pandas Series (date index, split_ratio values)
+            for date, split_ratio in splits_series.items():
+                # Convert split ratio to human-readable format
+                # yfinance returns the ratio as a float (e.g., 4.0 for 4-for-1)
+                # We need to determine the "for-1" format
+                if split_ratio >= 1.0:
+                    # Forward split (e.g., 4.0 = 4-for-1)
+                    numerator = int(split_ratio)
+                    description = f"{numerator}-for-1"
+                else:
+                    # Reverse split (e.g., 0.5 = 1-for-2, 0.25 = 1-for-4)
+                    denominator = int(1.0 / split_ratio)
+                    description = f"1-for-{denominator}"
+                
+                split_data = {
+                    'date': date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date),
+                    'split_ratio': float(split_ratio),
+                    'description': description
+                }
+                
+                split_history.append(split_data)
+            
+            # Sort by date (most recent first)
+            split_history.sort(key=lambda x: x['date'], reverse=True)
+            
+            return split_history
+            
+        except Exception as e:
+            print(f"Error fetching split history for {ticker}: {e}")
+            return []
 
 
 def main():

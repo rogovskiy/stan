@@ -483,6 +483,63 @@ class FirebaseCache:
             return []
     
     
+    def cache_split_history(self, ticker: str, splits: List[Dict[str, Any]], verbose: bool = True) -> None:
+        """Cache stock split history to Firestore
+        
+        Args:
+            ticker: Stock ticker symbol
+            splits: List of split dictionaries with keys: date, split_ratio, description
+            verbose: Show progress messages
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Store splits in tickers/{ticker}/price/splits
+            splits_ref = (self.db.collection('tickers')
+                         .document(upper_ticker)
+                         .collection('price')
+                         .document('splits'))
+            
+            splits_data = {
+                'ticker': upper_ticker,
+                'splits': splits,
+                'total_splits': len(splits),
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            splits_ref.set(splits_data)
+            
+            if verbose:
+                print(f'Cached {len(splits)} stock splits for {ticker}')
+        except Exception as error:
+            print(f'Error caching split history for {ticker}: {error}')
+            raise error
+    
+    def get_split_history(self, ticker: str) -> Optional[List[Dict[str, Any]]]:
+        """Get stock split history from Firestore
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            List of split dictionaries or None if not found
+        """
+        try:
+            splits_ref = (self.db.collection('tickers')
+                         .document(ticker.upper())
+                         .collection('price')
+                         .document('splits'))
+            
+            doc = splits_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                return data.get('splits', [])
+            return None
+            
+        except Exception as error:
+            print(f'Error getting split history for {ticker}: {error}')
+            return None
+    
     def _get_years_in_range(self, start_date: datetime, end_date: datetime) -> List[int]:
         """Get years in date range"""
         start_year = start_date.year

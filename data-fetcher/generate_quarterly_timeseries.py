@@ -106,6 +106,13 @@ class QuarterlyTimeSeriesGenerator:
                                 ticker: str, verbose: bool) -> Dict[str, Any]:
         """Extract and organize time series data from unified quarterly records"""
         
+        # Load split history for split-adjusted EPS calculation
+        splits = self.cache.get_split_history(ticker)
+        sorted_splits = sorted(splits, key=lambda x: x['date']) if splits else []
+        
+        if verbose and splits:
+            print(f'   📉 Loaded {len(splits)} stock splits for adjustment')
+        
         timeseries_data = []
         quarters_with_reasons = []  # Track quarters missing dividends with reasons
         
@@ -136,7 +143,18 @@ class QuarterlyTimeSeriesGenerator:
                     eps_value = quarter['earnings']['eps_actual']
                 
                 if eps_value is not None:
-                    data_point['eps'] = float(eps_value)
+                    eps_original = float(eps_value)
+                    data_point['eps'] = eps_original
+                    
+                    # Calculate split-adjusted EPS
+                    period_date = quarter.get('period_end_date')
+                    if period_date and sorted_splits:
+                        adjustment_factor = self._calculate_split_adjustment_factor(period_date, sorted_splits)
+                        if adjustment_factor != 1.0:
+                            eps_adjusted = eps_original / adjustment_factor
+                            data_point['eps_adjusted'] = round(eps_adjusted, 4)
+                            if verbose:
+                                print(f'   {data_point["quarter_key"]}: EPS ${eps_original:.2f} → ${eps_adjusted:.2f} (adjusted by {adjustment_factor:.2f}x)')
                 
                 # Extract revenue data from unified format
                 revenue_value = None
@@ -203,6 +221,10 @@ class QuarterlyTimeSeriesGenerator:
         # Sort by quarter_key (format: YYYYQN)
         timeseries_data.sort(key=lambda x: x['quarter_key'])
         
+        # Calculate split-adjusted EPS for all quarters (if not already done)
+        if sorted_splits:
+            self._apply_split_adjustments(timeseries_data, sorted_splits)
+        
         # Calculate growth rates (YoY - comparing to same quarter previous year)
         self._calculate_growth_rates_unified(timeseries_data)
         
@@ -215,6 +237,11 @@ class QuarterlyTimeSeriesGenerator:
         latest_with_revenue = next((d for d in reversed(timeseries_data) if 'revenue' in d), None)
         latest_with_dividend = next((d for d in reversed(timeseries_data) if 'dividend_per_share' in d), None)
         
+        # Use split-adjusted EPS in summary if available
+        latest_eps_value = None
+        if latest_with_eps:
+            latest_eps_value = latest_with_eps.get('eps_adjusted') or latest_with_eps.get('eps')
+        
         return {
             'ticker': ticker.upper(),
             'data': timeseries_data,
@@ -223,13 +250,16 @@ class QuarterlyTimeSeriesGenerator:
                 'eps_count': eps_count,
                 'revenue_count': revenue_count,
                 'dividend_count': dividend_count,
-                'latest_eps': latest_with_eps['eps'] if latest_with_eps else None,
+                'latest_eps': latest_eps_value,
+                'latest_eps_adjusted': latest_with_eps.get('eps_adjusted') if latest_with_eps else None,
                 'latest_revenue': latest_with_revenue['revenue'] if latest_with_revenue else None,
                 'latest_dividend': latest_with_dividend['dividend_per_share'] if latest_with_dividend else None,
                 'latest_quarter': timeseries_data[-1]['quarter_key'] if timeseries_data else None
             },
             'missing_dividends': quarters_with_reasons
         }
+    
+    def _create_empty_timeseries(self, ticker: str) -> Dict[str, Any]:
         """Create empty time series structure"""
         return {
             'ticker': ticker.upper(),
@@ -243,6 +273,61 @@ class QuarterlyTimeSeriesGenerator:
                 'data_sources': []
             }
         }
+    
+    def _calculate_split_adjustment_factor(self, period_date: str, sorted_splits: List[Dict[str, Any]]) -> float:
+        """Calculate the cumulative split adjustment factor for a given period date
+        
+        The adjustment factor is the product of all split ratios for splits that occurred
+        AFTER the period date. This adjusts historical EPS to be comparable to current shares.
+        
+        Args:
+            period_date: Period end date in YYYY-MM-DD format
+            sorted_splits: List of splits sorted by date (oldest first), each with 'date' and 'split_ratio'
+            
+        Returns:
+            Cumulative adjustment factor (1.0 if no adjustments needed)
+        """
+        if not period_date or not sorted_splits:
+            return 1.0
+        
+        try:
+            period_dt = datetime.strptime(period_date, '%Y-%m-%d')
+            adjustment_factor = 1.0
+            
+            # Multiply all split ratios for splits that occurred after the period date
+            for split in sorted_splits:
+                try:
+                    split_date = datetime.strptime(split['date'], '%Y-%m-%d')
+                    split_ratio = split['split_ratio']
+                    
+                    # If split occurred after the period, multiply the adjustment factor
+                    if split_date > period_dt:
+                        adjustment_factor *= split_ratio
+                except (ValueError, KeyError, TypeError):
+                    continue
+            
+            return adjustment_factor
+            
+        except (ValueError, TypeError):
+            return 1.0
+    
+    def _apply_split_adjustments(self, timeseries_data: List[Dict[str, Any]], 
+                                sorted_splits: List[Dict[str, Any]]) -> None:
+        """Apply split adjustments to EPS values in timeseries data
+        
+        Args:
+            timeseries_data: List of quarter data points
+            sorted_splits: List of splits sorted by date (oldest first)
+        """
+        for data_point in timeseries_data:
+            if 'eps' in data_point and 'eps_adjusted' not in data_point:
+                period_date = data_point.get('date')
+                if period_date:
+                    adjustment_factor = self._calculate_split_adjustment_factor(period_date, sorted_splits)
+                    if adjustment_factor != 1.0:
+                        eps_original = data_point['eps']
+                        eps_adjusted = eps_original / adjustment_factor
+                        data_point['eps_adjusted'] = round(eps_adjusted, 4)
     
     def _calculate_growth_rates_unified(self, data: List[Dict[str, Any]]) -> None:
         """Calculate YoY growth rates for unified time series data
@@ -264,10 +349,23 @@ class QuarterlyTimeSeriesGenerator:
             if previous_year_key in data_by_key:
                 prev_item = data_by_key[previous_year_key]
                 
-                # Calculate EPS growth
-                if 'eps' in item and 'eps' in prev_item and prev_item['eps'] != 0:
-                    growth_rate = ((item['eps'] - prev_item['eps']) / prev_item['eps']) * 100
+                # Calculate EPS growth (use split-adjusted if both periods have it, otherwise use unadjusted)
+                # This ensures we're comparing like-for-like values
+                use_adjusted = 'eps_adjusted' in item and 'eps_adjusted' in prev_item
+                
+                if use_adjusted:
+                    eps_current = item.get('eps_adjusted')
+                    eps_prev = prev_item.get('eps_adjusted')
+                else:
+                    eps_current = item.get('eps')
+                    eps_prev = prev_item.get('eps')
+                
+                if eps_current is not None and eps_prev is not None and eps_prev != 0:
+                    growth_rate = ((eps_current - eps_prev) / eps_prev) * 100
                     item['eps_growth'] = round(growth_rate, 2)
+                    # Mark whether growth was calculated using adjusted values
+                    if use_adjusted:
+                        item['eps_growth_adjusted'] = True
                 
                 # Calculate Revenue growth
                 if 'revenue' in item and 'revenue' in prev_item and prev_item['revenue'] != 0:

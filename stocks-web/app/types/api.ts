@@ -92,6 +92,7 @@ export interface QuarterlyDataPoint {
   year: number;
   quarter: string;
   eps: number;
+  eps_adjusted?: number;
   normalPE?: number;
   fairValue?: number;
   dividendsPOR?: number;

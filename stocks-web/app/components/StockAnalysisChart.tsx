@@ -134,6 +134,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
       year: number;
       peRatio: number[];
       earnings: number[];
+      eps_adjusted: number[];
       dividend: number[];
     }>();
     
@@ -146,6 +147,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
           year,
           peRatio: [],
           earnings: [],
+          eps_adjusted: [],
           dividend: []
         });
       }
@@ -155,10 +157,17 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
       if (item.peRatio !== null) {
         yearData.peRatio.push(item.peRatio);
       }
-      if (item.earnings !== null) {
+      if (item.earnings !== null && item.earnings !== undefined) {
         yearData.earnings.push(item.earnings);
       }
-      if (item.dividend !== null) {
+      // Use eps_adjusted if available, otherwise fall back to earnings
+      const epsAdjustedValue = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
+        ? item.eps_adjusted 
+        : item.earnings;
+      if (epsAdjustedValue !== null && epsAdjustedValue !== undefined) {
+        yearData.eps_adjusted.push(epsAdjustedValue);
+      }
+      if (item.dividend !== null && item.dividend !== undefined) {
         yearData.dividend.push(item.dividend);
       }
       
@@ -182,6 +191,9 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
         volume: 0,
         earnings: yearData.earnings.length > 0 
           ? yearData.earnings.reduce((sum, val) => sum + val, 0) 
+          : null,
+        eps_adjusted: yearData.eps_adjusted.length > 0 
+          ? yearData.eps_adjusted.reduce((sum, val) => sum + val, 0) 
           : null,
         normalPE: null,
         dividendsPOR: null,
@@ -370,7 +382,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                   fill="#f97316"
                   fillOpacity={0.15}
                   strokeWidth={1}
-                  name="Fair Value (Quarterly)"
+                  name="Fair Value"
                   connectNulls={true}
                   dot={<QuarterlyDot />}
                 />
@@ -442,6 +454,16 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                   {tableData.map((item, index) => (
                     <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
                       ${item.earnings?.toFixed(2) || '-'}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
+                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS Split Adjusted</td>
+                  {tableData.map((item, index) => (
+                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                      {item.eps_adjusted !== null && item.eps_adjusted !== undefined 
+                        ? `$${item.eps_adjusted.toFixed(2)}` 
+                        : '-'}
                     </td>
                   ))}
                 </tr>

@@ -8,10 +8,17 @@ import PeriodSelector from './components/PeriodSelector';
 import StockSidebar from './components/StockSidebar';
 import TickerSearch from './components/TickerSearch';
 
+interface AnalystPriceTargets {
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
+}
+
 export default function Home() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
   const [quarterlyData, setQuarterlyData] = useState<ApiQuarterlyDataPoint[]>([]);
+  const [analystPriceTargets, setAnalystPriceTargets] = useState<AnalystPriceTargets | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('8y');
@@ -68,10 +75,33 @@ export default function Home() {
     }
   };
 
+  // Fetch analyst data
+  const fetchAnalystData = async (ticker: string) => {
+    try {
+      const response = await fetch(`/api/analyst?ticker=${ticker}`);
+      const result = await response.json();
+      
+      if (result.success && result.data?.price_targets) {
+        const targets = result.data.price_targets;
+        setAnalystPriceTargets({
+          targetHigh: targets.target_high,
+          targetLow: targets.target_low,
+          targetMedian: targets.target_median
+        });
+      } else {
+        setAnalystPriceTargets(null);
+      }
+    } catch (err) {
+      console.error('Error fetching analyst data:', err);
+      setAnalystPriceTargets(null);
+    }
+  };
+
   // Load data when ticker/period changes
   useEffect(() => {
     console.log(`Fetching data for ticker: ${selectedTicker}, period: ${period}`);
     fetchStockData(selectedTicker, period);
+    fetchAnalystData(selectedTicker);
   }, [selectedTicker, period]);
 
   // Handle ticker change
@@ -291,6 +321,7 @@ export default function Home() {
                 growthRate={growthRate}
                 quarterlyGrowthRate={quarterlyGrowthRate}
                 forecastYears={forecastYears}
+                analystPriceTargets={analystPriceTargets}
               />
             </div>
 

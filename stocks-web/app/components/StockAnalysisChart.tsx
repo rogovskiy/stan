@@ -54,6 +54,12 @@ import {
 } from './stockChartTransform';
 import StockDataTable from './StockDataTable';
 
+interface AnalystPriceTargets {
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
+}
+
 interface StockAnalysisChartProps {
   dailyData: DailyDataPoint[];
   quarterlyData: ApiQuarterlyDataPoint[];
@@ -63,6 +69,7 @@ interface StockAnalysisChartProps {
   growthRate: number | null;
   quarterlyGrowthRate: number | null;
   forecastYears: number;
+  analystPriceTargets?: AnalystPriceTargets | null;
 }
 
 interface VisibleSeries {
@@ -81,7 +88,8 @@ export default function StockAnalysisChart({
   fairValueRatio,
   growthRate,
   quarterlyGrowthRate,
-  forecastYears
+  forecastYears,
+  analystPriceTargets
 }: StockAnalysisChartProps) {
   // State to track visibility of data series
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
@@ -358,6 +366,70 @@ export default function StockAnalysisChart({
     const lastActualQuarterly = actualQuarterlyPoints[actualQuarterlyPoints.length - 1];
     return lastActualQuarterly.timestamp;
   }, [chartDataWithTimestamps, estimatedPoints]);
+
+  // Find last known price point and create analyst price target lines
+  const analystPriceLines = useMemo(() => {
+    if (!analystPriceTargets || (!analystPriceTargets.targetHigh && !analystPriceTargets.targetLow && !analystPriceTargets.targetMedian)) {
+      return null;
+    }
+
+    // Find the last known price point (most recent non-estimated price)
+    const sortedData = [...chartDataWithTimestamps].sort((a, b) => 
+      a.timestamp - b.timestamp
+    );
+    
+    const lastPricePoint = sortedData
+      .filter(p => p.stockPrice !== null && p.stockPrice !== undefined && !p.estimated)
+      .slice(-1)[0];
+    
+    if (!lastPricePoint) return null;
+
+    const lastPriceTimestamp = lastPricePoint.timestamp;
+    const lastPrice = lastPricePoint.stockPrice!;
+    
+    // Extend to the end of the chart domain (or 1 year ahead if domain not available)
+    const futureTimestamp = typeof chartDomain[1] === 'number' 
+      ? chartDomain[1] 
+      : lastPriceTimestamp + (365 * 24 * 60 * 60 * 1000); // 1 year in milliseconds
+    
+    // Create data points for each target line
+    const lines: Array<{ data: Array<{ timestamp: number; price: number }>; color: string; name: string }> = [];
+    
+    if (analystPriceTargets.targetHigh) {
+      lines.push({
+        data: [
+          { timestamp: lastPriceTimestamp, price: lastPrice },
+          { timestamp: futureTimestamp, price: analystPriceTargets.targetHigh }
+        ],
+        color: '#d1d5db', // lighter gray
+        name: 'Analyst High (est.)'
+      });
+    }
+    
+    if (analystPriceTargets.targetMedian) {
+      lines.push({
+        data: [
+          { timestamp: lastPriceTimestamp, price: lastPrice },
+          { timestamp: futureTimestamp, price: analystPriceTargets.targetMedian }
+        ],
+        color: '#000000', // black
+        name: 'Analyst Median (est.)'
+      });
+    }
+    
+    if (analystPriceTargets.targetLow) {
+      lines.push({
+        data: [
+          { timestamp: lastPriceTimestamp, price: lastPrice },
+          { timestamp: futureTimestamp, price: analystPriceTargets.targetLow }
+        ],
+        color: '#d1d5db', // lighter gray
+        name: 'Analyst Low (est.)'
+      });
+    }
+    
+    return lines.length > 0 ? lines : null;
+  }, [chartDataWithTimestamps, analystPriceTargets, chartDomain]);
 
   // Helper function to split data into actual and estimated segments for a given dataKey
   // Includes the transition point (last actual point) in estimated data for smooth connection
@@ -838,6 +910,22 @@ export default function StockAnalysisChart({
                   dot={false}
                 />
               )}
+              
+              {/* Analyst Price Target Lines - dashed lines from last price to targets */}
+              {analystPriceLines && analystPriceLines.map((line, index) => (
+                <Line
+                  key={`analyst-${index}`}
+                  type="linear"
+                  data={line.data}
+                  dataKey="price"
+                  stroke={line.color}
+                  strokeWidth={1.5}
+                  strokeDasharray="5 5"
+                  name={line.name}
+                  dot={false}
+                  connectNulls={true}
+                />
+              ))}
             </ComposedChart>
           </ResponsiveContainer>
 

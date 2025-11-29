@@ -1,96 +1,43 @@
-  import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { FirebaseCache } from '../../lib/cache';
-import { YFinanceService } from '../../lib/yfinance';
 import { DailyPriceResponse } from '../../types/api';
-import { firebaseService } from '../../lib/firebaseService';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 
 const cache = new FirebaseCache();
-const yfinanceService = new YFinanceService();
 
-// Helper function to calculate MAX period based on first fiscal year with quarterly data
-async function calculateMaxPeriodFromQuarterlyData(ticker: string): Promise<number> {
-  try {
-    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, 24);
-    
-    if (!timeseriesData) {
-      return 50; // Fallback to 50 years if no quarterly data
-    }
-    
-    let allDataPoints: any[] = [];
-    
-    // Extract all data points from different possible formats
-    if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
-      allDataPoints = timeseriesData.data;
-    } else if (Array.isArray(timeseriesData)) {
-      allDataPoints = timeseriesData;
-    }
-    
-    if (allDataPoints.length === 0) {
-      return 50; // Fallback to 50 years if no data
-    }
-    
-    // Find the earliest date in the quarterly data
-    const dates = allDataPoints
-      .map((item: any) => {
-        const dateStr = item.date || item.period_end_date;
-        return dateStr ? new Date(dateStr) : null;
-      })
-      .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
-    
-    if (dates.length === 0) {
-      return 50; // Fallback to 50 years if no valid dates
-    }
-    
-    const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
-    const endDate = new Date();
-    
-    // Calculate years difference
-    const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
-    const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
-    
-    // Add 1 to include the first year, and round up to ensure we include all data
-    const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
-    
-    return Math.max(1, yearsBack); // At least 1 year
-  } catch (error) {
-    console.error(`Error calculating MAX period for ${ticker}:`, error);
-    return 50; // Fallback to 50 years on error
-  }
-}
-
-// Helper function to calculate date range based on period
-async function getPeriodDateRange(period: string, ticker?: string): Promise<{ startDate: Date; endDate: Date }> {
-  const endDate = new Date();
+// Helper function to calculate start date based on period
+// Period like "8y" means beginning of fiscal year 8 years ago
+// Apple's fiscal year starts on October 1st
+function getStartDateFromPeriod(period: string): Date {
+  const today = new Date();
   const startDate = new Date();
   
   const normalizedPeriod = period.toLowerCase();
   
-  switch (normalizedPeriod) {
-    case '6m': startDate.setMonth(endDate.getMonth() - 6); break;
-    case '1y': startDate.setFullYear(endDate.getFullYear() - 1); break;
-    case '2y': startDate.setFullYear(endDate.getFullYear() - 2); break;
-    case '3y': startDate.setFullYear(endDate.getFullYear() - 3); break;
-    case '4y': startDate.setFullYear(endDate.getFullYear() - 4); break;
-    case '5y': startDate.setFullYear(endDate.getFullYear() - 5); break;
-    case '6y': startDate.setFullYear(endDate.getFullYear() - 6); break;
-    case '7y': startDate.setFullYear(endDate.getFullYear() - 7); break;
-    case '8y': startDate.setFullYear(endDate.getFullYear() - 8); break;
-    case '9y': startDate.setFullYear(endDate.getFullYear() - 9); break;
-    case '10y': startDate.setFullYear(endDate.getFullYear() - 10); break;
-    case 'max':
-      // Calculate MAX based on first fiscal year with quarterly data
-      if (ticker) {
-        const yearsBack = await calculateMaxPeriodFromQuarterlyData(ticker);
-        startDate.setFullYear(endDate.getFullYear() - yearsBack);
-        console.log(`MAX period calculated for ${ticker}: ${yearsBack} years back to first fiscal year with quarterly data`);
-      } else {
-        startDate.setFullYear(endDate.getFullYear() - 50); // Fallback if no ticker
-      }
-      break;
-    default: startDate.setFullYear(endDate.getFullYear() - 5);
+  // Extract number of years
+  const yearsMatch = normalizedPeriod.match(/^(\d+)(y|yr|year|years)?$/);
+  if (yearsMatch) {
+    const years = parseInt(yearsMatch[1]);
+    startDate.setFullYear(today.getFullYear() - years);
+    startDate.setMonth(9, 1); // October 1st (month 9, day 1) - beginning of fiscal year
+    startDate.setHours(0, 0, 0, 0);
+    return startDate;
   }
   
-  return { startDate, endDate };
+  // Handle "max" - go back 50 years
+  if (normalizedPeriod === 'max') {
+    startDate.setFullYear(today.getFullYear() - 50);
+    startDate.setMonth(9, 1); // October 1st
+    startDate.setHours(0, 0, 0, 0);
+    return startDate;
+  }
+  
+  // Default to 5 years
+  startDate.setFullYear(today.getFullYear() - 5);
+  startDate.setMonth(9, 1); // October 1st
+  startDate.setHours(0, 0, 0, 0);
+  return startDate;
 }
 
 export async function GET(request: NextRequest) {
@@ -109,68 +56,114 @@ export async function GET(request: NextRequest) {
     console.log(`Daily Prices API Request: ${ticker}, period: ${period}`);
 
     try {
-      // Calculate date range based on period
-      const { startDate, endDate } = await getPeriodDateRange(period, ticker);
+      // Calculate start date based on period
+      const startDate = getStartDateFromPeriod(period);
+      const startYear = startDate.getFullYear();
       
-      // Check cache status
-      const cacheStatus = await cache.hasCachedDataForRange(ticker, startDate, endDate);
-      console.log(`Cache status for ${ticker}:`, cacheStatus);
+      console.log(`Start date: ${startDate.toISOString().split('T')[0]} (year: ${startYear})`);
 
-      // Get ticker metadata (fetch and cache if needed)
-      let metadata = await cache.getTickerMetadata(ticker);
-      if (!metadata) {
-        console.log(`No cached metadata for ${ticker}, fetching from Yahoo Finance...`);
-        metadata = await yfinanceService.fetchAndCacheTickerMetadata(ticker);
+      // Get consolidated price data document from Firebase
+      const priceDataRef = doc(db, 'tickers', ticker.toUpperCase(), 'price', 'consolidated');
+      const priceDataSnap = await getDoc(priceDataRef);
+
+      if (!priceDataSnap.exists()) {
+        return NextResponse.json(
+          { error: `No price data found for ${ticker}` },
+          { status: 404 }
+        );
       }
 
-      // Fetch missing data if needed
-      if (!cacheStatus.hasAllPriceData || cacheStatus.missingYears.length > 0) {
-        console.log(`Missing price data for ${ticker}, fetching from Yahoo Finance...`);
-        console.log(`Missing years: ${cacheStatus.missingYears.join(', ')}`);
-        
-        // Use YFinanceService to fetch and cache missing data
-        await yfinanceService.fetchStockData(ticker, period);
-      }
-      
-      console.log(`Fetching cached price data for ${ticker} from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
+      const consolidatedData = priceDataSnap.data() as any;
+      const years = consolidatedData.years || {};
 
-      // Get cached price data for the specified date range
-      const priceData = await cache.getPriceDataRange(ticker, startDate, endDate);
-      console.log(`Received ${Object.keys(priceData).length} cached price data points`);
-      
-      // Transform cached data to match API format
-      const dailyPriceData = Object.entries(priceData)
+      // Get all years >= startYear from the document
+      const yearsToFetch: number[] = [];
+      Object.keys(years).forEach(yearStr => {
+        const year = parseInt(yearStr);
+        if (year >= startYear) {
+          yearsToFetch.push(year);
+        }
+      });
+      yearsToFetch.sort((a, b) => a - b);
+
+      console.log(`Found ${yearsToFetch.length} years to fetch: ${yearsToFetch.join(', ')}`);
+
+      // Fetch price data from storage for each year
+      const allPriceData: Record<string, any> = {};
+      const normalizedStartDate = new Date(startDate);
+      normalizedStartDate.setHours(0, 0, 0, 0);
+
+      for (const year of yearsToFetch) {
+        const yearData = years[year.toString()];
+        if (!yearData) continue;
+
+        // Handle both camelCase and snake_case field names
+        const downloadUrl = yearData.downloadUrl || yearData.download_url;
+        if (!downloadUrl) {
+          console.log(`No download URL for year ${year}, skipping`);
+          continue;
+        }
+
+        try {
+          console.log(`Fetching data for year ${year} from ${downloadUrl}`);
+          const response = await fetch(downloadUrl);
+          if (!response.ok) {
+            console.error(`Failed to fetch data for year ${year}: ${response.statusText}`);
+            continue;
+          }
+
+          const annualData = await response.json();
+          
+          // Filter by start date and add to allPriceData
+          Object.entries(annualData.data || {}).forEach(([dateStr, dayData]: [string, any]) => {
+            const date = new Date(dateStr);
+            date.setHours(0, 0, 0, 0);
+            if (date >= normalizedStartDate) {
+              allPriceData[dateStr] = dayData;
+            }
+          });
+        } catch (error) {
+          console.error(`Error fetching data for year ${year}:`, error);
+        }
+      }
+
+      // Get ticker metadata
+      const metadata = await cache.getTickerMetadata(ticker);
+      const companyName = metadata?.name || ticker.toUpperCase();
+
+      // Transform to API format
+      const dailyPriceData = Object.entries(allPriceData)
         .map(([date, data]: [string, any]) => ({
           date: date,
-          fyDate: date, // Use same date for fiscal year date
+          fyDate: date,
           year: new Date(date).getFullYear(),
           price: data.c, // Close price
-          estimated: false // Cached data is real, not estimated
+          estimated: false
         }))
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort by date ascending
-      
-      console.log(`Retrieved ${dailyPriceData.length} cached daily price points for ${ticker}`);
-      
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      console.log(`Retrieved ${dailyPriceData.length} data points from ${dailyPriceData[0]?.date || 'N/A'} to ${dailyPriceData[dailyPriceData.length - 1]?.date || 'N/A'}`);
+
       const response: DailyPriceResponse = {
         symbol: ticker.toUpperCase(),
-        companyName: metadata.name,
-        currency: 'USD', // Default to USD since currency not stored in metadata
+        companyName: companyName,
+        currency: 'USD',
         data: dailyPriceData,
         metadata: {
           lastUpdated: new Date().toISOString(),
           dataRange: {
-            start: dailyPriceData.length > 0 ? dailyPriceData[0].date : '',
-            end: dailyPriceData.length > 0 ? dailyPriceData[dailyPriceData.length - 1].date : ''
+            start: dailyPriceData[0]?.date || '',
+            end: dailyPriceData[dailyPriceData.length - 1]?.date || ''
           }
         }
       };
 
       return NextResponse.json(response);
-      
+
     } catch (error) {
-      console.error(`Failed to fetch cached daily price data for ${ticker}:`, error);
+      console.error(`Failed to fetch daily price data for ${ticker}:`, error);
       return NextResponse.json(
-        { error: 'Failed to fetch cached daily price data', details: error instanceof Error ? error.message : 'Unknown error' },
+        { error: 'Failed to fetch daily price data', details: error instanceof Error ? error.message : 'Unknown error' },
         { status: 500 }
       );
     }

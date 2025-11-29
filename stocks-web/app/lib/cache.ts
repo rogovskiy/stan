@@ -334,30 +334,31 @@ export class FirebaseCache {
             lastUpdated: lastUpdated
           } as AnnualPriceReference;
           
-          // Check cache age - annual price data expires after 24 hours for current year, much longer for past years
+          // Handle missing or invalid lastUpdated timestamp
+          if (!lastUpdated) {
+            console.log(`Annual price reference found for ${ticker} ${year} but missing lastUpdated - returning anyway`);
+            // Return the reference even without lastUpdated - data exists in storage
+            return normalizedReference;
+          }
+          
+          // Check cache age for logging, but always return the data if it exists
+          // The expiration check in hasCachedDataForRange will determine if we need to refresh
           const currentYear = new Date().getFullYear();
           const maxAge = year === currentYear ? 
             24 * 60 * 60 * 1000 : // 24 hours for current year
             365 * 24 * 60 * 60 * 1000; // 1 year for past years (historical data doesn't change)
           
-          // Handle missing or invalid lastUpdated timestamp
-          if (!lastUpdated) {
-            console.log(`Annual price reference found for ${ticker} ${year} but missing lastUpdated - treating as valid for historical year`);
-            // For historical years without timestamp, treat as valid if it's not the current year
-            if (year < currentYear) {
-              return normalizedReference;
-            }
-            return null;
-          }
-          
           const cacheAge = Date.now() - new Date(lastUpdated).getTime();
           
           if (cacheAge < maxAge) {
             console.log(`Annual price reference cache hit for ${ticker} ${year}`);
-            return normalizedReference;
+          } else {
+            console.log(`Annual price reference cache expired for ${ticker} ${year} (age: ${Math.round(cacheAge / (24 * 60 * 60 * 1000))} days) - but returning data anyway`);
           }
           
-          console.log(`Annual price reference cache expired for ${ticker} ${year} (age: ${Math.round(cacheAge / (24 * 60 * 60 * 1000))} days)`);
+          // Always return the reference if it exists - don't reject expired data
+          // The hasCachedDataForRange method will mark it for refresh if needed
+          return normalizedReference;
         }
       }
       
@@ -387,29 +388,86 @@ export class FirebaseCache {
   }
 
   // Get price data for a date range (across multiple years)
+  // Note: endDate is only used to determine which years to check, not to filter the actual data
+  // All available data from startDate onwards will be returned, regardless of endDate
   async getPriceDataRange(ticker: string, startDate: Date, endDate: Date): Promise<Record<string, any>> {
-    console.log(`Cache: getPriceDataRange called for ${ticker} from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
-    const years = this.getYearsInRange(startDate, endDate);
-    console.log(`Cache: Years to fetch: ${years.join(', ')}`);
+    console.log(`Cache: getPriceDataRange called for ${ticker} from ${startDate.toISOString().split('T')[0]} onwards (endDate=${endDate.toISOString().split('T')[0]} used only for year selection)`);
     const priceData: Record<string, any> = {};
     
-    for (const year of years) {
+    // Normalize startDate for comparison (set to start of day)
+    const normalizedStartDate = new Date(startDate);
+    normalizedStartDate.setHours(0, 0, 0, 0);
+    
+    // Get all available years from the consolidated document
+    // This ensures we fetch all years that have data, not just a calculated range
+    const { db } = getFirebaseServices();
+    const priceDataRef = doc(db, 'tickers', ticker.toUpperCase(), 'price', 'consolidated');
+    const priceDataSnap = await getDoc(priceDataRef);
+    
+    const startYear = startDate.getFullYear();
+    const currentYear = new Date().getFullYear();
+    const availableYears: Set<number> = new Set();
+    
+    // Always check current year and next year to ensure we get latest data
+    // This is important because data might exist even if not in consolidated document yet
+    if (currentYear >= startYear) {
+      availableYears.add(currentYear);
+    }
+    if ((currentYear + 1) >= startYear) {
+      availableYears.add(currentYear + 1);
+    }
+    
+    if (priceDataSnap.exists()) {
+      const consolidatedData = priceDataSnap.data() as ConsolidatedPriceData;
+      // Get all years that are >= startYear from the consolidated data
+      Object.keys(consolidatedData.years).forEach(yearStr => {
+        const year = parseInt(yearStr);
+        if (year >= startYear) {
+          availableYears.add(year);
+        }
+      });
+      const sortedYears = Array.from(availableYears).sort((a, b) => a - b);
+      console.log(`Cache: Found ${sortedYears.length} available years >= ${startYear}: ${sortedYears.join(', ')}`);
+    } else {
+      // Fallback: if no consolidated data, check from startYear to current year + 1
+      const endYear = Math.max(endDate.getFullYear(), currentYear + 1);
+      for (let year = startYear; year <= endYear; year++) {
+        availableYears.add(year);
+      }
+      const sortedYears = Array.from(availableYears).sort((a, b) => a - b);
+      console.log(`Cache: No consolidated data found, checking years ${sortedYears.join(', ')}`);
+    }
+    
+    const sortedAvailableYears = Array.from(availableYears).sort((a, b) => a - b);
+    
+    // Fetch all available years
+    for (const year of sortedAvailableYears) {
       console.log(`Cache: Fetching data for year ${year}`);
       const reference = await this.getAnnualPriceReference(ticker, year);
       if (reference) {
-        console.log(`Cache: Found reference for ${year}, downloading data`);
-        const annualData = await this.downloadAnnualPriceData(reference);
-        
-        // Filter dates within the requested range
-        Object.entries(annualData.data).forEach(([dateStr, dayData]) => {
-          const date = new Date(dateStr);
-          if (date >= startDate && date <= endDate) {
-            priceData[dateStr] = dayData;
-          }
-        });
-        console.log(`Cache: Added ${Object.keys(annualData.data).length} data points for ${year}`);
+        console.log(`Cache: Found reference for ${year}, downloading data from ${reference.downloadUrl}`);
+        try {
+          const annualData = await this.downloadAnnualPriceData(reference);
+          
+          // Only filter by startDate - include all data from that date onwards, no endDate filtering
+          Object.entries(annualData.data).forEach(([dateStr, dayData]) => {
+            const date = new Date(dateStr);
+            date.setHours(0, 0, 0, 0); // Normalize to start of day for comparison
+            if (date >= normalizedStartDate) {
+              priceData[dateStr] = dayData;
+            }
+          });
+          const yearDataCount = Object.keys(annualData.data).filter((dateStr) => {
+            const date = new Date(dateStr);
+            date.setHours(0, 0, 0, 0);
+            return date >= normalizedStartDate;
+          }).length;
+          console.log(`Cache: Added ${yearDataCount} data points for ${year} (from ${Object.keys(annualData.data).length} total in year)`);
+        } catch (error) {
+          console.error(`Cache: Error downloading data for ${year}:`, error);
+        }
       } else {
-        console.log(`Cache: No reference found for ${ticker} year ${year}`);
+        console.log(`Cache: No reference found for ${ticker} year ${year} - year may not exist in consolidated document or cache expired`);
       }
     }
     
@@ -580,6 +638,20 @@ export class FirebaseCache {
               30 * 24 * 60 * 60 * 1000; // 30 days for past years
             
             const cacheAge = Date.now() - new Date(yearData.lastUpdated).getTime();
+            
+            // For current year, refresh more frequently to ensure we get today's data
+            // Refresh if cache is older than 4 hours to get latest prices throughout the day
+            if (year === currentYear) {
+              const shouldRefresh = cacheAge >= 4 * 60 * 60 * 1000; // 4 hours
+              
+              if (shouldRefresh) {
+                console.log(`Current year cache needs refresh: age=${Math.round(cacheAge / (60 * 60 * 1000))}h`);
+                hasPriceData = false;
+                missingYears.push(year);
+                continue;
+              }
+            }
+            
             if (cacheAge >= maxAge) {
               hasPriceData = false;
               missingYears.push(year);

@@ -160,3 +160,51 @@ const priceData = await Promise.all(
   )
 );
 ```
+
+### **Get latest analyst price targets:**
+```javascript
+const latestRef = await getDoc(
+  doc(db, 'tickers', 'AAPL', 'analyst', 'price_targets', 'history', 'latest')
+);
+const priceTargets = latestRef.data()?.data;
+```
+
+### **Get analyst data history:**
+```javascript
+// Get all historical snapshots for price targets
+const historyRef = collection(
+  db, 
+  'tickers', 
+  'AAPL', 
+  'analyst', 
+  'price_targets', 
+  'history'
+);
+
+// Query with date range (exclude 'latest' document)
+const q = query(
+  historyRef,
+  where('fetched_at', '>=', '2024-11-01T00:00:00'),
+  where('fetched_at', '<=', '2024-11-30T23:59:59'),
+  where('fetched_at', '!=', null),
+  orderBy('fetched_at', 'desc')
+);
+
+const snapshot = await getDocs(q);
+const history = snapshot.docs
+  .filter(doc => doc.id !== 'latest')
+  .map(doc => doc.data());
+```
+
+### **Get all latest analyst data types:**
+```javascript
+const dataTypes = ['price_targets', 'recommendations', 'growth_estimates', 'earnings_trend'];
+const latestData = {};
+
+for (const type of dataTypes) {
+  const latestRef = await getDoc(
+    doc(db, 'tickers', 'AAPL', 'analyst', type, 'history', 'latest')
+  );
+  latestData[type] = latestRef.data()?.data;
+}
+```

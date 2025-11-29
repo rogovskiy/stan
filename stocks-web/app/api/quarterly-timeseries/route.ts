@@ -6,8 +6,6 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const ticker = searchParams.get('ticker');
-    const maxAgeHours = parseInt(searchParams.get('maxAge') || '24');
-    const period = searchParams.get('period') || '5y'; // Add period parameter
 
     if (!ticker) {
       return NextResponse.json(
@@ -16,10 +14,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`Quarterly API Request: ${ticker}, period: ${period}, maxAge: ${maxAgeHours}`);
+    console.log(`Quarterly API Request: ${ticker}`);
 
     // Try to get cached quarterly time series data
-    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, maxAgeHours);
+    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker);
 
     if (!timeseriesData) {
       return NextResponse.json(
@@ -35,124 +33,71 @@ export async function GET(request: NextRequest) {
     // Transform data to our new quarterly format
     const quarterlyDataPoints: QuarterlyDataPoint[] = [];
     
-    // Helper function to calculate MAX period based on first fiscal year with quarterly data
-    const calculateMaxPeriod = (timeseriesData: any): number => {
-      let allDataPoints: any[] = [];
-      
-      // Extract all data points from different possible formats
-      if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
-        allDataPoints = timeseriesData.data;
-      } else if (Array.isArray(timeseriesData)) {
-        allDataPoints = timeseriesData;
-      }
-      
-      if (allDataPoints.length === 0) {
-        return 50; // Fallback to 50 years if no data
-      }
-      
-      // Find the earliest date in the quarterly data
-      const dates = allDataPoints
-        .map((item: any) => {
-          const dateStr = item.date || item.period_end_date;
-          return dateStr ? new Date(dateStr) : null;
-        })
-        .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
-      
-      if (dates.length === 0) {
-        return 50; // Fallback to 50 years if no valid dates
-      }
-      
-      const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
-      const endDate = new Date();
-      
-      // Calculate years difference
-      const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
-      const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
-      
-      // Add 1 to include the first year, and round up to ensure we include all data
-      const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
-      
-      return Math.max(1, yearsBack); // At least 1 year
-    };
-    
-    // Calculate date range based on period
-    const endDate = new Date();
-    let startDate = new Date();
-    
-    const normalizedPeriod = period.toLowerCase();
-    
-    switch (normalizedPeriod) {
-      case '6m':
-        startDate.setMonth(endDate.getMonth() - 6);
-        break;
-      case '1y':
-        startDate.setFullYear(endDate.getFullYear() - 1);
-        break;
-      case '2y':
-        startDate.setFullYear(endDate.getFullYear() - 2);
-        break;
-      case '3y':
-        startDate.setFullYear(endDate.getFullYear() - 3);
-        break;
-      case '4y':
-        startDate.setFullYear(endDate.getFullYear() - 4);
-        break;
-      case '5y':
-        startDate.setFullYear(endDate.getFullYear() - 5);
-        break;
-      case '6y':
-        startDate.setFullYear(endDate.getFullYear() - 6);
-        break;
-      case '7y':
-        startDate.setFullYear(endDate.getFullYear() - 7);
-        break;
-      case '8y':
-        startDate.setFullYear(endDate.getFullYear() - 8);
-        break;
-      case '9y':
-        startDate.setFullYear(endDate.getFullYear() - 9);
-        break;
-      case '10y':
-        startDate.setFullYear(endDate.getFullYear() - 10);
-        break;
-      case 'max':
-        // Calculate MAX based on first fiscal year with quarterly data
-        const yearsBack = calculateMaxPeriod(timeseriesData);
-        startDate.setFullYear(endDate.getFullYear() - yearsBack);
-        console.log(`MAX period calculated: ${yearsBack} years back to first fiscal year with quarterly data`);
-        break;
-      default:
-        startDate.setFullYear(endDate.getFullYear() - 5);
-    }
-
-    console.log(`Filtering quarterly data from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
-    if (Array.isArray(timeseriesData) && timeseriesData.length > 0) {
-      console.log(`Sample data point keys: ${Object.keys(timeseriesData[0]).join(', ')}`);
-    }
-
-    // Handle new format: timeseriesData is an array with all metrics combined
-    // Check if it's the new format (array) or old format (object with eps.data)
-    let dataToProcess: any[] = [];
-
+    // Extract all data points from different possible formats
+    let allDataPoints: any[] = [];
     if (timeseriesData.data && Array.isArray(timeseriesData.data)) {
-      // Alternative format: data property contains array
-      dataToProcess = normalizedPeriod === 'max'
-        ? timeseriesData.data
-        : timeseriesData.data.filter((item: any) => {
-            const itemDate = new Date(item.date || item.period_end_date);
-            return itemDate >= startDate && itemDate <= endDate;
-          });
+      allDataPoints = timeseriesData.data;
+    } else if (Array.isArray(timeseriesData)) {
+      allDataPoints = timeseriesData;
     }
-    // sort by date 
-    dataToProcess.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // Return all data - no filtering
+    const dataToProcess = allDataPoints;
+    console.log(`Returning all ${allDataPoints.length} quarters`);
+    
+    // Sort by date before processing
+    dataToProcess.sort((a, b) => new Date(a.date || a.period_end_date).getTime() - new Date(b.date || b.period_end_date).getTime());
+    
     // Process each data point
     dataToProcess.forEach((item: any, index: number) => {
       const eps = item.eps;
       
       // Extract date fields - handle different property names
       const date = item.date || item.period_end_date;
-      const year = item.year || new Date(date).getFullYear();
-      const quarter = item.quarter || `Q${item.fiscal_quarter || 1}`;
+      
+      // Extract quarter information from stored data only - do not recalculate
+      let quarter: string;
+      let year: number;
+      
+      if (item.quarter_key) {
+        // Parse quarter_key format: "YYYYQN" (e.g., "2024Q1")
+        const quarterKeyMatch = item.quarter_key.match(/^(\d{4})Q(\d)$/);
+        if (quarterKeyMatch) {
+          year = parseInt(quarterKeyMatch[1], 10);
+          const quarterNum = quarterKeyMatch[2];
+          quarter = `Q${quarterNum}`;
+        } else {
+          // If quarter_key format is unexpected, try to extract from other stored fields
+          console.warn(`Unexpected quarter_key format: ${item.quarter_key} for ${ticker}`);
+          if (item.fiscal_quarter) {
+            quarter = `Q${item.fiscal_quarter}`;
+            year = item.fiscal_year || item.year;
+          } else if (item.quarter) {
+            quarter = item.quarter;
+            year = item.year;
+          } else {
+            // Skip this data point if no quarter info available
+            console.warn(`No quarter information found for data point with date ${date}`);
+            return;
+          }
+        }
+      } else if (item.fiscal_quarter) {
+        quarter = `Q${item.fiscal_quarter}`;
+        year = item.fiscal_year || item.year;
+      } else if (item.quarter) {
+        quarter = item.quarter;
+        year = item.year;
+      } else {
+        // No quarter information in stored data - skip this data point
+        console.warn(`No quarter information found in stored data for date ${date}, skipping`);
+        return;
+      }
+      
+      // Ensure we have valid year and quarter
+      if (!year || !quarter) {
+        console.warn(`Invalid year or quarter for data point with date ${date}, skipping`);
+        return;
+      }
       
       // Extract dividend_per_share if available (new format)
       const dividendPerShare = item.dividend_per_share;

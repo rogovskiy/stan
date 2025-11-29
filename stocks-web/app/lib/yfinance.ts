@@ -84,10 +84,14 @@ export class YFinanceService {
     console.log(`- Missing years: ${missingYears.join(', ')}`);
     console.log(`- Missing quarters: ${missingQuarters.join(', ')}`);
 
+    // Ensure endDate is set to end of day to get all available data up to today
+    const normalizedEndDate = new Date(endDate);
+    normalizedEndDate.setHours(23, 59, 59, 999);
+
     // Fetch historical price data from Yahoo Finance for the entire range
     const chartData = await this.yf.chart(ticker, {
       period1: startDate,
-      period2: endDate,
+      period2: normalizedEndDate,
       interval: '1d'
     });
 
@@ -151,32 +155,6 @@ export class YFinanceService {
             }
           }
         }
-
-        // Process forecasted earnings
-        const earningsChart = quoteSummary?.earnings?.earningsChart;
-        console.log(`Earnings chart available: ${!!earningsChart}`);
-        
-        if (earningsChart?.quarterly) {
-          console.log(`Quarterly forecasts: ${earningsChart.quarterly.length}`);
-          
-          if (earningsChart.quarterly.length > 0) {
-            console.log('Sample forecast record:', JSON.stringify(earningsChart.quarterly[0], null, 2));
-          }
-          
-          for (const quarter of earningsChart.quarterly) {
-            if (quarter.date && quarter.estimate) {
-              // Handle forecast quarter strings like "4Q2024"
-              const quarterKey = this.parseForecastQuarter(quarter.date);
-              console.log(`Processing forecast: date=${quarter.date}, quarterKey=${quarterKey}, estimate=${quarter.estimate}`);
-              
-              if (quarterKey && (missingQuarters.includes(quarterKey) || missingQuarters.length === 0)) {
-                const financialData = this.createFinancialDataFromForecast(quarter, quarterKey);
-                console.log(`Caching forecast data for ${quarterKey}:`, financialData);
-                await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
-              }
-            }
-          }
-        }
         
         console.log(`✅ Finished processing financial data for ${ticker}`);
       }
@@ -184,27 +162,6 @@ export class YFinanceService {
       console.warn(`Could not fetch financial data for ${ticker}:`, error);
       // No more synthetic data generation - only actual data
     }
-  }
-
-  private parseForecastQuarter(quarterStr: string): string | null {
-    if (!quarterStr || typeof quarterStr !== 'string') {
-      return null;
-    }
-    
-    console.log(`Parsing forecast quarter string: "${quarterStr}"`);
-    
-    // Handle formats like "4Q2024", "1Q2025"
-    const match = quarterStr.match(/(\d)Q(\d{4})/);
-    if (match) {
-      const quarter = match[1];
-      const year = match[2];
-      const result = `${year}Q${quarter}`;
-      console.log(`Successfully parsed forecast "${quarterStr}" → "${result}"`);
-      return result;
-    }
-    
-    console.warn(`Could not parse forecast quarter: "${quarterStr}"`);
-    return null;
   }
 
   private parseEarningsQuarter(quarterData: any): string | null {
@@ -395,54 +352,6 @@ export class YFinanceService {
     return result;
   }
 
-  private createFinancialDataFromForecast(quarter: any, quarterKey: string): QuarterlyFinancialData {
-    const year = parseInt(quarterKey.substring(0, 4));
-    const quarterNum = parseInt(quarterKey.substring(5));
-    
-    const startMonth = (quarterNum - 1) * 3;
-    const endMonth = startMonth + 2;
-    
-    // Extract comprehensive forecast data
-    const forecastData: any = {};
-    if (quarter.actual !== undefined && quarter.actual !== null) {
-      forecastData.actual = typeof quarter.actual === 'object' ? quarter.actual.raw : quarter.actual;
-    }
-    if (quarter.estimate !== undefined && quarter.estimate !== null) {
-      forecastData.estimate = typeof quarter.estimate === 'object' ? quarter.estimate.raw : quarter.estimate;
-    }
-    if (quarter.fiscalQuarter) {
-      forecastData.fiscalQuarter = quarter.fiscalQuarter;
-    }
-    if (quarter.calendarQuarter) {
-      forecastData.calendarQuarter = quarter.calendarQuarter;
-    }
-    if (quarter.difference) {
-      forecastData.difference = quarter.difference;
-    }
-    if (quarter.surprisePct) {
-      forecastData.surprisePct = quarter.surprisePct;
-    }
-    
-    // Extract financial metrics from forecast
-    const financials: any = {
-      dataSource: 'yahoo_finance_forecast',
-      estimated: true
-    };
-    
-    if (quarter.estimate !== undefined && quarter.estimate !== null) {
-      financials.epsDiluted = typeof quarter.estimate === 'object' ? quarter.estimate.raw : quarter.estimate;
-    }
-    
-    return {
-      fiscalYear: year,
-      fiscalQuarter: quarterNum,
-      startDate: new Date(year, startMonth, 1).toISOString().split('T')[0],
-      endDate: new Date(year, endMonth + 1, 0).toISOString().split('T')[0],
-      forecast: Object.keys(forecastData).length > 0 ? forecastData : undefined,
-      financials: Object.keys(financials).length > 2 ? financials : undefined
-    };
-  }
-
   private transformToHistoricalChart(
     priceData: Record<string, any>,
     financialData: QuarterlyFinancialData[],
@@ -582,8 +491,7 @@ export class YFinanceService {
         console.log(`Successfully fetched earnings data for ${ticker}:`, {
           earnings: !!earningsData?.earnings,
           earningsHistory: !!earningsData?.earningsHistory,
-          earningsTrend: !!earningsData?.earningsTrend,
-          quarterlyForecasts: earningsData?.earnings?.earningsChart?.quarterly?.length || 0
+          earningsTrend: !!earningsData?.earningsTrend
         });
         
       } catch (earningsError) {
@@ -611,7 +519,7 @@ export class YFinanceService {
 
   private async calculateMaxPeriodFromQuarterlyData(ticker: string): Promise<number> {
     try {
-      const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker, 24);
+      const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker);
       
       if (!timeseriesData) {
         return 50; // Fallback to 50 years if no quarterly data
@@ -790,7 +698,6 @@ export class YFinanceService {
 
       let cachedQuarters = 0;
       let historicalCount = 0;
-      let forecastCount = 0;
 
       if (quoteSummary) {
         // Process recent earnings history (Yahoo only provides ~4 quarters)
@@ -810,35 +717,16 @@ export class YFinanceService {
           }
         }
 
-        // Process forecasted earnings
-        const earningsChart = quoteSummary?.earnings?.earningsChart;
-        if (earningsChart?.quarterly) {
-          console.log(`   Found ${earningsChart.quarterly.length} quarterly forecasts from earningsChart`);
-          forecastCount = earningsChart.quarterly.length;
-          
-          for (const quarter of earningsChart.quarterly) {
-            if (quarter.date && quarter.estimate) {
-              const quarterKey = this.parseForecastQuarter(quarter.date);
-              
-              if (quarterKey) {
-                const financialData = this.createFinancialDataFromForecast(quarter, quarterKey);
-                await this.cache.cacheQuarterlyFinancialData(ticker, quarterKey, financialData);
-                cachedQuarters++;
-              }
-            }
-          }
-        }
       }
 
       console.log(`   ✅ Financial data summary:`);
       console.log(`     - Recent actuals: ${historicalCount} quarters`);
-      console.log(`     - Forecasts: ${forecastCount} quarters`);
       console.log(`     - Total cached: ${cachedQuarters} quarters`);
 
       return {
         quartersProcessed: cachedQuarters,
         historicalEarnings: historicalCount,
-        forecastQuarters: forecastCount
+        forecastQuarters: 0
       };
 
     } catch (error) {

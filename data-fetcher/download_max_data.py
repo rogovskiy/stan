@@ -60,7 +60,8 @@ class MaxDataDownloader:
         self.sec_service = SECFinancialsService()
     
     def download_max_data(self, ticker: str, clear_existing: bool = False, 
-                         verbose: bool = False, skip_price: bool = False) -> None:
+                         verbose: bool = False, skip_price: bool = False,
+                         include_analyst: bool = False) -> None:
         """Download and cache maximum available data for a ticker
         
         Args:
@@ -68,11 +69,12 @@ class MaxDataDownloader:
             clear_existing: Clear existing cache before downloading
             verbose: Show detailed progress
             skip_price: Skip downloading historical price data
+            include_analyst: Include analyst predictions/forecasts data
         """
         
         if verbose:
             print(f'\n🚀 Starting maximum data download for {ticker.upper()}')
-            print(f'Options: clearExisting={clear_existing}, skipPrice={skip_price}')
+            print(f'Options: clearExisting={clear_existing}, skipPrice={skip_price}, includeAnalyst={include_analyst}')
         else:
             print(f'\n🚀 Downloading data for {ticker.upper()}...')
         
@@ -133,6 +135,27 @@ class MaxDataDownloader:
                     print(f' ⚠️  Error: {split_results.get("error", "Unknown error")}')
                 else:
                     print(f'\n⚠️  Error fetching splits: {split_results.get("error", "Unknown error")}')
+            
+            # Download analyst predictions/forecasts if requested
+            if include_analyst:
+                if not verbose:
+                    print(f'📊 Downloading analyst data...', end='', flush=True)
+                analyst_results = self._fetch_analyst_data(ticker, verbose)
+                
+                if analyst_results['success']:
+                    if verbose:
+                        print(f'\n✅ Cached analyst data:')
+                        for data_type, status in analyst_results['data_types'].items():
+                            status_icon = '✓' if status['cached'] else '✗'
+                            print(f'   {status_icon} {data_type}: {status["message"]}')
+                    else:
+                        cached_count = sum(1 for s in analyst_results['data_types'].values() if s['cached'])
+                        print(f' {cached_count}/4 types cached')
+                else:
+                    if not verbose:
+                        print(f' ⚠️  Error: {analyst_results.get("error", "Unknown error")}')
+                    else:
+                        print(f'\n⚠️  Error fetching analyst data: {analyst_results.get("error", "Unknown error")}')
             
             print(f'\n✅ Completed for {ticker.upper()}!')
             
@@ -240,23 +263,42 @@ class MaxDataDownloader:
         """Fetch and cache comprehensive financial statements using unified service"""
         try:
             # Get all available periods from SEC (suppress verbose output)
-            periods = self.sec_service.get_all_available_periods(ticker, verbose=False)
+            sec_periods = self.sec_service.get_all_available_periods(ticker, verbose=False)
             
-            if not periods:
+            # Also get all quarters available from Yahoo Finance
+            yf_quarters = self.yfinance_service.fetch_quarterly_earnings(ticker)
+            yf_periods = set()
+            for q in yf_quarters:
+                yf_periods.add((q.get('fiscal_year'), q.get('fiscal_quarter')))
+            
+            # Combine SEC and Yahoo Finance periods
+            all_periods = set()
+            if sec_periods:
+                all_periods.update(sec_periods.get('quarterly_periods', []))
+            all_periods.update(yf_periods)
+            
+            if not all_periods:
                 return {
                     'success': False,
-                    'error': 'Failed to load SEC data',
+                    'error': 'No quarterly periods found from SEC or Yahoo Finance',
                     'quarterly_periods': 0
                 }
             
+            sec_count = len(sec_periods.get('quarterly_periods', [])) if sec_periods else 0
+            yf_count = len(yf_periods)
+            
             if verbose:
-                print(f"   Found {periods['total_quarters']} quarters available in SEC data")
+                if sec_periods:
+                    print(f"   Found {sec_count} quarters in SEC data, {yf_count} quarters in Yahoo Finance")
+                else:
+                    print(f"   SEC data not available, found {yf_count} quarters in Yahoo Finance")
+                print(f"   Total unique quarters to fetch: {len(all_periods)}")
             
             # Cache all quarterly data using unified service (auto-selects best source)
             quarterly_count = 0
             fiscal_years = set()
             
-            for fiscal_year, fiscal_quarter in periods['quarterly_periods']:
+            for fiscal_year, fiscal_quarter in sorted(all_periods, reverse=True):
                 fiscal_years.add(fiscal_year)
                 
                 # Fetch using unified service (auto-selects SEC or Yahoo Finance)
@@ -347,6 +389,116 @@ class MaxDataDownloader:
                 'total_splits': 0
             }
     
+    def _fetch_analyst_data(self, ticker: str, verbose: bool) -> Dict[str, Any]:
+        """Fetch and cache analyst predictions/forecasts data"""
+        try:
+            data_types = {
+                'price_targets': False,
+                'recommendations': False,
+                'growth_estimates': False,
+                'earnings_trend': False
+            }
+            
+            fetched_at = datetime.now()
+            
+            if verbose:
+                print(f"\n   Fetching analyst data for {ticker}...")
+            
+            # Fetch price targets
+            try:
+                if verbose:
+                    print(f"   - Fetching price targets...")
+                price_targets = self.yfinance_service.fetch_analyst_price_targets(ticker)
+                if price_targets:
+                    self.cache.cache_analyst_data(ticker, 'price_targets', price_targets, fetched_at)
+                    data_types['price_targets'] = True
+                    if verbose:
+                        print(f"     ✓ Cached price targets (high: {price_targets.get('target_high')}, mean: {price_targets.get('target_mean')})")
+            except Exception as e:
+                if verbose:
+                    print(f"     ✗ Error fetching price targets: {e}")
+                data_types['price_targets'] = {'error': str(e)}
+            
+            # Fetch recommendations
+            try:
+                if verbose:
+                    print(f"   - Fetching recommendations...")
+                recommendations = self.yfinance_service.fetch_analyst_recommendations(ticker)
+                if recommendations:
+                    self.cache.cache_analyst_data(ticker, 'recommendations', recommendations, fetched_at)
+                    data_types['recommendations'] = True
+                    if verbose:
+                        latest = recommendations.get('latest_summary', {})
+                        print(f"     ✓ Cached recommendations (Strong Buy: {latest.get('strongBuy', 0)}, Buy: {latest.get('buy', 0)})")
+            except Exception as e:
+                if verbose:
+                    print(f"     ✗ Error fetching recommendations: {e}")
+                data_types['recommendations'] = {'error': str(e)}
+            
+            # Fetch growth estimates
+            try:
+                if verbose:
+                    print(f"   - Fetching growth estimates...")
+                growth_estimates = self.yfinance_service.fetch_growth_estimates(ticker)
+                if growth_estimates:
+                    self.cache.cache_analyst_data(ticker, 'growth_estimates', growth_estimates, fetched_at)
+                    data_types['growth_estimates'] = True
+                    if verbose:
+                        stock_trend = growth_estimates.get('stock_trend', {})
+                        print(f"     ✓ Cached growth estimates (0q: {stock_trend.get('0q')}, 0y: {stock_trend.get('0y')})")
+            except Exception as e:
+                if verbose:
+                    print(f"     ✗ Error fetching growth estimates: {e}")
+                data_types['growth_estimates'] = {'error': str(e)}
+            
+            # Fetch earnings trend
+            try:
+                if verbose:
+                    print(f"   - Fetching earnings trend...")
+                earnings_trend = self.yfinance_service.fetch_earnings_trend(ticker)
+                if earnings_trend:
+                    self.cache.cache_analyst_data(ticker, 'earnings_trend', earnings_trend, fetched_at)
+                    data_types['earnings_trend'] = True
+                    if verbose:
+                        history_count = len(earnings_trend.get('earnings_history', []))
+                        print(f"     ✓ Cached earnings trend ({history_count} historical quarters)")
+            except Exception as e:
+                if verbose:
+                    print(f"     ✗ Error fetching earnings trend: {e}")
+                data_types['earnings_trend'] = {'error': str(e)}
+            
+            # Format results
+            formatted_data_types = {}
+            for data_type, status in data_types.items():
+                if isinstance(status, dict) and 'error' in status:
+                    formatted_data_types[data_type] = {
+                        'cached': False,
+                        'message': f"Error: {status['error']}"
+                    }
+                elif status:
+                    formatted_data_types[data_type] = {
+                        'cached': True,
+                        'message': 'Successfully cached'
+                    }
+                else:
+                    formatted_data_types[data_type] = {
+                        'cached': False,
+                        'message': 'No data available'
+                    }
+            
+            return {
+                'success': True,
+                'data_types': formatted_data_types,
+                'fetched_at': fetched_at.isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'data_types': {}
+            }
+    
 def main():
     """Main CLI interface"""
     
@@ -373,6 +525,8 @@ Examples:
                        help='Show detailed progress information')
     parser.add_argument('--skip-price', action='store_true',
                        help='Skip downloading historical price data')
+    parser.add_argument('--include-analyst', action='store_true',
+                       help='Include analyst predictions/forecasts data')
     
     args = parser.parse_args()
     
@@ -385,7 +539,8 @@ Examples:
             ticker=ticker,
             clear_existing=args.clear,
             verbose=args.verbose,
-            skip_price=args.skip_price
+            skip_price=args.skip_price,
+            include_analyst=args.include_analyst
         )
         
         print(f'\n🎉 Successfully downloaded and cached maximum data for {ticker}!')

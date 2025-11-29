@@ -15,7 +15,7 @@ export interface Ticker {
 /**
  * Get quarterly time series data from ticker-specific collection
  */
-export async function getQuarterlyTimeseries(ticker: string, maxAgeHours: number = 24): Promise<any | null> {
+export async function getQuarterlyTimeseries(ticker: string): Promise<any | null> {
   try {
     const timeseriesRef = doc(db, 'tickers', ticker.toUpperCase(), 'timeseries', 'quarterly');
     const timeseriesSnap = await getDoc(timeseriesRef);

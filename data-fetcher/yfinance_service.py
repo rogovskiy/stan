@@ -328,6 +328,271 @@ class YFinanceService:
         except Exception as e:
             print(f"Error fetching split history for {ticker}: {e}")
             return []
+    
+    def fetch_analyst_price_targets(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Fetch analyst price targets from Yahoo Finance
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+            
+        Returns:
+            Dictionary containing price target information:
+            - current_price: Current stock price
+            - target_high: Highest analyst price target
+            - target_low: Lowest analyst price target
+            - target_mean: Mean analyst price target
+            - target_median: Median analyst price target
+            - number_of_analysts: Number of analysts providing targets (if available)
+            
+        Example:
+            >>> service = YFinanceService()
+            >>> targets = service.fetch_analyst_price_targets('AAPL')
+            >>> # Returns: {'current_price': 278.85, 'target_high': 345.0, ...}
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            
+            # Get price targets from yfinance
+            price_targets = stock.get_analyst_price_targets()
+            
+            if not price_targets:
+                return None
+            
+            # Get current price from info if not in targets
+            info = stock.info
+            current_price = price_targets.get('current') if isinstance(price_targets, dict) else None
+            if current_price is None:
+                current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+            
+            # Extract price target data
+            result = {
+                'current_price': float(current_price) if current_price is not None else None,
+                'target_high': float(price_targets.get('high', 0)) if isinstance(price_targets, dict) else None,
+                'target_low': float(price_targets.get('low', 0)) if isinstance(price_targets, dict) else None,
+                'target_mean': float(price_targets.get('mean', 0)) if isinstance(price_targets, dict) else None,
+                'target_median': float(price_targets.get('median', 0)) if isinstance(price_targets, dict) else None,
+            }
+            
+            # Get number of analysts from info
+            num_analysts = info.get('numberOfAnalystOpinions')
+            if num_analysts is not None:
+                result['number_of_analysts'] = int(num_analysts)
+            
+            # Only return if we have at least some data
+            if any(v is not None and v > 0 for v in result.values() if isinstance(v, (int, float))):
+                return result
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching analyst price targets for {ticker}: {e}")
+            return None
+    
+    def fetch_analyst_recommendations(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Fetch analyst recommendations summary from Yahoo Finance
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+            
+        Returns:
+            Dictionary containing recommendation summary by period:
+            - recommendations_by_period: List of recommendations by time period
+              Each entry contains: period, strongBuy, buy, hold, sell, strongSell counts
+            - latest_summary: Latest recommendation summary
+            - recommendation_mean: Numeric recommendation (1-5, where 1=Strong Buy, 5=Strong Sell)
+            - recommendation_key: Text recommendation key
+            
+        Note: yfinance only provides aggregated counts, not individual analyst recommendations
+        
+        Example:
+            >>> service = YFinanceService()
+            >>> recs = service.fetch_analyst_recommendations('AAPL')
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            
+            # Get recommendations summary (aggregated by period)
+            recommendations = stock.get_recommendations()
+            
+            if recommendations is None or (isinstance(recommendations, pd.DataFrame) and recommendations.empty):
+                return None
+            
+            # Convert DataFrame to list of dicts
+            recommendations_list = []
+            if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
+                recommendations_list = recommendations.reset_index().to_dict('records')
+            
+            # Get additional info from ticker.info
+            info = stock.info
+            recommendation_mean = info.get('recommendationMean')
+            recommendation_key = info.get('recommendationKey')
+            num_analysts = info.get('numberOfAnalystOpinions')
+            avg_rating = info.get('averageAnalystRating')
+            
+            result = {
+                'recommendations_by_period': recommendations_list,
+            }
+            
+            # Add latest summary (first period in list, which is current month "0m")
+            if recommendations_list:
+                result['latest_summary'] = recommendations_list[0]
+            
+            if recommendation_mean is not None:
+                result['recommendation_mean'] = float(recommendation_mean)
+            if recommendation_key:
+                result['recommendation_key'] = str(recommendation_key)
+            if num_analysts is not None:
+                result['number_of_analysts'] = int(num_analysts)
+            if avg_rating:
+                result['average_rating'] = str(avg_rating)
+            
+            # Only return if we have data
+            if recommendations_list or any(key in result for key in ['recommendation_mean', 'recommendation_key']):
+                return result
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching analyst recommendations for {ticker}: {e}")
+            return None
+    
+    def fetch_growth_estimates(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Fetch growth estimates from Yahoo Finance
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+            
+        Returns:
+            Dictionary containing growth estimates:
+            - stock_trend: Growth estimates for the stock by period (0q, +1q, 0y, +1y, LTG)
+            - index_trend: Growth estimates for the index/sector (for comparison)
+            
+        Example:
+            >>> service = YFinanceService()
+            >>> growth = service.fetch_growth_estimates('AAPL')
+            >>> # Returns: {'stock_trend': {'0q': 0.1078, ...}, 'index_trend': {...}}
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            
+            # Get growth estimates
+            growth_estimates = stock.get_growth_estimates()
+            
+            if growth_estimates is None or (isinstance(growth_estimates, pd.DataFrame) and growth_estimates.empty):
+                return None
+            
+            # Convert DataFrame to dict
+            if isinstance(growth_estimates, pd.DataFrame):
+                growth_dict = growth_estimates.to_dict()
+            else:
+                growth_dict = growth_estimates if isinstance(growth_estimates, dict) else {}
+            
+            # Standardize the structure
+            result = {}
+            
+            # Extract stock trend
+            if 'stockTrend' in growth_dict:
+                stock_trend = growth_dict['stockTrend']
+                if isinstance(stock_trend, dict):
+                    # Convert values, handling NaN
+                    result['stock_trend'] = {
+                        k: float(v) if pd.notna(v) else None
+                        for k, v in stock_trend.items()
+                    }
+            
+            # Extract index trend
+            if 'indexTrend' in growth_dict:
+                index_trend = growth_dict['indexTrend']
+                if isinstance(index_trend, dict):
+                    result['index_trend'] = {
+                        k: float(v) if pd.notna(v) else None
+                        for k, v in index_trend.items()
+                    }
+            
+            # Only return if we have data
+            if result:
+                return result
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching growth estimates for {ticker}: {e}")
+            return None
+    
+    def fetch_earnings_trend(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Fetch earnings trend and estimates from Yahoo Finance
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+            
+        Returns:
+            Dictionary containing earnings estimates and history:
+            - earnings_estimate: Estimates for current/next quarter and year (avg, low, high, growth)
+            - earnings_history: Historical earnings with actuals vs estimates and surprises
+            
+        Example:
+            >>> service = YFinanceService()
+            >>> trend = service.fetch_earnings_trend('AAPL')
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            result = {}
+            
+            # Get earnings estimates (current/future quarters)
+            earnings_estimate = stock.get_earnings_estimate()
+            if earnings_estimate is not None and not (isinstance(earnings_estimate, pd.DataFrame) and earnings_estimate.empty):
+                if isinstance(earnings_estimate, pd.DataFrame):
+                    estimate_dict = earnings_estimate.to_dict()
+                else:
+                    estimate_dict = earnings_estimate if isinstance(earnings_estimate, dict) else {}
+                
+                # Convert all values, handling NaN
+                cleaned_estimate = {}
+                for key, value_dict in estimate_dict.items():
+                    if isinstance(value_dict, dict):
+                        cleaned_estimate[key] = {
+                            k: float(v) if pd.notna(v) else None
+                            for k, v in value_dict.items()
+                        }
+                
+                if cleaned_estimate:
+                    result['earnings_estimate'] = cleaned_estimate
+            
+            # Get earnings history (past quarters with actuals)
+            earnings_history = stock.get_earnings_history()
+            if earnings_history is not None and not (isinstance(earnings_history, pd.DataFrame) and earnings_history.empty):
+                if isinstance(earnings_history, pd.DataFrame):
+                    # Convert DataFrame to list of dicts
+                    history_list = earnings_history.reset_index().to_dict('records')
+                    
+                    # Clean the data
+                    cleaned_history = []
+                    for record in history_list:
+                        cleaned_record = {}
+                        for key, value in record.items():
+                            if key == 'quarter' and hasattr(value, 'strftime'):
+                                cleaned_record['quarter'] = value.strftime('%Y-%m-%d')
+                            elif pd.notna(value):
+                                if isinstance(value, (int, float)):
+                                    cleaned_record[key] = float(value)
+                                else:
+                                    cleaned_record[key] = str(value)
+                            else:
+                                cleaned_record[key] = None
+                        cleaned_history.append(cleaned_record)
+                    
+                    if cleaned_history:
+                        result['earnings_history'] = cleaned_history
+            
+            # Only return if we have at least some data
+            if result:
+                return result
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching earnings trend for {ticker}: {e}")
+            return None
 
 
 def main():

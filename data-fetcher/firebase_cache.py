@@ -545,3 +545,183 @@ class FirebaseCache:
         start_year = start_date.year
         end_year = end_date.year
         return list(range(start_year, end_year + 1))
+    
+    def cache_analyst_data(self, ticker: str, data_type: str, data: Dict[str, Any], 
+                          timestamp: Optional[datetime] = None) -> None:
+        """Cache analyst data to Firestore with timestamp
+        
+        Args:
+            ticker: Stock ticker symbol
+            data_type: Type of analyst data ('price_targets', 'recommendations', 
+                     'growth_estimates', 'earnings_trend')
+            data: Analyst data dictionary to cache
+            timestamp: Optional timestamp (defaults to current time)
+            
+        Stores data at: tickers/{ticker}/analyst/{data_type}/{timestamp}
+        """
+        try:
+            if timestamp is None:
+                timestamp = datetime.now()
+            
+            # Format timestamp as ISO string for document ID (replace colons for Firestore compatibility)
+            timestamp_str = timestamp.strftime('%Y-%m-%dT%H-%M-%S')
+            
+            upper_ticker = ticker.upper()
+            
+            # Validate data_type
+            valid_types = ['price_targets', 'recommendations', 'growth_estimates', 'earnings_trend']
+            if data_type not in valid_types:
+                raise ValueError(f"Invalid data_type: {data_type}. Must be one of {valid_types}")
+            
+            # Prepare document data with metadata
+            doc_data = {
+                **data,
+                'ticker': upper_ticker,
+                'data_type': data_type,
+                'fetched_at': timestamp.isoformat(),
+                'data_source': 'yfinance'
+            }
+            
+            # Store in Firestore
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('analyst')
+                      .document(data_type)
+                      .collection('history')
+                      .document(timestamp_str))
+            
+            doc_ref.set(doc_data)
+            
+            # Update latest reference document
+            latest_ref = (self.db.collection('tickers')
+                         .document(upper_ticker)
+                         .collection('analyst')
+                         .document(data_type)
+                         .collection('history')
+                         .document('latest'))
+            
+            latest_ref.set({
+                'latest_timestamp': timestamp_str,
+                'fetched_at': timestamp.isoformat(),
+                'data': doc_data
+            })
+            
+        except Exception as error:
+            print(f'Error caching analyst data for {ticker} ({data_type}): {error}')
+            raise error
+    
+    def get_latest_analyst_data(self, ticker: str, data_type: str) -> Optional[Dict[str, Any]]:
+        """Get most recent analyst data snapshot
+        
+        Args:
+            ticker: Stock ticker symbol
+            data_type: Type of analyst data ('price_targets', 'recommendations', 
+                     'growth_estimates', 'earnings_trend')
+            
+        Returns:
+            Latest analyst data dictionary or None if not found
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Get latest reference
+            latest_ref = (self.db.collection('tickers')
+                         .document(upper_ticker)
+                         .collection('analyst')
+                         .document(data_type)
+                         .collection('history')
+                         .document('latest'))
+            
+            doc = latest_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                return data.get('data')
+            
+            return None
+            
+        except Exception as error:
+            print(f'Error getting latest analyst data for {ticker} ({data_type}): {error}')
+            return None
+    
+    def get_analyst_data_history(self, ticker: str, data_type: str, 
+                                 start_date: Optional[datetime] = None,
+                                 end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Get historical analyst data snapshots
+        
+        Args:
+            ticker: Stock ticker symbol
+            data_type: Type of analyst data ('price_targets', 'recommendations', 
+                     'growth_estimates', 'earnings_trend')
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            List of analyst data snapshots sorted by timestamp (most recent first)
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Query the history collection
+            collection_ref = (self.db.collection('tickers')
+                            .document(upper_ticker)
+                            .collection('analyst')
+                            .document(data_type)
+                            .collection('history'))
+            
+            # Get all documents from the collection
+            docs = collection_ref.stream()
+            
+            history = []
+            for doc in docs:
+                # Skip the 'latest' document
+                if doc.id == 'latest':
+                    continue
+                
+                data = doc.to_dict()
+                if not data or not data.get('fetched_at'):
+                    continue
+                
+                # Apply date filters if provided
+                fetched_at_str = data.get('fetched_at')
+                if fetched_at_str:
+                    fetched_at_dt = datetime.fromisoformat(fetched_at_str.replace('Z', '+00:00'))
+                    
+                    if start_date and fetched_at_dt < start_date:
+                        continue
+                    if end_date and fetched_at_dt > end_date:
+                        continue
+                
+                history.append(data)
+            
+            # Sort by fetched_at descending (most recent first)
+            history.sort(key=lambda x: x.get('fetched_at', ''), reverse=True)
+            
+            return history
+            
+        except Exception as error:
+            print(f'Error getting analyst data history for {ticker} ({data_type}): {error}')
+            return []
+    
+    def get_all_analyst_data(self, ticker: str) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Get latest snapshot of all analyst data types
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dictionary with keys: 'price_targets', 'recommendations', 
+            'growth_estimates', 'earnings_trend'
+            Each value is the latest data snapshot or None if not available
+        """
+        try:
+            result = {}
+            data_types = ['price_targets', 'recommendations', 'growth_estimates', 'earnings_trend']
+            
+            for data_type in data_types:
+                result[data_type] = self.get_latest_analyst_data(ticker, data_type)
+            
+            return result
+            
+        except Exception as error:
+            print(f'Error getting all analyst data for {ticker}: {error}')
+            return {}

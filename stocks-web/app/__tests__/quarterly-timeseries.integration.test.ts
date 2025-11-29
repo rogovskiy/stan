@@ -7,7 +7,7 @@ describe('Quarterly Time Series Integration Tests', () => {
     expect(typeof firebaseService.getQuarterlyTimeseries).toBe('function');
     
     // Test retrieving the AAPL quarterly timeseries data from ticker-specific location
-    const result = await firebaseService.getQuarterlyTimeseries('AAPL', 24);
+    const result = await firebaseService.getQuarterlyTimeseries('AAPL');
     
     console.log('getQuarterlyTimeseries result:', result);
     

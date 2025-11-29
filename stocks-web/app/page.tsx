@@ -291,6 +291,155 @@ export default function Home() {
 
             {/* Right Sidebar - 1/4 width */}
             <div className="xl:col-span-1 space-y-6">
+              {/* Key Metrics Widget */}
+              {currentData && (() => {
+                // Calculate Normal P/E Ratio: Average of actual P/E ratios using the same logic as the table
+                // For each quarterly point, use trailing 4 quarters EPS (same as table calculation)
+                let normalPERatio: number | null = null;
+                const quarterlyDataPoints = stockData.filter(item => 
+                  item.hasQuarterlyData && 
+                  item.stockPrice !== null && 
+                  item.stockPrice !== undefined
+                );
+                
+                if (quarterlyDataPoints.length > 0) {
+                  const peValues = quarterlyDataPoints
+                    .map(item => {
+                      // Calculate trailing 4 quarters EPS for this point (same as table logic)
+                      const currentDate = new Date(item.fullDate);
+                      const trailing4Quarters = stockData
+                        .filter(d => {
+                          const dDate = new Date(d.fullDate);
+                          return dDate <= currentDate && d.hasQuarterlyData;
+                        })
+                        .sort((a, b) => new Date(b.fullDate).getTime() - new Date(a.fullDate).getTime())
+                        .slice(0, 4);
+                      
+                      if (trailing4Quarters.length === 0) return null;
+                      
+                      const trailingEps = trailing4Quarters.reduce((sum, d) => {
+                        const epsValue = d.eps_adjusted !== null && d.eps_adjusted !== undefined 
+                          ? d.eps_adjusted 
+                          : (d.earnings || 0);
+                        return sum + epsValue;
+                      }, 0);
+                      
+                      // Annualize if less than 4 quarters
+                      const annualEps = trailing4Quarters.length < 4
+                        ? (trailingEps / trailing4Quarters.length) * 4
+                        : trailingEps;
+                      
+                      // Calculate P/E: price / annual EPS
+                      if (annualEps > 0 && item.stockPrice && item.stockPrice > 0) {
+                        return item.stockPrice / annualEps;
+                      }
+                      return null;
+                    })
+                    .filter((pe): pe is number => pe !== null && pe !== undefined);
+                  
+                  if (peValues.length > 0) {
+                    normalPERatio = peValues.reduce((sum, pe) => sum + pe, 0) / peValues.length;
+                  }
+                }
+
+                // Calculate Growth Rate: Annual growth rate for the entire selected period
+                // Using CAGR (Compound Annual Growth Rate) formula
+                // Use all quarterly data points with earnings, not just those with normalPE
+                let growthRate: number | null = null;
+                const allQuarterlyPoints = stockData.filter(item => item.hasQuarterlyData && (item.eps_adjusted !== null || item.earnings !== null));
+                
+                if (allQuarterlyPoints.length >= 8) {
+                  // Calculate annual EPS for first period (first 4 quarters)
+                  const firstQuarters = allQuarterlyPoints.slice(0, 4);
+                  const firstSum = firstQuarters.reduce((sum, item) => {
+                    // Use eps_adjusted if available, otherwise fall back to earnings
+                    const epsValue = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
+                      ? item.eps_adjusted 
+                      : (item.earnings || 0);
+                    return sum + epsValue;
+                  }, 0);
+                  
+                  // Calculate annual EPS for last period (last 4 quarters)
+                  const lastQuarters = allQuarterlyPoints.slice(-4);
+                  const lastSum = lastQuarters.reduce((sum, item) => {
+                    // Use eps_adjusted if available, otherwise fall back to earnings
+                    const epsValue = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
+                      ? item.eps_adjusted 
+                      : (item.earnings || 0);
+                    return sum + epsValue;
+                  }, 0);
+                  
+                  // Calculate time period in years between first and last quarterly points
+                  const firstDate = new Date(allQuarterlyPoints[0].fullDate);
+                  const lastDate = new Date(allQuarterlyPoints[allQuarterlyPoints.length - 1].fullDate);
+                  const yearsDiff = (lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+                  
+                  if (firstSum > 0 && lastSum > 0 && yearsDiff > 0) {
+                    // CAGR formula: ((End/Start)^(1/Years) - 1) * 100
+                    growthRate = (Math.pow(lastSum / firstSum, 1 / yearsDiff) - 1) * 100;
+                  }
+                } else if (allQuarterlyPoints.length >= 2) {
+                  // Fallback: if less than 8 quarters, compare first and last annualized EPS
+                  const firstPoint = allQuarterlyPoints[0];
+                  const lastPoint = allQuarterlyPoints[allQuarterlyPoints.length - 1];
+                  
+                  const firstEps = firstPoint.eps_adjusted !== null && firstPoint.eps_adjusted !== undefined 
+                    ? firstPoint.eps_adjusted 
+                    : (firstPoint.earnings || 0);
+                  const lastEps = lastPoint.eps_adjusted !== null && lastPoint.eps_adjusted !== undefined 
+                    ? lastPoint.eps_adjusted 
+                    : (lastPoint.earnings || 0);
+                  
+                  const firstDate = new Date(firstPoint.fullDate);
+                  const lastDate = new Date(lastPoint.fullDate);
+                  const yearsDiff = (lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+                  
+                  if (firstEps > 0 && lastEps > 0 && yearsDiff > 0) {
+                    // CAGR formula: ((End/Start)^(1/Years) - 1) * 100
+                    growthRate = (Math.pow(lastEps / firstEps, 1 / yearsDiff) - 1) * 100;
+                  }
+                }
+
+                // Fair Value Ratio: Hardcoded to 18 (as used in fair value calculation)
+                const fairValueRatio = 18;
+
+                return (
+                  <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                    <div className="flex gap-4">
+                      {/* Growth Rate */}
+                      <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
+                        <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Growth Rate</div>
+                        <div className={`text-lg font-bold text-center ${
+                          growthRate !== null && growthRate >= 0 
+                            ? 'text-green-600' 
+                            : growthRate !== null 
+                            ? 'text-red-600'
+                            : 'text-gray-600'
+                        }`}>
+                          {growthRate !== null ? `${growthRate.toFixed(2)}%` : 'N/A'}
+                        </div>
+                      </div>
+
+                      {/* Fair Value Ratio */}
+                      <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
+                        <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Fair Value Ratio</div>
+                        <div className="text-lg font-bold text-center text-orange-600">
+                          {fairValueRatio.toFixed(2)}x
+                        </div>
+                      </div>
+
+                      {/* Normal P/E Ratio */}
+                      <div className="flex-1 border border-gray-200 rounded-lg p-4 bg-white">
+                        <div className="text-xs text-gray-600 mb-2 font-semibold text-center">Normal P/E Ratio</div>
+                        <div className="text-lg font-bold text-center text-blue-600">
+                          {normalPERatio !== null ? `${normalPERatio.toFixed(2)}x` : 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Statistics Card */}
               <div className="bg-white rounded-2xl shadow-lg p-7 border border-gray-100">
                 <h3 className="text-xl font-bold text-gray-900 mb-6 tracking-tight">Key Statistics</h3>

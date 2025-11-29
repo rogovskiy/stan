@@ -299,10 +299,11 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     const yearlyData = new Map<number, {
       fullDate: string;
       fiscalYear: number;
-      peRatio: number[];
+      stockPrice: number | null;
       earnings: number[];
       eps_adjusted: number[];
       dividend: number[];
+      quarterCount: number; // Track number of quarters for this fiscal year
     }>();
     
     quarterlyDataPoints.forEach(item => {
@@ -314,26 +315,37 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
         yearlyData.set(fiscalYear, {
           fullDate: item.fullDate, // Keep the last date of the fiscal year
           fiscalYear,
-          peRatio: [],
+          stockPrice: null,
           earnings: [],
           eps_adjusted: [],
-          dividend: []
+          dividend: [],
+          quarterCount: 0
         });
       }
       
       const yearData = yearlyData.get(fiscalYear)!;
       
-      if (item.peRatio !== null) {
-        yearData.peRatio.push(item.peRatio);
+      // Use stock price from the last quarter of the fiscal year
+      if (item.stockPrice !== null && item.stockPrice !== undefined) {
+        // Update to the latest stock price in the fiscal year
+        if (yearData.stockPrice === null || new Date(item.fullDate) > new Date(yearData.fullDate)) {
+          yearData.stockPrice = item.stockPrice;
+        }
       }
+      
       if (item.earnings !== null && item.earnings !== undefined) {
         yearData.earnings.push(item.earnings);
+        yearData.quarterCount++;
       }
       // Use eps_adjusted if available, otherwise fall back to earnings
       const epsAdjustedValue = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
         ? item.eps_adjusted 
         : item.earnings;
       if (epsAdjustedValue !== null && epsAdjustedValue !== undefined) {
+        // Only increment once per quarter (earnings already counted)
+        if (item.earnings === null || item.earnings === undefined) {
+          yearData.quarterCount++;
+        }
         yearData.eps_adjusted.push(epsAdjustedValue);
       }
       if (item.dividend !== null && item.dividend !== undefined) {
@@ -347,34 +359,50 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     });
     console.log('Yearly data:', yearlyData);
     // Convert aggregated data back to TransformedDataPoint format
-    return Array.from(yearlyData.values())
-      .sort((a, b) => a.fiscalYear - b.fiscalYear)
-      .map(yearData => ({
+    const sortedYearlyData = Array.from(yearlyData.values())
+      .sort((a, b) => a.fiscalYear - b.fiscalYear);
+    
+    return sortedYearlyData.map((yearData, index) => {
+      const isLastYear = index === sortedYearlyData.length - 1;
+      const hasIncompleteYear = isLastYear && yearData.quarterCount < 4;
+      
+      // Calculate annual EPS
+      let annualEps: number | null = null;
+      if (yearData.eps_adjusted.length > 0) {
+        const sumEps = yearData.eps_adjusted.reduce((sum, val) => sum + val, 0);
+        // If incomplete year (less than 4 quarters), project full year by annualizing
+        if (hasIncompleteYear && yearData.quarterCount > 0) {
+          annualEps = (sumEps / yearData.quarterCount) * 4;
+        } else {
+          annualEps = sumEps;
+        }
+      }
+      
+      return {
         fullDate: yearData.fullDate,
         date: yearData.fiscalYear.toString(),
-        stockPrice: null,
-        estimated: false,
+        stockPrice: yearData.stockPrice,
+        estimated: hasIncompleteYear, // Mark as estimated if incomplete year
         year: yearData.fiscalYear,
         frequency: 'yearly',
         marketCap: null,
         volume: 0,
         earnings: yearData.earnings.length > 0 
-          ? yearData.earnings.reduce((sum, val) => sum + val, 0) 
+          ? (hasIncompleteYear && yearData.quarterCount > 0
+              ? (yearData.earnings.reduce((sum, val) => sum + val, 0) / yearData.quarterCount) * 4
+              : yearData.earnings.reduce((sum, val) => sum + val, 0))
           : null,
-        eps_adjusted: yearData.eps_adjusted.length > 0 
-          ? yearData.eps_adjusted.reduce((sum, val) => sum + val, 0) 
-          : null,
+        eps_adjusted: annualEps,
         normalPE: null,
         dividendsPOR: null,
         hasQuarterlyData: true,
-        peRatio: yearData.peRatio.length > 0 
-          ? yearData.peRatio.reduce((sum, val) => sum + val, 0) / yearData.peRatio.length 
-          : null,
+        peRatio: null, // Will be calculated in the table display
         revenue: null,
         dividend: yearData.dividend.length > 0 
           ? yearData.dividend.reduce((sum, val) => sum + val, 0) 
           : null
-      }));
+      };
+    });
   }, [filteredStockData, xAxisTicks, isQuarterlyMode, inferFiscalYearEndMonth]);
 
   // Format date for table header (matches chart tick formatter)
@@ -625,29 +653,101 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
               <tbody className="text-sm">
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white transition-colors">
                   <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">PE</td>
-                  {tableData.map((item, index) => (
-                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                      {item.peRatio?.toFixed(1) || '0.0'}
-                    </td>
-                  ))}
+                  {tableData.map((item, index) => {
+                    // Calculate actual P/E: price / annual EPS
+                    let actualPE: number | null = null;
+                    let isEstimated = item.estimated;
+                    
+                    if (item.stockPrice !== null && item.stockPrice !== undefined && item.stockPrice > 0) {
+                      let annualEps: number | null = null;
+                      
+                      if (isQuarterlyMode) {
+                        // For quarterly mode, use trailing 4 quarters EPS for P/E calculation
+                        const currentDate = new Date(item.fullDate);
+                        // Use stockData (not filteredStockData) to get all available quarters
+                        const trailing4Quarters = stockData
+                          .filter(d => {
+                            const dDate = new Date(d.fullDate);
+                            return dDate <= currentDate && d.hasQuarterlyData;
+                          })
+                          .sort((a, b) => new Date(b.fullDate).getTime() - new Date(a.fullDate).getTime())
+                          .slice(0, 4);
+                        
+                        // If we have less than 4 quarters, this is estimated
+                        if (trailing4Quarters.length < 4) {
+                          isEstimated = true;
+                        }
+                        
+                        if (trailing4Quarters.length > 0) {
+                          const trailingEps = trailing4Quarters.reduce((sum, d) => {
+                            const epsValue = d.eps_adjusted !== null && d.eps_adjusted !== undefined 
+                              ? d.eps_adjusted 
+                              : (d.earnings || 0);
+                            return sum + epsValue;
+                          }, 0);
+                          
+                          // If we have less than 4 quarters, annualize
+                          if (trailing4Quarters.length < 4) {
+                            annualEps = (trailingEps / trailing4Quarters.length) * 4;
+                          } else {
+                            annualEps = trailingEps;
+                          }
+                        }
+                      } else {
+                        // For yearly mode, use the projected annual EPS (already calculated in tableData)
+                        annualEps = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
+                          ? item.eps_adjusted 
+                          : (item.earnings || null);
+                      }
+                      
+                      if (annualEps !== null && annualEps > 0) {
+                        actualPE = item.stockPrice / annualEps;
+                      }
+                    }
+                    
+                    return (
+                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                        {actualPE !== null ? (
+                          <span>
+                            {actualPE.toFixed(1)}
+                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
+                          </span>
+                        ) : '-'}
+                      </td>
+                    );
+                  })}
                 </tr>
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
                   <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS</td>
-                  {tableData.map((item, index) => (
-                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                      ${item.earnings?.toFixed(2) || '-'}
-                    </td>
-                  ))}
+                  {tableData.map((item, index) => {
+                    const isEstimated = item.estimated;
+                    return (
+                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                        {item.earnings !== null && item.earnings !== undefined ? (
+                          <span>
+                            ${item.earnings.toFixed(2)}
+                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
+                          </span>
+                        ) : '-'}
+                      </td>
+                    );
+                  })}
                 </tr>
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
                   <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS Split Adjusted</td>
-                  {tableData.map((item, index) => (
-                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                      {item.eps_adjusted !== null && item.eps_adjusted !== undefined 
-                        ? `$${item.eps_adjusted.toFixed(2)}` 
-                        : '-'}
-                    </td>
-                  ))}
+                  {tableData.map((item, index) => {
+                    const isEstimated = item.estimated;
+                    return (
+                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                        {item.eps_adjusted !== null && item.eps_adjusted !== undefined ? (
+                          <span>
+                            ${item.eps_adjusted.toFixed(2)}
+                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
+                          </span>
+                        ) : '-'}
+                      </td>
+                    );
+                  })}
                 </tr>
                 <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
                   <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">Dividend</td>

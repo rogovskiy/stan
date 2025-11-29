@@ -390,9 +390,10 @@ class MaxDataDownloader:
             }
     
     def _fetch_analyst_data(self, ticker: str, verbose: bool) -> Dict[str, Any]:
-        """Fetch and cache analyst predictions/forecasts data"""
+        """Fetch and cache analyst predictions/forecasts data (consolidated)"""
         try:
-            data_types = {
+            all_analyst_data = {}
+            data_types_status = {
                 'price_targets': False,
                 'recommendations': False,
                 'growth_estimates': False,
@@ -407,69 +408,91 @@ class MaxDataDownloader:
             # Fetch price targets
             try:
                 if verbose:
-                    print(f"   - Fetching price targets...")
+                    print(f"   - Fetching price targets...", end='', flush=True)
                 price_targets = self.yfinance_service.fetch_analyst_price_targets(ticker)
                 if price_targets:
-                    self.cache.cache_analyst_data(ticker, 'price_targets', price_targets, fetched_at)
-                    data_types['price_targets'] = True
+                    all_analyst_data['price_targets'] = price_targets
+                    data_types_status['price_targets'] = True
                     if verbose:
-                        print(f"     ✓ Cached price targets (high: {price_targets.get('target_high')}, mean: {price_targets.get('target_mean')})")
+                        print(f" ✓ (high: {price_targets.get('target_high')}, mean: {price_targets.get('target_mean')})")
+                else:
+                    if verbose:
+                        print(f" ✗ (no data)")
             except Exception as e:
                 if verbose:
-                    print(f"     ✗ Error fetching price targets: {e}")
-                data_types['price_targets'] = {'error': str(e)}
+                    print(f" ✗ (error: {e})")
+                data_types_status['price_targets'] = {'error': str(e)}
             
             # Fetch recommendations
             try:
                 if verbose:
-                    print(f"   - Fetching recommendations...")
+                    print(f"   - Fetching recommendations...", end='', flush=True)
                 recommendations = self.yfinance_service.fetch_analyst_recommendations(ticker)
                 if recommendations:
-                    self.cache.cache_analyst_data(ticker, 'recommendations', recommendations, fetched_at)
-                    data_types['recommendations'] = True
+                    all_analyst_data['recommendations'] = recommendations
+                    data_types_status['recommendations'] = True
                     if verbose:
                         latest = recommendations.get('latest_summary', {})
-                        print(f"     ✓ Cached recommendations (Strong Buy: {latest.get('strongBuy', 0)}, Buy: {latest.get('buy', 0)})")
+                        print(f" ✓ (Strong Buy: {latest.get('strongBuy', 0)}, Buy: {latest.get('buy', 0)})")
+                else:
+                    if verbose:
+                        print(f" ✗ (no data)")
             except Exception as e:
                 if verbose:
-                    print(f"     ✗ Error fetching recommendations: {e}")
-                data_types['recommendations'] = {'error': str(e)}
+                    print(f" ✗ (error: {e})")
+                data_types_status['recommendations'] = {'error': str(e)}
             
             # Fetch growth estimates
             try:
                 if verbose:
-                    print(f"   - Fetching growth estimates...")
+                    print(f"   - Fetching growth estimates...", end='', flush=True)
                 growth_estimates = self.yfinance_service.fetch_growth_estimates(ticker)
                 if growth_estimates:
-                    self.cache.cache_analyst_data(ticker, 'growth_estimates', growth_estimates, fetched_at)
-                    data_types['growth_estimates'] = True
+                    all_analyst_data['growth_estimates'] = growth_estimates
+                    data_types_status['growth_estimates'] = True
                     if verbose:
                         stock_trend = growth_estimates.get('stock_trend', {})
-                        print(f"     ✓ Cached growth estimates (0q: {stock_trend.get('0q')}, 0y: {stock_trend.get('0y')})")
+                        print(f" ✓ (0q: {stock_trend.get('0q')}, 0y: {stock_trend.get('0y')})")
+                else:
+                    if verbose:
+                        print(f" ✗ (no data)")
             except Exception as e:
                 if verbose:
-                    print(f"     ✗ Error fetching growth estimates: {e}")
-                data_types['growth_estimates'] = {'error': str(e)}
+                    print(f" ✗ (error: {e})")
+                data_types_status['growth_estimates'] = {'error': str(e)}
             
             # Fetch earnings trend
             try:
                 if verbose:
-                    print(f"   - Fetching earnings trend...")
+                    print(f"   - Fetching earnings trend...", end='', flush=True)
                 earnings_trend = self.yfinance_service.fetch_earnings_trend(ticker)
                 if earnings_trend:
-                    self.cache.cache_analyst_data(ticker, 'earnings_trend', earnings_trend, fetched_at)
-                    data_types['earnings_trend'] = True
+                    all_analyst_data['earnings_trend'] = earnings_trend
+                    data_types_status['earnings_trend'] = True
                     if verbose:
                         history_count = len(earnings_trend.get('earnings_history', []))
-                        print(f"     ✓ Cached earnings trend ({history_count} historical quarters)")
+                        print(f" ✓ ({history_count} historical quarters)")
+                else:
+                    if verbose:
+                        print(f" ✗ (no data)")
             except Exception as e:
                 if verbose:
-                    print(f"     ✗ Error fetching earnings trend: {e}")
-                data_types['earnings_trend'] = {'error': str(e)}
+                    print(f" ✗ (error: {e})")
+                data_types_status['earnings_trend'] = {'error': str(e)}
+            
+            # Cache all analyst data together in one consolidated document
+            if all_analyst_data:
+                try:
+                    self.cache.cache_analyst_data(ticker, all_analyst_data, fetched_at)
+                    if verbose:
+                        print(f"   ✓ Cached consolidated analyst data snapshot")
+                except Exception as e:
+                    if verbose:
+                        print(f"   ✗ Error caching consolidated data: {e}")
             
             # Format results
             formatted_data_types = {}
-            for data_type, status in data_types.items():
+            for data_type, status in data_types_status.items():
                 if isinstance(status, dict) and 'error' in status:
                     formatted_data_types[data_type] = {
                         'cached': False,

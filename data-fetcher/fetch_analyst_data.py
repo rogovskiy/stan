@@ -76,6 +76,7 @@ class AnalystDataFetcher:
         }
         
         fetched_at = datetime.now()
+        all_analyst_data = {}
         
         if verbose:
             print(f'\n📊 Fetching analyst data for {ticker.upper()}...')
@@ -86,7 +87,7 @@ class AnalystDataFetcher:
                 print(f'   - Price targets...', end='', flush=True)
             price_targets = self.yfinance_service.fetch_analyst_price_targets(ticker)
             if price_targets:
-                self.cache.cache_analyst_data(ticker, 'price_targets', price_targets, fetched_at)
+                all_analyst_data['price_targets'] = price_targets
                 results['data_types']['price_targets'] = {
                     'cached': True,
                     'message': f"Target mean: ${price_targets.get('target_mean', 'N/A')}"
@@ -114,7 +115,7 @@ class AnalystDataFetcher:
                 print(f'   - Recommendations...', end='', flush=True)
             recommendations = self.yfinance_service.fetch_analyst_recommendations(ticker)
             if recommendations:
-                self.cache.cache_analyst_data(ticker, 'recommendations', recommendations, fetched_at)
+                all_analyst_data['recommendations'] = recommendations
                 latest = recommendations.get('latest_summary', {})
                 total = (latest.get('strongBuy', 0) + latest.get('buy', 0) + 
                         latest.get('hold', 0) + latest.get('sell', 0) + 
@@ -146,7 +147,7 @@ class AnalystDataFetcher:
                 print(f'   - Growth estimates...', end='', flush=True)
             growth_estimates = self.yfinance_service.fetch_growth_estimates(ticker)
             if growth_estimates:
-                self.cache.cache_analyst_data(ticker, 'growth_estimates', growth_estimates, fetched_at)
+                all_analyst_data['growth_estimates'] = growth_estimates
                 stock_trend = growth_estimates.get('stock_trend', {})
                 year_growth = stock_trend.get('0y')
                 if year_growth is not None:
@@ -182,7 +183,7 @@ class AnalystDataFetcher:
                 print(f'   - Earnings trend...', end='', flush=True)
             earnings_trend = self.yfinance_service.fetch_earnings_trend(ticker)
             if earnings_trend:
-                self.cache.cache_analyst_data(ticker, 'earnings_trend', earnings_trend, fetched_at)
+                all_analyst_data['earnings_trend'] = earnings_trend
                 history_count = len(earnings_trend.get('earnings_history', []))
                 estimate_count = len(earnings_trend.get('earnings_estimate', {}).get('avg', {})) if earnings_trend.get('earnings_estimate') else 0
                 results['data_types']['earnings_trend'] = {
@@ -205,6 +206,17 @@ class AnalystDataFetcher:
             }
             if verbose:
                 print(f' ✗ (error: {e})')
+        
+        # Cache all analyst data together in one consolidated document
+        if all_analyst_data:
+            try:
+                self.cache.cache_analyst_data(ticker, all_analyst_data, fetched_at)
+                if verbose:
+                    print(f'   ✓ Cached consolidated analyst data snapshot')
+            except Exception as e:
+                if verbose:
+                    print(f'   ✗ Error caching consolidated data: {e}')
+                results['success'] = False
         
         # Calculate success rate
         cached_count = sum(1 for d in results['data_types'].values() if d.get('cached'))

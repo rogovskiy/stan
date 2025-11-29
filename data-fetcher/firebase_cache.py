@@ -546,18 +546,21 @@ class FirebaseCache:
         end_year = end_date.year
         return list(range(start_year, end_year + 1))
     
-    def cache_analyst_data(self, ticker: str, data_type: str, data: Dict[str, Any], 
+    def cache_analyst_data(self, ticker: str, all_analyst_data: Dict[str, Any], 
                           timestamp: Optional[datetime] = None) -> None:
-        """Cache analyst data to Firestore with timestamp
+        """Cache all analyst data types together in a consolidated document
         
         Args:
             ticker: Stock ticker symbol
-            data_type: Type of analyst data ('price_targets', 'recommendations', 
-                     'growth_estimates', 'earnings_trend')
-            data: Analyst data dictionary to cache
+            all_analyst_data: Dictionary containing all analyst data types:
+                - 'price_targets': Optional price targets data
+                - 'recommendations': Optional recommendations data
+                - 'growth_estimates': Optional growth estimates data
+                - 'earnings_trend': Optional earnings trend data
             timestamp: Optional timestamp (defaults to current time)
             
-        Stores data at: tickers/{ticker}/analyst/{data_type}/{timestamp}
+        Stores consolidated data at: tickers/{ticker}/analyst/{timestamp}
+        Each document contains all available analyst data types at that timestamp.
         """
         try:
             if timestamp is None:
@@ -568,105 +571,109 @@ class FirebaseCache:
             
             upper_ticker = ticker.upper()
             
-            # Validate data_type
-            valid_types = ['price_targets', 'recommendations', 'growth_estimates', 'earnings_trend']
-            if data_type not in valid_types:
-                raise ValueError(f"Invalid data_type: {data_type}. Must be one of {valid_types}")
-            
-            # Prepare document data with metadata
+            # Prepare consolidated document with all analyst data types
             doc_data = {
-                **data,
                 'ticker': upper_ticker,
-                'data_type': data_type,
                 'fetched_at': timestamp.isoformat(),
-                'data_source': 'yfinance'
+                'data_source': 'yfinance',
+                'price_targets': all_analyst_data.get('price_targets'),
+                'recommendations': all_analyst_data.get('recommendations'),
+                'growth_estimates': all_analyst_data.get('growth_estimates'),
+                'earnings_trend': all_analyst_data.get('earnings_trend')
             }
             
-            # Store in Firestore
+            # Remove None values to keep document clean
+            doc_data = {k: v for k, v in doc_data.items() if v is not None}
+            
+            # Store consolidated document in Firestore
+            # Structure: /tickers/{ticker}/analyst/{timestamp}
             doc_ref = (self.db.collection('tickers')
                       .document(upper_ticker)
                       .collection('analyst')
-                      .document(data_type)
-                      .collection('history')
                       .document(timestamp_str))
             
             doc_ref.set(doc_data)
             
             # Update latest reference document
+            # Structure: /tickers/{ticker}/analyst/latest
             latest_ref = (self.db.collection('tickers')
                          .document(upper_ticker)
                          .collection('analyst')
-                         .document(data_type)
-                         .collection('history')
                          .document('latest'))
             
             latest_ref.set({
                 'latest_timestamp': timestamp_str,
                 'fetched_at': timestamp.isoformat(),
-                'data': doc_data
+                **doc_data
             })
             
         except Exception as error:
-            print(f'Error caching analyst data for {ticker} ({data_type}): {error}')
+            print(f'Error caching consolidated analyst data for {ticker}: {error}')
             raise error
     
-    def get_latest_analyst_data(self, ticker: str, data_type: str) -> Optional[Dict[str, Any]]:
+    def get_latest_analyst_data(self, ticker: str, data_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get most recent analyst data snapshot
         
         Args:
             ticker: Stock ticker symbol
-            data_type: Type of analyst data ('price_targets', 'recommendations', 
-                     'growth_estimates', 'earnings_trend')
+            data_type: Optional specific type to extract ('price_targets', 'recommendations', 
+                     'growth_estimates', 'earnings_trend'). If None, returns all types.
             
         Returns:
-            Latest analyst data dictionary or None if not found
+            Latest analyst data dictionary (specific type or all types) or None if not found
         """
         try:
             upper_ticker = ticker.upper()
             
-            # Get latest reference
+            # Get latest consolidated reference
             latest_ref = (self.db.collection('tickers')
                          .document(upper_ticker)
                          .collection('analyst')
-                         .document(data_type)
-                         .collection('history')
                          .document('latest'))
             
             doc = latest_ref.get()
             if doc.exists:
                 data = doc.to_dict()
-                return data.get('data')
+                # Remove metadata fields
+                metadata_fields = ['latest_timestamp', 'fetched_at', 'ticker', 'data_source']
+                analyst_data = {k: v for k, v in data.items() if k not in metadata_fields}
+                
+                if data_type:
+                    # Extract specific data type
+                    return analyst_data.get(data_type)
+                else:
+                    # Return all analyst data types
+                    return analyst_data if analyst_data else None
             
             return None
             
         except Exception as error:
-            print(f'Error getting latest analyst data for {ticker} ({data_type}): {error}')
+            print(f'Error getting latest analyst data for {ticker} ({data_type or "all"}): {error}')
             return None
     
-    def get_analyst_data_history(self, ticker: str, data_type: str, 
+    def get_analyst_data_history(self, ticker: str, data_type: Optional[str] = None,
                                  start_date: Optional[datetime] = None,
                                  end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Get historical analyst data snapshots
         
         Args:
             ticker: Stock ticker symbol
-            data_type: Type of analyst data ('price_targets', 'recommendations', 
-                     'growth_estimates', 'earnings_trend')
+            data_type: Optional specific type to extract from each snapshot. 
+                     If None, returns all types from each snapshot.
             start_date: Optional start date filter
             end_date: Optional end date filter
             
         Returns:
             List of analyst data snapshots sorted by timestamp (most recent first)
+            Each snapshot contains the requested data type(s)
         """
         try:
             upper_ticker = ticker.upper()
             
-            # Query the history collection
+            # Query the consolidated analyst collection
             collection_ref = (self.db.collection('tickers')
                             .document(upper_ticker)
-                            .collection('analyst')
-                            .document(data_type)
-                            .collection('history'))
+                            .collection('analyst'))
             
             # Get all documents from the collection
             docs = collection_ref.stream()
@@ -691,7 +698,19 @@ class FirebaseCache:
                     if end_date and fetched_at_dt > end_date:
                         continue
                 
-                history.append(data)
+                # Extract specific data type if requested
+                if data_type:
+                    # Remove metadata fields
+                    metadata_fields = ['ticker', 'fetched_at', 'data_source']
+                    snapshot_data = {k: v for k, v in data.items() if k not in metadata_fields}
+                    if data_type in snapshot_data:
+                        history.append({
+                            'fetched_at': data.get('fetched_at'),
+                            data_type: snapshot_data[data_type]
+                        })
+                else:
+                    # Return all data types
+                    history.append(data)
             
             # Sort by fetched_at descending (most recent first)
             history.sort(key=lambda x: x.get('fetched_at', ''), reverse=True)
@@ -699,11 +718,11 @@ class FirebaseCache:
             return history
             
         except Exception as error:
-            print(f'Error getting analyst data history for {ticker} ({data_type}): {error}')
+            print(f'Error getting analyst data history for {ticker} ({data_type or "all"}): {error}')
             return []
     
     def get_all_analyst_data(self, ticker: str) -> Dict[str, Optional[Dict[str, Any]]]:
-        """Get latest snapshot of all analyst data types
+        """Get latest snapshot of all analyst data types (single document read)
         
         Args:
             ticker: Stock ticker symbol
@@ -714,14 +733,32 @@ class FirebaseCache:
             Each value is the latest data snapshot or None if not available
         """
         try:
-            result = {}
-            data_types = ['price_targets', 'recommendations', 'growth_estimates', 'earnings_trend']
+            # Single document read to get all analyst data
+            all_data = self.get_latest_analyst_data(ticker, data_type=None)
             
-            for data_type in data_types:
-                result[data_type] = self.get_latest_analyst_data(ticker, data_type)
+            if not all_data:
+                return {
+                    'price_targets': None,
+                    'recommendations': None,
+                    'growth_estimates': None,
+                    'earnings_trend': None
+                }
+            
+            # Ensure all expected keys are present
+            result = {
+                'price_targets': all_data.get('price_targets'),
+                'recommendations': all_data.get('recommendations'),
+                'growth_estimates': all_data.get('growth_estimates'),
+                'earnings_trend': all_data.get('earnings_trend')
+            }
             
             return result
             
         except Exception as error:
             print(f'Error getting all analyst data for {ticker}: {error}')
-            return {}
+            return {
+                'price_targets': None,
+                'recommendations': None,
+                'growth_estimates': None,
+                'earnings_trend': None
+            }

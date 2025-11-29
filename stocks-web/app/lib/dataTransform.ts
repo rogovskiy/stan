@@ -10,6 +10,7 @@ export interface TransformedDataPoint {
   marketCap: number | null;
   volume: number;
   fairValue: number | null;
+  fairValueEpsAdjusted: number | null;
   earnings: number | null;
   eps_adjusted: number | null;
   normalPE: number | null;
@@ -65,6 +66,7 @@ export const transformApiDataForChart = (
       volume: 1500000 + Math.random() * 1000000,
       // Initialize quarterly fields
       fairValue: null,
+      fairValueEpsAdjusted: null,
       earnings: null,
       eps_adjusted: null,
       normalPE: null,
@@ -84,18 +86,24 @@ export const transformApiDataForChart = (
       const payoutRatio = 0.3 + (Math.random() * 0.4);
       const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
       
+      const epsAdjusted = quarterlyDataForThisDate.eps_adjusted !== undefined && quarterlyDataForThisDate.eps_adjusted !== null 
+        ? quarterlyDataForThisDate.eps_adjusted 
+        : eps; // Fall back to eps if eps_adjusted is not available
+      const normalPE = quarterlyDataForThisDate.normalPE || null;
+      
       Object.assign(basePoint, {
         // Quarterly data - only present on quarterly reporting dates
         fairValue: quarterlyDataForThisDate.fairValue || null,
+        fairValueEpsAdjusted: (epsAdjusted !== null && normalPE !== null) 
+          ? epsAdjusted * normalPE 
+          : null,
         earnings: eps,
-        eps_adjusted: quarterlyDataForThisDate.eps_adjusted !== undefined && quarterlyDataForThisDate.eps_adjusted !== null 
-          ? quarterlyDataForThisDate.eps_adjusted 
-          : eps, // Fall back to eps if eps_adjusted is not available
-        normalPE: quarterlyDataForThisDate.normalPE || null,
+        eps_adjusted: epsAdjusted,
+        normalPE: normalPE,
         dividendsPOR: quarterlyDataForThisDate.dividendsPOR || null,
         hasQuarterlyData: true,
         // Computed quarterly metrics
-        peRatio: quarterlyDataForThisDate.normalPE || null,
+        peRatio: normalPE,
         revenue: eps ? (eps * 4 * 16.0) : null,
         dividend: Math.max(epsBasedDividend, 0.5)
       });
@@ -135,16 +143,22 @@ export const transformApiDataForChart = (
       const payoutRatio = 0.3 + (Math.random() * 0.4);
       const epsBasedDividend = Math.max(eps * payoutRatio / 4, quarterlyDividendAmount);
       
+      const epsAdjusted = q.eps_adjusted !== undefined && q.eps_adjusted !== null 
+        ? q.eps_adjusted 
+        : eps; // Fall back to eps if eps_adjusted is not available
+      const normalPE = q.normalPE || null;
+      
       Object.assign(chartData[closestIndex], {
         fairValue: q.fairValue || null,
+        fairValueEpsAdjusted: (epsAdjusted !== null && normalPE !== null) 
+          ? epsAdjusted * normalPE 
+          : null,
         earnings: eps,
-        eps_adjusted: q.eps_adjusted !== undefined && q.eps_adjusted !== null 
-          ? q.eps_adjusted 
-          : eps, // Fall back to eps if eps_adjusted is not available
-        normalPE: q.normalPE || null,
+        eps_adjusted: epsAdjusted,
+        normalPE: normalPE,
         dividendsPOR: q.dividendsPOR || null,
         hasQuarterlyData: true,
-        peRatio: q.normalPE || null,
+        peRatio: normalPE,
         revenue: eps ? (eps * 4 * 16.0) : null,
         dividend: Math.max(epsBasedDividend, 0.5)
       });

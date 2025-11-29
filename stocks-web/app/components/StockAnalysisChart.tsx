@@ -22,6 +22,7 @@ interface StockAnalysisChartProps {
 interface VisibleSeries {
   price: boolean;
   fairValue: boolean;
+  fairValueEpsAdjusted: boolean;
   dividendsPOR: boolean;
 }
 
@@ -50,6 +51,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
     price: true,
     fairValue: true,
+    fairValueEpsAdjusted: true,
     dividendsPOR: true
   });
 
@@ -143,7 +145,37 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     
     // Get the period number (e.g., "10y" -> 10)
     const periodMatch = currentPeriod.match(/(\d+)y/);
-    const yearsBack = periodMatch ? parseInt(periodMatch[1]) : (currentPeriod === 'max' ? 50 : 8);
+    
+    // Calculate MAX based on first fiscal year with quarterly data
+    let yearsBack: number;
+    if (currentPeriod === 'max') {
+      // Find all quarterly data points with their fiscal year info
+      const quarterlyPoints = stockData
+        .filter(item => item.hasQuarterlyData)
+        .map(item => {
+          const date = new Date(item.fullDate);
+          const fiscalInfo = getFiscalYearAndQuarter(date, inferFiscalYearEndMonth);
+          return {
+            date,
+            fiscalYear: fiscalInfo.fiscalYear,
+            fiscalQuarter: fiscalInfo.fiscalQuarter,
+            fullDate: item.fullDate
+          };
+        });
+      
+      if (quarterlyPoints.length === 0) {
+        yearsBack = 50; // Fallback if no quarterly data
+      } else {
+        // Find the earliest fiscal year
+        const earliestFiscalYear = Math.min(...quarterlyPoints.map(p => p.fiscalYear));
+        const latestFiscalYear = Math.max(...quarterlyPoints.map(p => p.fiscalYear));
+        
+        // Calculate years back from latest to earliest fiscal year
+        yearsBack = latestFiscalYear - earliestFiscalYear + 1; // +1 to include both years
+      }
+    } else {
+      yearsBack = periodMatch ? parseInt(periodMatch[1]) : 8;
+    }
     
     // Find all quarterly data points with their fiscal year info
     const quarterlyPoints = stockData
@@ -197,16 +229,104 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
     });
   }, [stockData, fiscalYearStartDate]);
 
-  // Create chart data with scaled dividends for proportional display
-  // Dividends are scaled by PE ratio to match the scale of fairValue (which is EPS * PE)
-  const chartDataWithScaledDividends = useMemo(() => {
-    return filteredStockData.map(item => ({
-      ...item,
-      dividendScaled: item.dividend !== null && item.dividend !== undefined && item.peRatio !== null && item.peRatio !== undefined
-        ? item.dividend * item.peRatio
-        : null
-    }));
+  // Calculate normal PE as average of actual P/E ratios
+  const calculatedNormalPE = useMemo(() => {
+    const quarterlyDataPoints = filteredStockData.filter(item => 
+      item.hasQuarterlyData && 
+      item.stockPrice !== null && 
+      item.stockPrice !== undefined
+    );
+    
+    if (quarterlyDataPoints.length === 0) return null;
+    
+    const peValues = quarterlyDataPoints
+      .map(item => {
+        // Calculate trailing 4 quarters EPS for this point
+        const currentDate = new Date(item.fullDate);
+        const trailing4Quarters = filteredStockData
+          .filter(d => {
+            const dDate = new Date(d.fullDate);
+            return dDate <= currentDate && d.hasQuarterlyData;
+          })
+          .sort((a, b) => new Date(b.fullDate).getTime() - new Date(a.fullDate).getTime())
+          .slice(0, 4);
+        
+        if (trailing4Quarters.length === 0) return null;
+        
+        const trailingEps = trailing4Quarters.reduce((sum, d) => {
+          const epsValue = d.eps_adjusted !== null && d.eps_adjusted !== undefined 
+            ? d.eps_adjusted 
+            : (d.earnings || 0);
+          return sum + epsValue;
+        }, 0);
+        
+        // Annualize if less than 4 quarters
+        const annualEps = trailing4Quarters.length < 4
+          ? (trailingEps / trailing4Quarters.length) * 4
+          : trailingEps;
+        
+        // Calculate P/E: price / annual EPS
+        if (annualEps > 0 && item.stockPrice && item.stockPrice > 0) {
+          return item.stockPrice / annualEps;
+        }
+        return null;
+      })
+      .filter((pe): pe is number => pe !== null && pe !== undefined);
+    
+    if (peValues.length > 0) {
+      return peValues.reduce((sum, pe) => sum + pe, 0) / peValues.length;
+    }
+    return null;
   }, [filteredStockData]);
+
+  // Create chart data with scaled dividends and calculate fairValueEpsAdjusted using trailing 4 quarters
+  const chartDataWithScaledDividends = useMemo(() => {
+    return filteredStockData.map((item, index) => {
+      // Calculate trailing 4 quarters EPS adjusted for fairValueEpsAdjusted
+      let fairValueEpsAdjusted: number | null = null;
+      
+      if (item.hasQuarterlyData && calculatedNormalPE !== null) {
+        const currentDate = new Date(item.fullDate);
+        // Get all quarterly data points up to and including this date
+        const trailing4Quarters = filteredStockData
+          .filter(d => {
+            const dDate = new Date(d.fullDate);
+            return dDate <= currentDate && d.hasQuarterlyData;
+          })
+          .sort((a, b) => new Date(b.fullDate).getTime() - new Date(a.fullDate).getTime())
+          .slice(0, 4);
+        
+        if (trailing4Quarters.length > 0) {
+          const trailingEps = trailing4Quarters.reduce((sum, d) => {
+            const epsValue = d.eps_adjusted !== null && d.eps_adjusted !== undefined 
+              ? d.eps_adjusted 
+              : (d.earnings || 0);
+            return sum + epsValue;
+          }, 0);
+          
+          // If we have less than 4 quarters, annualize
+          let annualEps: number;
+          if (trailing4Quarters.length < 4) {
+            annualEps = (trailingEps / trailing4Quarters.length) * 4;
+          } else {
+            annualEps = trailingEps;
+          }
+          
+          // Use calculated normal PE instead of item.normalPE
+          fairValueEpsAdjusted = annualEps * calculatedNormalPE;
+        }
+      }
+      
+      return {
+        ...item,
+        fairValueEpsAdjusted: fairValueEpsAdjusted !== null ? fairValueEpsAdjusted : item.fairValueEpsAdjusted,
+        calculatedNormalPE: item.hasQuarterlyData ? calculatedNormalPE : null, // Store calculated normal PE for tooltip
+        dividendScaled: item.dividend !== null && item.dividend !== undefined && item.peRatio !== null && item.peRatio !== undefined
+          ? item.dividend * item.peRatio
+          : null
+      };
+    });
+  }, [filteredStockData, calculatedNormalPE]);
 
   // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
   // Now aligned with fiscal year boundaries
@@ -387,6 +507,8 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
         frequency: 'yearly',
         marketCap: null,
         volume: 0,
+        fairValue: null,
+        fairValueEpsAdjusted: null, // Quarterly metric, not applicable for yearly aggregation
         earnings: yearData.earnings.length > 0 
           ? (hasIncompleteYear && yearData.quarterCount > 0
               ? (yearData.earnings.reduce((sum, val) => sum + val, 0) / yearData.quarterCount) * 4
@@ -491,6 +613,17 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                 </p>
               );
             }
+            // For fairValueEpsAdjusted, show the PE value instead of dollar value
+            if (entry.dataKey === 'fairValueEpsAdjusted' && entry.payload) {
+              const normalPE = entry.payload.calculatedNormalPE;
+              return (
+                <p key={index} style={{ color: entry.color }} className="text-sm">
+                  {entry.name}: {normalPE !== null && normalPE !== undefined 
+                    ? normalPE.toFixed(2) + 'x' 
+                    : '-'}
+                </p>
+              );
+            }
             return (
               <p key={index} style={{ color: entry.color }} className="text-sm">
                 {entry.name}: ${typeof entry.value === 'number' ? entry.value.toFixed(2) : entry.value}
@@ -518,6 +651,27 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
         cy={cy}
         r={5}
         fill="#f97316"
+        stroke="#fff"
+        strokeWidth={2}
+      />
+    );
+  };
+
+  // Custom blue dot component for fair value EPS adjusted line
+  const BlueQuarterlyDot = (props: any) => {
+    const { cx, cy, payload } = props;
+    
+    // Only show dot if this data point has quarterly data and fairValueEpsAdjusted
+    if (!payload || !payload.hasQuarterlyData || payload.fairValueEpsAdjusted === null) {
+      return null;
+    }
+    
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={3}
+        fill="#3b82f6"
         stroke="#fff"
         strokeWidth={2}
       />
@@ -598,6 +752,19 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                 />
               )}
               
+              {/* Fair Value (EPS Adjusted × Normal PE) Line - blue */}
+              {visibleSeries.fairValueEpsAdjusted && (
+                <Line
+                  type="linear"
+                  dataKey="fairValueEpsAdjusted"
+                  stroke="#3b82f6"
+                  strokeWidth={1}
+                  name="Normal PE"
+                  connectNulls={true}
+                  dot={<BlueQuarterlyDot />}
+                />
+              )}
+              
               {/* Dividends Line - scaled by PE ratio for proportional display */}
               {visibleSeries.dividendsPOR && (
                 <Line
@@ -632,6 +799,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
             legendItems={[
               { dataKey: 'price', color: '#000000', name: 'Stock Price ($)' },
               { dataKey: 'fairValue', color: '#f97316', name: 'Fair Value ($)' },
+              { dataKey: 'fairValueEpsAdjusted', color: '#3b82f6', name: 'Normal PE' },
               { dataKey: 'dividendsPOR', color: '#fbbf24', name: 'Dividend ($)' }
             ]} 
           />

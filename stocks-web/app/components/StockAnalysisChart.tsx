@@ -588,10 +588,18 @@ export default function StockAnalysisChart({
         }
       }
       
+      // Filter payload to exclude "Fair Value" when "Fair Value + Dividend" is also present
+      const hasFairValuePlusDividend = payload.some((entry: any) => 
+        entry.dataKey === 'fairValuePlusDividend'
+      );
+      const filteredPayload = hasFairValuePlusDividend
+        ? payload.filter((entry: any) => entry.dataKey !== 'fairValue')
+        : payload;
+      
       return (
         <div className="bg-white p-4 border border-gray-200 rounded-lg shadow-lg">
           <p className="font-semibold text-gray-900 mb-2">{formattedLabel}{fiscalQuarterLabel}</p>
-          {payload.map((entry: any, index: number) => {
+          {filteredPayload.map((entry: any, index: number) => {
             // For dividend, show the actual value (not scaled) in the tooltip
             // The payload contains the full data point, so we can access the original dividend
             if (entry.dataKey === 'dividendScaled' && entry.payload) {

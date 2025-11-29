@@ -1,4 +1,4 @@
-import { transformApiDataForChart, transformLegacyApiDataForChart, TransformedDataPoint } from '../lib/dataTransform';
+import { transformApiDataForChart, TransformedDataPoint } from '../components/stockChartTransform';
 import { APIResponse, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 
 // Legacy type for backward compatibility in tests

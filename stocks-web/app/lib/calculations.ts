@@ -1,4 +1,4 @@
-import { TransformedDataPoint } from './dataTransform';
+import { TransformedDataPoint } from '../components/stockChartTransform';
 
 /**
  * Minimal interface for quarterly data points used in calculations

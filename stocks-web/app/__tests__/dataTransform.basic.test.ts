@@ -1,4 +1,4 @@
-import { transformApiDataForChart } from '../lib/dataTransform';
+import { transformApiDataForChart } from '../components/stockChartTransform';
 import { DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 
 // Mock Math.random to make tests deterministic

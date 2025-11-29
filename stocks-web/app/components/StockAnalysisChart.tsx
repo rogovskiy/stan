@@ -14,12 +14,16 @@ import { DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from '../
 import { 
   getFiscalYearAndQuarter, 
   inferFiscalYearEndMonth, 
-  calculateFiscalYearStartDate,
-  getTrailing4QuartersEps,
-  calculateAnnualEps,
-  QuarterlyDataPoint
+  calculateFiscalYearStartDate
 } from '../lib/calculations';
-import { TransformedDataPoint, transformApiDataForChart } from './stockChartTransform';
+import { 
+  TransformedDataPoint, 
+  enrichQuarterlyWithPrices,
+  calculateQuarterlyMetrics,
+  combineDataForCharting,
+  calculateTableData
+} from './stockChartTransform';
+import StockDataTable from './StockDataTable';
 
 interface StockAnalysisChartProps {
   dailyData: DailyDataPoint[];
@@ -32,7 +36,7 @@ interface StockAnalysisChartProps {
 interface VisibleSeries {
   price: boolean;
   fairValue: boolean;
-  fairValueEpsAdjusted: boolean;
+  normalPEValue: boolean;
   dividendsPOR: boolean;
 }
 
@@ -47,14 +51,19 @@ export default function StockAnalysisChart({
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
     price: true,
     fairValue: true,
-    fairValueEpsAdjusted: true,
+    normalPEValue: true,
     dividendsPOR: true
   });
 
-  // Transform raw API data into chart data owned by this component
+  // Transform raw API data into chart data using the new streamlined sequence
   const stockData: TransformedDataPoint[] = useMemo(() => {
-    return transformApiDataForChart(dailyData, quarterlyData, fairValueRatio);
-  }, [dailyData, quarterlyData, fairValueRatio]);
+    // Step 1: Enrich quarterly data with prices
+    const enrichedQuarterly = enrichQuarterlyWithPrices(quarterlyData, dailyData);
+    // Step 2: Calculate derived metrics on enriched quarterly data
+    const calculatedQuarterly = calculateQuarterlyMetrics(enrichedQuarterly, normalPERatio, fairValueRatio);
+    // Step 3: Combine enriched quarterly data with daily price data for charting
+    return combineDataForCharting(calculatedQuarterly, dailyData, normalPERatio);
+  }, [dailyData, quarterlyData, normalPERatio, fairValueRatio]);
 
   // Extract quarterly date strings for fiscal year calculations
   const quarterlyDateStrings = useMemo(() => {
@@ -75,66 +84,46 @@ export default function StockAnalysisChart({
     return calculateFiscalYearStartDate(quarterlyDateStrings, currentPeriod, fiscalYearEndMonth);
   }, [quarterlyDateStrings, currentPeriod, fiscalYearEndMonth]);
 
-  // Filter stock data to start from the fiscal year Q1 date
+  // Filter stock data to start from the fiscal year Q1 date and add fiscal info to quarterly data points
   const filteredStockData = useMemo(() => {
-    if (!fiscalYearStartDate) return stockData;
+    if (!fiscalYearStartDate) {
+      // Add fiscal info to quarterly data points even if not filtering
+      return stockData.map(item => {
+        if (item.hasQuarterlyData && (item.fiscalYear === undefined || item.fiscalQuarter === undefined)) {
+          const date = new Date(item.fullDate);
+          const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
+          return {
+            ...item,
+            fiscalYear: fiscalInfo.fiscalYear,
+            fiscalQuarter: fiscalInfo.fiscalQuarter
+          };
+        }
+        return item;
+      });
+    }
     
     const startDate = new Date(fiscalYearStartDate);
-    return stockData.filter(item => {
-      const itemDate = new Date(item.fullDate);
-      return itemDate >= startDate;
-    });
-  }, [stockData, fiscalYearStartDate]);
-
-
-  // Create chart data with scaled dividends and calculate fairValueEpsAdjusted using trailing 4 quarters
-  const chartDataWithScaledDividends = useMemo(() => {
-    return filteredStockData.map((item, index) => {
-      // Calculate trailing 4 quarters EPS adjusted for fairValueEpsAdjusted
-      let fairValueEpsAdjusted: number | null = null;
-      
-      if (item.hasQuarterlyData && normalPERatio !== null) {
-        const currentDate = new Date(item.fullDate);
-        // Get all quarterly data points up to and including this date
-        const trailing4Quarters = filteredStockData
-          .filter(d => {
-            const dDate = new Date(d.fullDate);
-            return dDate <= currentDate && d.hasQuarterlyData;
-          })
-          .sort((a, b) => new Date(b.fullDate).getTime() - new Date(a.fullDate).getTime())
-          .slice(0, 4);
-        
-        if (trailing4Quarters.length > 0) {
-          const trailingEps = trailing4Quarters.reduce((sum, d) => {
-            const epsValue = d.eps_adjusted !== null && d.eps_adjusted !== undefined 
-              ? d.eps_adjusted 
-              : (d.earnings || 0);
-            return sum + epsValue;
-          }, 0);
-          
-          // If we have less than 4 quarters, annualize
-          let annualEps: number;
-          if (trailing4Quarters.length < 4) {
-            annualEps = (trailingEps / trailing4Quarters.length) * 4;
-          } else {
-            annualEps = trailingEps;
-          }
-          
-          // Use normal PE ratio from props
-          fairValueEpsAdjusted = annualEps * normalPERatio;
+    return stockData
+      .filter(item => {
+        const itemDate = new Date(item.fullDate);
+        return itemDate >= startDate;
+      })
+      .map(item => {
+        // Add fiscal info to quarterly data points if not already present
+        if (item.hasQuarterlyData && (item.fiscalYear === undefined || item.fiscalQuarter === undefined)) {
+          const date = new Date(item.fullDate);
+          const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
+          return {
+            ...item,
+            fiscalYear: fiscalInfo.fiscalYear,
+            fiscalQuarter: fiscalInfo.fiscalQuarter
+          };
         }
-      }
-      
-      return {
-        ...item,
-        fairValueEpsAdjusted: fairValueEpsAdjusted !== null ? fairValueEpsAdjusted : item.fairValueEpsAdjusted,
-        calculatedNormalPE: item.hasQuarterlyData ? normalPERatio : null, // Store normal PE for tooltip
-        dividendScaled: item.dividend !== null && item.dividend !== undefined && item.peRatio !== null && item.peRatio !== undefined
-          ? item.dividend * item.peRatio
-          : null
-      };
-    });
-  }, [filteredStockData, normalPERatio]);
+        return item;
+      });
+  }, [stockData, fiscalYearStartDate, fiscalYearEndMonth]);
+
+
 
   // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
   // Now aligned with fiscal year boundaries
@@ -197,155 +186,8 @@ export default function StockAnalysisChart({
 
   // Filter table data to match chart ticks and aggregate when in yearly mode
   const tableData = useMemo(() => {
-    if (xAxisTicks.length === 0) return [];
-    
-    // If quarterly mode, filter by exact tick dates
-    if (isQuarterlyMode) {
-      const tickDatesSet = new Set(xAxisTicks);
-      return filteredStockData.filter(item => 
-        tickDatesSet.has(item.fullDate) && item.hasQuarterlyData
-      );
-    }
-    
-    // If yearly mode, extract fiscal years from ticks and get ALL quarterly data for those fiscal years
-    const tickFiscalYears = new Set(
-      xAxisTicks.map(dateStr => {
-        const date = new Date(dateStr);
-        return getFiscalYearAndQuarter(date, fiscalYearEndMonth).fiscalYear;
-      })
-    );
-    
-    // Get all quarterly data points for the fiscal years in ticks
-    const quarterlyDataPoints = filteredStockData.filter(item => {
-      if (!item.hasQuarterlyData) return false;
-      const date = new Date(item.fullDate);
-      const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-      return tickFiscalYears.has(fiscalInfo.fiscalYear);
-    });
-    
-    // Aggregate data by fiscal year
-    const yearlyData = new Map<number, {
-      fullDate: string;
-      fiscalYear: number;
-      stockPrice: number | null;
-      earnings: number[];
-      eps_adjusted: number[];
-      dividend: number[];
-      quarterCount: number; // Track number of quarters for this fiscal year
-    }>();
-    
-    quarterlyDataPoints.forEach(item => {
-      const date = new Date(item.fullDate);
-      const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-      const fiscalYear = fiscalInfo.fiscalYear;
-      
-      if (!yearlyData.has(fiscalYear)) {
-        yearlyData.set(fiscalYear, {
-          fullDate: item.fullDate, // Keep the last date of the fiscal year
-          fiscalYear,
-          stockPrice: null,
-          earnings: [],
-          eps_adjusted: [],
-          dividend: [],
-          quarterCount: 0
-        });
-      }
-      
-      const yearData = yearlyData.get(fiscalYear)!;
-      
-      // Use stock price from the last quarter of the fiscal year
-      if (item.stockPrice !== null && item.stockPrice !== undefined) {
-        // Update to the latest stock price in the fiscal year
-        if (yearData.stockPrice === null || new Date(item.fullDate) > new Date(yearData.fullDate)) {
-          yearData.stockPrice = item.stockPrice;
-        }
-      }
-      
-      if (item.earnings !== null && item.earnings !== undefined) {
-        yearData.earnings.push(item.earnings);
-        yearData.quarterCount++;
-      }
-      // Use eps_adjusted if available, otherwise fall back to earnings
-      const epsAdjustedValue = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
-        ? item.eps_adjusted 
-        : item.earnings;
-      if (epsAdjustedValue !== null && epsAdjustedValue !== undefined) {
-        // Only increment once per quarter (earnings already counted)
-        if (item.earnings === null || item.earnings === undefined) {
-          yearData.quarterCount++;
-        }
-        yearData.eps_adjusted.push(epsAdjustedValue);
-      }
-      if (item.dividend !== null && item.dividend !== undefined) {
-        yearData.dividend.push(item.dividend);
-      }
-      
-      // Update fullDate to the latest date in the year
-      if (new Date(item.fullDate) > new Date(yearData.fullDate)) {
-        yearData.fullDate = item.fullDate;
-      }
-    });
-    console.log('Yearly data:', yearlyData);
-    // Convert aggregated data back to TransformedDataPoint format
-    const sortedYearlyData = Array.from(yearlyData.values())
-      .sort((a, b) => a.fiscalYear - b.fiscalYear);
-    
-    return sortedYearlyData.map((yearData, index) => {
-      const isLastYear = index === sortedYearlyData.length - 1;
-      const hasIncompleteYear = isLastYear && yearData.quarterCount < 4;
-      
-      // Calculate annual EPS
-      let annualEps: number | null = null;
-      if (yearData.eps_adjusted.length > 0) {
-        const sumEps = yearData.eps_adjusted.reduce((sum, val) => sum + val, 0);
-        // If incomplete year (less than 4 quarters), project full year by annualizing
-        if (hasIncompleteYear && yearData.quarterCount > 0) {
-          annualEps = (sumEps / yearData.quarterCount) * 4;
-        } else {
-          annualEps = sumEps;
-        }
-      }
-      
-      return {
-        fullDate: yearData.fullDate,
-        date: yearData.fiscalYear.toString(),
-        stockPrice: yearData.stockPrice,
-        estimated: hasIncompleteYear, // Mark as estimated if incomplete year
-        year: yearData.fiscalYear,
-        frequency: 'yearly',
-        marketCap: null,
-        volume: 0,
-        fairValue: null,
-        fairValueEpsAdjusted: null, // Quarterly metric, not applicable for yearly aggregation
-        earnings: yearData.earnings.length > 0 
-          ? (hasIncompleteYear && yearData.quarterCount > 0
-              ? (yearData.earnings.reduce((sum, val) => sum + val, 0) / yearData.quarterCount) * 4
-              : yearData.earnings.reduce((sum, val) => sum + val, 0))
-          : null,
-        eps_adjusted: annualEps,
-        normalPE: null,
-        dividendsPOR: null,
-        hasQuarterlyData: true,
-        peRatio: null, // Will be calculated in the table display
-        revenue: null,
-        dividend: yearData.dividend.length > 0 
-          ? yearData.dividend.reduce((sum, val) => sum + val, 0) 
-          : null
-      };
-    });
+    return calculateTableData(filteredStockData, xAxisTicks, isQuarterlyMode, fiscalYearEndMonth);
   }, [filteredStockData, xAxisTicks, isQuarterlyMode, fiscalYearEndMonth]);
-
-  // Format date for table header (matches chart tick formatter)
-  const formatTableDate = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    if (isQuarterlyMode) {
-      const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-      return `${fiscalInfo.fiscalYear}Q${fiscalInfo.fiscalQuarter}`;
-    } else {
-      const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-      return fiscalInfo.fiscalYear.toString();
-    }
-  };
 
   // Debug logging for chart data
   console.log('Chart data debug:', {
@@ -411,8 +253,8 @@ export default function StockAnalysisChart({
                 </p>
               );
             }
-            // For fairValueEpsAdjusted, show the PE value instead of dollar value
-            if (entry.dataKey === 'fairValueEpsAdjusted' && entry.payload) {
+            // For normalPEValue, show the PE value instead of dollar value
+            if (entry.dataKey === 'normalPEValue' && entry.payload) {
               const normalPE = entry.payload.calculatedNormalPE;
               return (
                 <p key={index} style={{ color: entry.color }} className="text-sm">
@@ -455,12 +297,12 @@ export default function StockAnalysisChart({
     );
   };
 
-  // Custom blue dot component for fair value EPS adjusted line
+  // Custom blue dot component for normal PE value line
   const BlueQuarterlyDot = (props: any) => {
     const { cx, cy, payload } = props;
     
-    // Only show dot if this data point has quarterly data and fairValueEpsAdjusted
-    if (!payload || !payload.hasQuarterlyData || payload.fairValueEpsAdjusted === null) {
+    // Only show dot if this data point has quarterly data and normalPEValue
+    if (!payload || !payload.hasQuarterlyData || payload.normalPEValue === null) {
       return null;
     }
     
@@ -490,7 +332,7 @@ export default function StockAnalysisChart({
       {filteredStockData.length > 0 && (
         <>
           <ResponsiveContainer width="100%" height={400}>
-            <ComposedChart data={chartDataWithScaledDividends} margin={{ bottom: 20 }}>
+            <ComposedChart data={filteredStockData} margin={{ bottom: 20 }}>
               <XAxis 
                 dataKey="fullDate" 
                 type="category"
@@ -498,15 +340,17 @@ export default function StockAnalysisChart({
                 tick={{ fontSize: 12 }}
                 ticks={xAxisTicks}
                 tickFormatter={(value) => {
-                  const date = new Date(value);
-                  const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-                  if (isQuarterlyMode) {
-                    // Format as fiscal year and quarter (e.g., "2024Q1")
-                    return `${fiscalInfo.fiscalYear}Q${fiscalInfo.fiscalQuarter}`;
-                  } else {
-                    // Format as fiscal year only (e.g., "2024")
-                    return fiscalInfo.fiscalYear.toString();
+                  // Find the data point to access stored fiscal info
+                  const dataPoint = filteredStockData.find(d => d.fullDate === value);
+                  if (dataPoint && dataPoint.fiscalYear !== undefined) {
+                    if (isQuarterlyMode && dataPoint.fiscalQuarter !== undefined) {
+                      return `${dataPoint.fiscalYear}Q${dataPoint.fiscalQuarter}`;
+                    } else {
+                      return dataPoint.fiscalYear.toString();
+                    }
                   }
+                  // Fallback: should not happen since we set fiscal info on all quarterly data points
+                  return value;
                 }}
               />
               <YAxis tick={{ fontSize: 12 }} />
@@ -527,11 +371,11 @@ export default function StockAnalysisChart({
                 />
               )}
               
-              {/* Fair Value (EPS Adjusted × Normal PE) Line - blue */}
-              {visibleSeries.fairValueEpsAdjusted && (
+              {/* Normal PE Value Line - blue */}
+              {visibleSeries.normalPEValue && (
                 <Line
                   type="linear"
-                  dataKey="fairValueEpsAdjusted"
+                  dataKey="normalPEValue"
                   stroke="#3b82f6"
                   strokeWidth={1}
                   name="Normal PE"
@@ -574,131 +418,17 @@ export default function StockAnalysisChart({
             legendItems={[
               { dataKey: 'price', color: '#000000', name: 'Stock Price ($)' },
               { dataKey: 'fairValue', color: '#f97316', name: 'Fair Value ($)' },
-              { dataKey: 'fairValueEpsAdjusted', color: '#3b82f6', name: 'Normal PE' },
+              { dataKey: 'normalPEValue', color: '#3b82f6', name: 'Normal PE' },
               { dataKey: 'dividendsPOR', color: '#fbbf24', name: 'Dividend ($)' }
             ]} 
           />
           
           {/* Data Table */}
-          <div className="mt-6 overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b-2 border-gray-200">
-                  <th className="text-left py-3 px-1.5 font-bold text-gray-900 w-16 text-sm uppercase tracking-wide">&nbsp;</th>
-                  {tableData.map((item, index) => (
-                    <th key={item.fullDate} className={`text-left py-3 font-bold text-gray-900 text-sm tracking-tight ${index === tableData.length - 1 ? 'w-16 px-1.5' : 'px-3'}`}
-                        style={index === tableData.length - 1 ? {} : { width: `${100 / tableData.length}%` }}>
-                      {formatTableDate(item.fullDate)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="text-sm">
-                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white transition-colors">
-                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">PE</td>
-                  {tableData.map((item, index) => {
-                    // Calculate actual P/E: price / annual EPS
-                    let actualPE: number | null = null;
-                    let isEstimated = item.estimated;
-                    
-                    if (item.stockPrice !== null && item.stockPrice !== undefined && item.stockPrice > 0) {
-                      let annualEps: number | null = null;
-                      
-                      if (isQuarterlyMode) {
-                        // For quarterly mode, use trailing 4 quarters EPS for P/E calculation
-                        const currentDate = new Date(item.fullDate);
-                        // Extract quarterly data from full stockData for trailing calculation
-                        const allQuarterlyData: QuarterlyDataPoint[] = stockData
-                          .filter(d => d.hasQuarterlyData)
-                          .map(d => ({
-                            date: d.fullDate,
-                            eps_adjusted: d.eps_adjusted,
-                            earnings: d.earnings,
-                            stockPrice: d.stockPrice ?? null
-                          }));
-                        
-                        const trailing4Quarters = getTrailing4QuartersEps(allQuarterlyData, currentDate);
-                        
-                        // If we have less than 4 quarters, this is estimated
-                        if (trailing4Quarters.length < 4) {
-                          isEstimated = true;
-                        }
-                        
-                        if (trailing4Quarters.length > 0) {
-                          const quarterlyEpsValues = trailing4Quarters.map(q => {
-                            return q.eps_adjusted !== null && q.eps_adjusted !== undefined 
-                              ? q.eps_adjusted 
-                              : (q.earnings || 0);
-                          });
-                          annualEps = calculateAnnualEps(quarterlyEpsValues);
-                        }
-                      } else {
-                        // For yearly mode, use the projected annual EPS (already calculated in tableData)
-                        annualEps = item.eps_adjusted !== null && item.eps_adjusted !== undefined 
-                          ? item.eps_adjusted 
-                          : (item.earnings || null);
-                      }
-                      
-                      if (annualEps !== null && annualEps > 0) {
-                        actualPE = item.stockPrice / annualEps;
-                      }
-                    }
-                    
-                    return (
-                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                        {actualPE !== null ? (
-                          <span>
-                            {actualPE.toFixed(1)}
-                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
-                          </span>
-                        ) : '-'}
-                      </td>
-                    );
-                  })}
-                </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS</td>
-                  {tableData.map((item, index) => {
-                    const isEstimated = item.estimated;
-                    return (
-                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                        {item.earnings !== null && item.earnings !== undefined ? (
-                          <span>
-                            ${item.earnings.toFixed(2)}
-                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
-                          </span>
-                        ) : '-'}
-                      </td>
-                    );
-                  })}
-                </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS Split Adjusted</td>
-                  {tableData.map((item, index) => {
-                    const isEstimated = item.estimated;
-                    return (
-                      <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                        {item.eps_adjusted !== null && item.eps_adjusted !== undefined ? (
-                          <span>
-                            ${item.eps_adjusted.toFixed(2)}
-                            {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
-                          </span>
-                        ) : '-'}
-                      </td>
-                    );
-                  })}
-                </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
-                  <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">Dividend</td>
-                  {tableData.map((item, index) => (
-                    <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                      ${item.dividend?.toFixed(2) || '-'}
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <StockDataTable
+            tableData={tableData}
+            isQuarterlyMode={isQuarterlyMode}
+            stockData={stockData}
+          />
         </>
       )}
     </div>

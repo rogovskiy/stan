@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { TransformedDataPoint } from './stockChartTransform';
 import { getTrailing4QuartersEps, calculateAnnualEps, QuarterlyDataPoint } from '../lib/calculations';
 
@@ -14,6 +15,7 @@ export default function StockDataTable({
   isQuarterlyMode,
   stockData
 }: StockDataTableProps) {
+  const [useSplitAdjusted, setUseSplitAdjusted] = useState(true);
   // Format date for table header (matches chart tick formatter)
   // Uses fiscalYear and fiscalQuarter from item
   const formatTableDate = (item: TransformedDataPoint): string => {
@@ -102,30 +104,38 @@ export default function StockDataTable({
             })}
           </tr>
           <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-            <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS</td>
+            <td className="py-3 px-1.5">
+              <div className="flex flex-col gap-1.5">
+                <span className="font-bold text-gray-900 tracking-wide">EPS</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useSplitAdjusted}
+                    onChange={() => setUseSplitAdjusted(!useSplitAdjusted)}
+                    className="sr-only"
+                  />
+                  <div className={`w-7 h-4 rounded-full transition-colors ${
+                    useSplitAdjusted ? 'bg-gray-400' : 'bg-gray-200'
+                  }`}>
+                    <div className={`absolute top-[1px] left-[1px] bg-white border border-gray-300 rounded-full h-3 w-3 transition-transform ${
+                      useSplitAdjusted ? 'translate-x-3' : 'translate-x-0'
+                    }`}></div>
+                  </div>
+                  <span className="ml-2 text-xs text-gray-600 font-medium">Splits</span>
+                </label>
+              </div>
+            </td>
             {tableData.map((item, index) => {
               const isEstimated = item.estimated;
+              const epsValue = useSplitAdjusted 
+                ? (item.eps_adjusted !== null && item.eps_adjusted !== undefined ? item.eps_adjusted : null)
+                : (item.earnings !== null && item.earnings !== undefined ? item.earnings : null);
+              
               return (
                 <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                  {item.earnings !== null && item.earnings !== undefined ? (
+                  {epsValue !== null ? (
                     <span>
-                      ${item.earnings.toFixed(2)}
-                      {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
-                    </span>
-                  ) : '-'}
-                </td>
-              );
-            })}
-          </tr>
-          <tr className="border-b border-gray-100 hover:bg-gray-50 bg-white">
-            <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">EPS Split Adjusted</td>
-            {tableData.map((item, index) => {
-              const isEstimated = item.estimated;
-              return (
-                <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                  {item.eps_adjusted !== null && item.eps_adjusted !== undefined ? (
-                    <span>
-                      ${item.eps_adjusted.toFixed(2)}
+                      ${epsValue.toFixed(2)}
                       {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
                     </span>
                   ) : '-'}

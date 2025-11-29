@@ -7,6 +7,7 @@ import StockAnalysisChart from './components/StockAnalysisChart';
 import PeriodSelector from './components/PeriodSelector';
 import StockSidebar from './components/StockSidebar';
 import StockHeader from './components/StockHeader';
+import TickerSearch from './components/TickerSearch';
 
 export default function Home() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
@@ -222,12 +223,19 @@ export default function Home() {
       {/* Top Navigation Bar */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="w-full max-w-none px-6 py-2.5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             {/* Logo/Brand */}
             <div className="flex items-center gap-3">
               <div className="text-lg font-bold text-blue-600 tracking-tight">StockAnalysis</div>
             </div>
-            <div></div>
+            {/* Ticker Search Bar */}
+            <div className="flex-1 flex justify-center max-w-2xl">
+              <TickerSearch 
+                selectedTicker={selectedTicker}
+                onTickerChange={handleTickerChange}
+              />
+            </div>
+            <div className="w-32"></div> {/* Spacer for centering */}
           </div>
         </div>
       </div>

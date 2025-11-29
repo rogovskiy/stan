@@ -2,13 +2,6 @@
 
 import { useState, useEffect } from 'react';
 
-interface Ticker {
-  ticker: string;
-  name: string;
-  sector: string;
-  exchange: string;
-}
-
 interface HeaderCurrentData {
   stockPrice: number | null;
   fairValue: number | null;
@@ -34,63 +27,51 @@ export default function StockHeader({
   priceChange,
   priceChangePercent
 }: StockHeaderProps) {
-  const [allTickers, setAllTickers] = useState<Ticker[]>([]);
-  const [tickersLoading, setTickersLoading] = useState(false);
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [exchange, setExchange] = useState<string | null>(null);
 
-  // Fetch all tickers for dropdown
-  const fetchAllTickers = async () => {
-    try {
-      setTickersLoading(true);
-      const response = await fetch('/api/tickers?getAllTickers=true');
-      const result = await response.json();
-      
-      if (result.success) {
-        setAllTickers(result.data);
-      } else {
-        console.error('Failed to fetch tickers:', result.error);
-      }
-    } catch (err) {
-      console.error('Error fetching tickers:', err);
-    } finally {
-      setTickersLoading(false);
-    }
-  };
-
-  // Load tickers on mount
+  // Fetch company name when ticker changes
   useEffect(() => {
-    fetchAllTickers();
-  }, []);
+    const fetchCompanyInfo = async () => {
+      if (!selectedTicker) {
+        setCompanyName(null);
+        setExchange(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/tickers?ticker=${selectedTicker}`);
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          setCompanyName(result.data.name || null);
+          setExchange(result.data.exchange || null);
+        } else {
+          setCompanyName(null);
+          setExchange(null);
+        }
+      } catch (err) {
+        console.error('Error fetching company info:', err);
+        setCompanyName(null);
+        setExchange(null);
+      }
+    };
+
+    fetchCompanyInfo();
+  }, [selectedTicker]);
   return (
     <div className="bg-white border-b border-gray-200">
       <div className="w-full max-w-none px-6 py-4">
         {/* Single Row: Company Info, Quick Stats, and Price */}
         <div className="flex items-center justify-between mb-5">
           {/* Left: Company Info */}
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-md">
-              <span className="text-white font-bold text-lg tracking-tight">{selectedTicker}</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                  {selectedTicker || 'Loading...'}
-                </h1>
-                <select 
-                  value={selectedTicker}
-                  onChange={(e) => onTickerChange(e.target.value)}
-                  className="text-base text-gray-600 bg-transparent border border-gray-300 rounded px-2 py-1 focus:outline-none cursor-pointer font-medium"
-                >
-                  {tickersLoading ? (
-                    <option key="loading">Loading...</option>
-                  ) : (
-                    allTickers.map(ticker => (
-                      <option key={ticker.ticker} value={ticker.ticker}>{ticker.ticker}</option>
-                    ))
-                  )}
-                </select>
-              </div>
-              <p className="text-gray-500 text-sm font-medium">NASDAQ: {selectedTicker}</p>
-            </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-1">
+              {companyName || selectedTicker || 'Loading...'}
+            </h1>
+            <p className="text-gray-500 text-sm font-medium">
+              {exchange ? `${exchange}: ` : ''}{selectedTicker}
+            </p>
           </div>
 
           {/* Center: Quick Stats */}

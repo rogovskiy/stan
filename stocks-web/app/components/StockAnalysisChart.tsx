@@ -445,11 +445,11 @@ export default function StockAnalysisChart({
                   onChange={() => handleLegendClick('fairValuePlusDividend')}
                   className="sr-only"
                 />
-                <div className={`w-9 h-5 rounded-full transition-colors ${
-                  visibleSeries.fairValuePlusDividend ? 'bg-orange-500' : 'bg-gray-200'
+                <div className={`w-7 h-4 rounded-full transition-colors ${
+                  visibleSeries.fairValuePlusDividend ? 'bg-gray-400' : 'bg-gray-200'
                 }`}>
-                  <div className={`absolute top-[2px] left-[2px] bg-white border border-gray-300 rounded-full h-4 w-4 transition-transform ${
-                    visibleSeries.fairValuePlusDividend ? 'translate-x-4' : 'translate-x-0'
+                  <div className={`absolute top-[1px] left-[1px] bg-white border border-gray-300 rounded-full h-3 w-3 transition-transform ${
+                    visibleSeries.fairValuePlusDividend ? 'translate-x-3' : 'translate-x-0'
                   }`}></div>
                 </div>
                 <span className="ml-2 text-xs text-gray-600 font-medium">+ Div</span>

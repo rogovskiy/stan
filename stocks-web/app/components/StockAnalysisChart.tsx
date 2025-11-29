@@ -68,6 +68,7 @@ interface StockAnalysisChartProps {
 interface VisibleSeries {
   price: boolean;
   fairValue: boolean;
+  fairValuePlusDividend: boolean;
   normalPEValue: boolean;
   dividendsPOR: boolean;
 }
@@ -86,6 +87,7 @@ export default function StockAnalysisChart({
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
     price: true,
     fairValue: true,
+    fairValuePlusDividend: true,
     normalPEValue: true,
     dividendsPOR: true
   });
@@ -296,10 +298,15 @@ export default function StockAnalysisChart({
   }, [filteredStockData, fiscalYearEndMonth, targetFiscalYear]);
 
   // Convert data to use timestamps for x-axis (needed for proper time scale)
+  // Also compute fairValuePlusDividend for the stacked area (using dividendScaled from the yellow line)
   const chartDataWithTimestamps = useMemo(() => {
     return filteredStockData.map(point => ({
       ...point,
-      timestamp: new Date(point.fullDate).getTime()
+      timestamp: new Date(point.fullDate).getTime(),
+      fairValuePlusDividend: point.fairValue !== null && point.fairValue !== undefined && 
+                             point.dividendScaled !== null && point.dividendScaled !== undefined
+        ? point.fairValue + point.dividendScaled 
+        : null
     }));
   }, [filteredStockData]);
   
@@ -404,28 +411,76 @@ export default function StockAnalysisChart({
 
   // Custom Legend Component
   const CustomLegend = ({ legendItems }: { legendItems: Array<{ dataKey: string; color: string; name: string }> }) => (
-    <div className="flex justify-center gap-6 mb-4">
-      {legendItems.map((item) => (
-        <div
-          key={item.dataKey}
-          className={`flex items-center gap-2 cursor-pointer select-none transition-opacity ${
-            visibleSeries[item.dataKey as keyof VisibleSeries] ? 'opacity-100' : 'opacity-50'
-          }`}
-          onClick={() => handleLegendClick(item.dataKey as keyof VisibleSeries)}
-        >
+    <div className="flex justify-center gap-6 mb-4 flex-wrap">
+      {legendItems.map((item) => {
+        // Special handling for Fair Value with toggle
+        if (item.dataKey === 'fairValue') {
+          return (
+            <div
+              key={item.dataKey}
+              className="flex items-center gap-2 select-none"
+            >
+              <div
+                className={`flex items-center gap-2 cursor-pointer transition-opacity ${
+                  visibleSeries.fairValue ? 'opacity-100' : 'opacity-50'
+                }`}
+                onClick={() => handleLegendClick('fairValue')}
+              >
+                <div
+                  className="w-4 h-0.5 rounded"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className={`text-sm ${
+                  visibleSeries.fairValue 
+                    ? 'text-gray-700 font-medium' 
+                    : 'text-gray-400 line-through'
+                }`}>
+                  {item.name}
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer ml-1">
+                <input
+                  type="checkbox"
+                  checked={visibleSeries.fairValuePlusDividend}
+                  onChange={() => handleLegendClick('fairValuePlusDividend')}
+                  className="sr-only"
+                />
+                <div className={`w-9 h-5 rounded-full transition-colors ${
+                  visibleSeries.fairValuePlusDividend ? 'bg-orange-500' : 'bg-gray-200'
+                }`}>
+                  <div className={`absolute top-[2px] left-[2px] bg-white border border-gray-300 rounded-full h-4 w-4 transition-transform ${
+                    visibleSeries.fairValuePlusDividend ? 'translate-x-4' : 'translate-x-0'
+                  }`}></div>
+                </div>
+                <span className="ml-2 text-xs text-gray-600 font-medium">+ Div</span>
+              </label>
+            </div>
+          );
+        }
+        
+        // Regular legend items
+        return (
           <div
-            className="w-4 h-0.5 rounded"
-            style={{ backgroundColor: item.color }}
-          />
-          <span className={`text-sm ${
-            visibleSeries[item.dataKey as keyof VisibleSeries] 
-              ? 'text-gray-700 font-medium' 
-              : 'text-gray-400 line-through'
-          }`}>
-            {item.name}
-          </span>
-        </div>
-      ))}
+            key={item.dataKey}
+            className={`flex items-center gap-2 cursor-pointer select-none transition-opacity ${
+              visibleSeries[item.dataKey as keyof VisibleSeries] ? 'opacity-100' : 'opacity-50'
+            }`}
+            onClick={() => handleLegendClick(item.dataKey as keyof VisibleSeries)}
+          >
+            <div
+              className="w-4 h-0.5 rounded"
+              style={{ backgroundColor: item.color }}
+            />
+            <span className={`text-sm ${
+              visibleSeries[item.dataKey as keyof VisibleSeries] 
+                ? 'text-gray-700 font-medium' 
+                : 'text-gray-400 line-through'
+            }`}>
+              {item.name}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -514,7 +569,7 @@ export default function StockAnalysisChart({
         cx={cx}
         cy={cy}
         r={5}
-        fill="#f97316"
+        fill="#ea580c"
         stroke="#fff"
         strokeWidth={2}
       />
@@ -633,9 +688,9 @@ export default function StockAnalysisChart({
                       <Area
                         type="linear"
                         dataKey="fairValue"
-                        stroke="#f97316"
-                        fill="#f97316"
-                        fillOpacity={0.15}
+                        stroke="#ea580c"
+                        fill="#ea580c"
+                        fillOpacity={0.2}
                         strokeWidth={1}
                         name="Fair Value"
                         connectNulls={true}
@@ -647,14 +702,52 @@ export default function StockAnalysisChart({
                       <Area
                         type="linear"
                         dataKey="fairValue"
-                        stroke="#f97316"
-                        fill="#f97316"
-                        fillOpacity={0.15}
+                        stroke="#ea580c"
+                        fill="#ea580c"
+                        fillOpacity={0.2}
                         strokeWidth={1}
                         name="Fair Value (est.)"
                         connectNulls={true}
                         strokeDasharray="5 5"
                         dot={<QuarterlyDot />}
+                        data={estimatedData}
+                      />
+                    )}
+                  </>
+                );
+              })()}
+              
+              {/* Simple area on top of Fair Value (dividendScaled high) */}
+              {visibleSeries.fairValuePlusDividend && (() => {
+                const { actualData, estimatedData } = splitDataByEstimated('fairValuePlusDividend');
+                return (
+                  <>
+                    {actualData.length > 0 && (
+                      <Area
+                        type="linear"
+                        dataKey="fairValuePlusDividend"
+                        stroke="#f97316"
+                        fill="#f97316"
+                        fillOpacity={0.1}
+                        strokeWidth={0.5}
+                        name="Fair Value + Dividend"
+                        connectNulls={true}
+                        dot={false}
+                        data={actualData}
+                      />
+                    )}
+                    {estimatedData.length > 0 && (
+                      <Area
+                        type="linear"
+                        dataKey="fairValuePlusDividend"
+                        stroke="#f97316"
+                        fill="#f97316"
+                        fillOpacity={0.1}
+                        strokeWidth={0.5}
+                        name="Fair Value + Dividend (est.)"
+                        connectNulls={true}
+                        strokeDasharray="5 5"
+                        dot={false}
                         data={estimatedData}
                       />
                     )}
@@ -705,10 +798,10 @@ export default function StockAnalysisChart({
                       <Line
                         type="linear"
                         dataKey="dividendScaled"
-                        stroke="#fbbf24"
-                        fill="#fbbf24"
-                        fillOpacity={0.1}
-                        strokeWidth={1}
+                        stroke="#8b5a3c"
+                        fill="#8b5a3c"
+                        fillOpacity={0.15}
+                        strokeWidth={1.5}
                         name="Dividend"
                         connectNulls={true}
                         dot={false}
@@ -719,10 +812,10 @@ export default function StockAnalysisChart({
                       <Line
                         type="linear"
                         dataKey="dividendScaled"
-                        stroke="#fbbf24"
-                        fill="#fbbf24"
-                        fillOpacity={0.1}
-                        strokeWidth={1}
+                        stroke="#8b5a3c"
+                        fill="#8b5a3c"
+                        fillOpacity={0.15}
+                        strokeWidth={1.5}
                         name="Dividend (est.)"
                         connectNulls={true}
                         strokeDasharray="5 5"
@@ -752,9 +845,9 @@ export default function StockAnalysisChart({
           <CustomLegend 
             legendItems={[
               { dataKey: 'price', color: '#000000', name: 'Stock Price ($)' },
-              { dataKey: 'fairValue', color: '#f97316', name: 'Fair Value ($)' },
+              { dataKey: 'fairValue', color: '#ea580c', name: 'Fair Value ($)' },
               { dataKey: 'normalPEValue', color: '#3b82f6', name: 'Normal PE' },
-              { dataKey: 'dividendsPOR', color: '#fbbf24', name: 'Dividend ($)' }
+              { dataKey: 'dividendsPOR', color: '#8b5a3c', name: 'Dividend ($)' }
             ]} 
           />
           

@@ -1,9 +1,17 @@
 'use client';
 
-import { TransformedDataPoint } from '../lib/dataTransform';
+interface SidebarCurrentData {
+  stockPrice: number | null;
+  fairValue: number | null;
+  peRatio: number | null;
+  earnings: number | null;
+  dividend: number | null;
+  dividendsPOR: number | null;
+  marketCap: number | null;
+}
 
 interface StockSidebarProps {
-  currentData: TransformedDataPoint | undefined;
+  currentData: SidebarCurrentData | undefined;
   growthRate: number | null;
   normalPERatio: number | null;
   fairValueRatio: number;

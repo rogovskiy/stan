@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { TransformedDataPoint } from '../lib/dataTransform';
 
 interface Ticker {
   ticker: string;
@@ -10,10 +9,20 @@ interface Ticker {
   exchange: string;
 }
 
+interface HeaderCurrentData {
+  stockPrice: number | null;
+  fairValue: number | null;
+  peRatio: number | null;
+  earnings: number | null;
+  dividend: number | null;
+  dividendsPOR: number | null;
+  marketCap: number | null;
+}
+
 interface StockHeaderProps {
   selectedTicker: string;
   onTickerChange: (ticker: string) => void;
-  currentData: TransformedDataPoint | undefined;
+  currentData: HeaderCurrentData | undefined;
   priceChange: number;
   priceChangePercent: number;
 }
@@ -72,7 +81,7 @@ export default function StockHeader({
                   className="text-base text-gray-600 bg-transparent border border-gray-300 rounded px-2 py-1 focus:outline-none cursor-pointer font-medium"
                 >
                   {tickersLoading ? (
-                    <option>Loading...</option>
+                    <option key="loading">Loading...</option>
                   ) : (
                     allTickers.map(ticker => (
                       <option key={ticker.ticker} value={ticker.ticker}>{ticker.ticker}</option>

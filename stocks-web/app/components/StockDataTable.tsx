@@ -135,11 +135,19 @@ export default function StockDataTable({
           </tr>
           <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50">
             <td className="py-3 px-1.5 font-bold text-gray-900 tracking-wide">Dividend</td>
-            {tableData.map((item, index) => (
-              <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
-                ${item.dividend?.toFixed(2) || '-'}
-              </td>
-            ))}
+            {tableData.map((item, index) => {
+              const isEstimated = item.estimated;
+              return (
+                <td key={item.fullDate} className={`text-left text-gray-700 ${index === tableData.length - 1 ? 'py-3 px-1.5' : 'py-3 px-3'}`}>
+                  {item.dividend !== null && item.dividend !== undefined ? (
+                    <span>
+                      ${item.dividend.toFixed(2)}
+                      {isEstimated && <span className="text-gray-500 text-xs ml-1">(proj.)</span>}
+                    </span>
+                  ) : '-'}
+                </td>
+              );
+            })}
           </tr>
         </tbody>
       </table>

@@ -153,23 +153,31 @@ export function getFiscalYearAndQuarter(date: Date, fiscalYearEndMonth: number):
   const fiscalYearStartMonth = (fiscalYearEndMonth % 12) + 1;
   
   // Determine fiscal year
-  // If current month is after fiscal year-end month, we're in next fiscal year
-  // If current month is before fiscal year start, we're in previous fiscal year
+  // For fiscal years that span calendar years (e.g., Oct-Sep):
+  // - If month > fiscalYearEndMonth: we're in the NEXT calendar year's fiscal year
+  // - If month >= fiscalYearStartMonth: we're in the CURRENT calendar year's fiscal year
+  // - If month < fiscalYearStartMonth: we're in the CURRENT calendar year's fiscal year (not previous!)
+  //   This is because the fiscal year started in the previous calendar year but continues into current year
   let fiscalYear: number;
   let monthsIntoFiscalYear: number;
   
   if (month > fiscalYearEndMonth) {
-    // After fiscal year end, so we're in the next fiscal year
+    // After fiscal year end (e.g., Oct, Nov, Dec for Sep-end fiscal year)
+    // We're in the next calendar year's fiscal year
     fiscalYear = year + 1;
     monthsIntoFiscalYear = month - fiscalYearEndMonth;
-  } else if (month < fiscalYearStartMonth) {
-    // Before fiscal year start, so we're in the previous fiscal year
-    fiscalYear = year - 1;
-    monthsIntoFiscalYear = (12 - fiscalYearEndMonth) + month;
-  } else {
-    // Between fiscal year start and end
+  } else if (month >= fiscalYearStartMonth) {
+    // Between fiscal year start and end (e.g., Oct-Dec for Sep-end fiscal year)
     fiscalYear = year;
     monthsIntoFiscalYear = month - fiscalYearStartMonth + 1;
+  } else {
+    // Month is before fiscal year start month (e.g., Jan-Sep for Oct-start fiscal year)
+    // This is still in the current calendar year's fiscal year (which started in previous calendar year)
+    // For example: March 2024 for FY ending Sep -> FY2024 (which started Oct 2023)
+    fiscalYear = year;
+    // Calculate months into fiscal year: 
+    // (months from fiscal year start in previous calendar year) + (current month)
+    monthsIntoFiscalYear = (12 - fiscalYearEndMonth) + month;
   }
   
   // Determine quarter (1-4) based on months into fiscal year
@@ -217,47 +225,78 @@ export function calculateAnnualEps(quarterlyEpsValues: number[]): number {
  * Infer fiscal year end month from quarterly dates
  * Looks at the pattern of quarterly dates to determine when fiscal year ends
  * 
+ * Strategy: For fiscal years ending in month M, Q4 dates cluster around month M,
+ * while Q1 dates cluster around month (M+3) mod 12. We look for the month that
+ * appears most frequently as the 3rd month from another cluster (Q4 to Q1 gap).
+ * 
  * @param quarterlyDates - Array of quarterly date strings
  * @returns Fiscal year end month (1-12), defaults to 12 if insufficient data
  */
 export function inferFiscalYearEndMonth(quarterlyDates: string[]): number {
   if (quarterlyDates.length === 0) return 12; // Default to December
   
-  // Group by calendar year and find the latest quarter in each year
-  const quartersByYear = new Map<number, Date[]>();
-  quarterlyDates.forEach(dateStr => {
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    if (!quartersByYear.has(year)) {
-      quartersByYear.set(year, []);
-    }
-    quartersByYear.get(year)!.push(date);
-  });
+  // Convert to dates and sort
+  const dates = quarterlyDates.map(d => new Date(d)).sort((a, b) => a.getTime() - b.getTime());
   
-  // Find the most common month for the latest quarter in each year
-  // This should be the fiscal year end month
-  const latestQuarterMonths: number[] = [];
-  quartersByYear.forEach((dates) => {
-    const latestDate = dates.sort((a, b) => b.getTime() - a.getTime())[0];
-    latestQuarterMonths.push(latestDate.getMonth() + 1); // getMonth() returns 0-11
-  });
+  // Group dates by month to find patterns
+  // For a fiscal year ending in month M:
+  // - Q4 ends in month M (fiscal year end)
+  // - Q1 ends in month ((M+3-1) % 12) + 1 = month after M+2 months
+  // For September end (month 9): Q4 in Sep (9), Q1 in Dec (12)
   
-  // Find the most common month (fiscal year end)
+  // Look for months that appear most frequently with ~3 month gaps
+  // Count occurrences of each month
   const monthCounts = new Map<number, number>();
-  latestQuarterMonths.forEach(month => {
+  dates.forEach(date => {
+    const month = date.getMonth() + 1; // getMonth() returns 0-11
     monthCounts.set(month, (monthCounts.get(month) || 0) + 1);
   });
   
-  let maxCount = 0;
-  let fiscalYearEndMonth = 12;
-  monthCounts.forEach((count, month) => {
-    if (count > maxCount) {
-      maxCount = count;
-      fiscalYearEndMonth = month;
-    }
-  });
+  // Find the month with highest count - this is likely Q4 (fiscal year end)
+  // But also check if there's a pattern: Q4 month should have similar counts to Q1, Q2, Q3
+  // Q1 is typically 3 months after Q4, Q2 is 6 months after, Q3 is 9 months after
   
-  return fiscalYearEndMonth;
+  let maxCount = 0;
+  let candidateMonth = 12;
+  
+  // Try each possible fiscal year end month and see which has the best pattern match
+  for (let fiscalYearEndMonth = 1; fiscalYearEndMonth <= 12; fiscalYearEndMonth++) {
+    const q4Month = fiscalYearEndMonth;
+    const q1Month = ((q4Month + 2) % 12) + 1; // 3 months after Q4
+    const q2Month = ((q4Month + 5) % 12) + 1; // 6 months after Q4  
+    const q3Month = ((q4Month + 8) % 12) + 1; // 9 months after Q4
+    
+    const q4Count = monthCounts.get(q4Month) || 0;
+    const q1Count = monthCounts.get(q1Month) || 0;
+    const q2Count = monthCounts.get(q2Month) || 0;
+    const q3Count = monthCounts.get(q3Month) || 0;
+    
+    // Score based on how well quarters cluster in expected months
+    // All quarters should have similar counts for a good fiscal year match
+    const minCount = Math.min(q1Count, q2Count, q3Count, q4Count);
+    const maxQuarterCount = Math.max(q1Count, q2Count, q3Count, q4Count);
+    const totalQuarterCount = q1Count + q2Count + q3Count + q4Count;
+    
+    // Prefer patterns where all quarters have significant counts and are balanced
+    const score = minCount > 0 ? totalQuarterCount * (minCount / maxQuarterCount) : 0;
+    
+    if (score > maxCount) {
+      maxCount = score;
+      candidateMonth = fiscalYearEndMonth;
+    }
+  }
+  
+  // Fallback: if no clear pattern, use the most common month
+  if (maxCount === 0) {
+    monthCounts.forEach((count, month) => {
+      if (count > maxCount) {
+        maxCount = count;
+        candidateMonth = month;
+      }
+    });
+  }
+  
+  return candidateMonth;
 }
 
 /**
@@ -373,17 +412,8 @@ export function calculateFiscalYearStartDate(
   const fiscalYearStartMonth = (fiscalYearEndMonth % 12) + 1;
   const q1StartDate = new Date(targetFiscalYear, fiscalYearStartMonth - 1, 1); // month is 0-indexed
   
-  // Find the actual Q1 data point closest to this date
-  const q1Points = quarterlyPoints.filter(p => 
-    p.fiscalYear === targetFiscalYear && p.fiscalQuarter === 1
-  );
-  
-  if (q1Points.length > 0) {
-    // Return the earliest Q1 date
-    return q1Points.sort((a, b) => a.date.getTime() - b.date.getTime())[0].fullDate;
-  }
-  
-  // If no Q1 found, return the calculated Q1 start date
+  // Always return the fiscal year start date (Q1 start), not the Q1 quarter-end date
+  // This ensures the chart starts at the beginning of the fiscal year (e.g., Oct 1 for AAPL)
   return q1StartDate.toISOString().split('T')[0];
 }
 

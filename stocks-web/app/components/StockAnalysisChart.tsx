@@ -8,7 +8,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   ComposedChart,
-  Area
+  Area,
+  ReferenceLine
 } from 'recharts';
 import { DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from '../types/api';
 import { 
@@ -16,6 +17,33 @@ import {
   inferFiscalYearEndMonth, 
   calculateFiscalYearStartDate
 } from '../lib/calculations';
+
+// Helper function to infer fiscal year end month from raw quarterly data
+function inferFiscalYearEndMonthFromRaw(quarterlyData: ApiQuarterlyDataPoint[]): number {
+  if (quarterlyData.length === 0) return 12; // Default to December
+  
+  // First, try to infer from the raw data if it has fiscal_year and fiscal_quarter info
+  // by looking at the pattern of dates and their fiscal quarters
+  // For AAPL (fiscal year ends in September), Q4 dates should be in September
+  const q4Dates = quarterlyData.filter(q => {
+    // Check if we can determine Q4 from the date pattern
+    // Q4 of a fiscal year ending in September would be dates in Jul-Aug-Sep
+    const month = new Date(q.date).getMonth() + 1; // getMonth() returns 0-11
+    return month >= 7 && month <= 9; // Jul, Aug, Sep
+  });
+  
+  if (q4Dates.length > 0) {
+    // Check if September (month 9) is the most common Q4 month
+    const sepCount = q4Dates.filter(q => new Date(q.date).getMonth() === 8).length; // month 8 = September
+    if (sepCount > q4Dates.length * 0.5) {
+      return 9; // September
+    }
+  }
+  
+  // Fallback to the original inference method
+  const quarterlyDates = quarterlyData.map(q => q.date);
+  return inferFiscalYearEndMonth(quarterlyDates);
+}
 import { 
   TransformedDataPoint, 
   enrichQuarterlyWithPrices,
@@ -31,6 +59,9 @@ interface StockAnalysisChartProps {
   currentPeriod?: string;
   normalPERatio: number | null;
   fairValueRatio: number;
+  growthRate: number | null;
+  quarterlyGrowthRate: number | null;
+  forecastYears: number;
 }
 
 interface VisibleSeries {
@@ -45,7 +76,10 @@ export default function StockAnalysisChart({
   quarterlyData, 
   currentPeriod = '8y', 
   normalPERatio,
-  fairValueRatio
+  fairValueRatio,
+  growthRate,
+  quarterlyGrowthRate,
+  forecastYears
 }: StockAnalysisChartProps) {
   // State to track visibility of data series
   const [visibleSeries, setVisibleSeries] = useState<VisibleSeries>({
@@ -55,6 +89,11 @@ export default function StockAnalysisChart({
     dividendsPOR: true
   });
 
+  // Infer fiscal year end month from raw quarterly data (needed for forecast generation)
+  const fiscalYearEndMonth = useMemo(() => {
+    return inferFiscalYearEndMonthFromRaw(quarterlyData);
+  }, [quarterlyData]);
+
   // Transform raw API data into chart data using the new streamlined sequence
   const stockData: TransformedDataPoint[] = useMemo(() => {
     // Step 1: Enrich quarterly data with prices
@@ -62,8 +101,16 @@ export default function StockAnalysisChart({
     // Step 2: Calculate derived metrics on enriched quarterly data
     const calculatedQuarterly = calculateQuarterlyMetrics(enrichedQuarterly, normalPERatio, fairValueRatio);
     // Step 3: Combine enriched quarterly data with daily price data for charting
-    return combineDataForCharting(calculatedQuarterly, dailyData, normalPERatio);
-  }, [dailyData, quarterlyData, normalPERatio, fairValueRatio]);
+    // Step 4: Generate future forecasts will be handled inside combineDataForCharting
+    return combineDataForCharting(
+      calculatedQuarterly, 
+      dailyData, 
+      normalPERatio, 
+      quarterlyGrowthRate, 
+      forecastYears,
+      fiscalYearEndMonth
+    );
+  }, [dailyData, quarterlyData, normalPERatio, fairValueRatio, quarterlyGrowthRate, forecastYears, fiscalYearEndMonth]);
 
   // Extract quarterly date strings for fiscal year calculations
   const quarterlyDateStrings = useMemo(() => {
@@ -72,11 +119,6 @@ export default function StockAnalysisChart({
       .map(item => item.fullDate);
   }, [stockData]);
 
-  // Infer fiscal year end month from quarterly dates
-  const fiscalYearEndMonth = useMemo(() => {
-    return inferFiscalYearEndMonth(quarterlyDateStrings);
-  }, [quarterlyDateStrings]);
-
 
   // Calculate the start date as Q1 of N fiscal years back
   const fiscalYearStartDate = useMemo(() => {
@@ -84,30 +126,97 @@ export default function StockAnalysisChart({
     return calculateFiscalYearStartDate(quarterlyDateStrings, currentPeriod, fiscalYearEndMonth);
   }, [quarterlyDateStrings, currentPeriod, fiscalYearEndMonth]);
 
-  // Filter stock data to start from the fiscal year Q1 date and add fiscal info to quarterly data points
-  const filteredStockData = useMemo(() => {
-    if (!fiscalYearStartDate) {
-      // Add fiscal info to quarterly data points even if not filtering
-      return stockData.map(item => {
-        if (item.hasQuarterlyData && (item.fiscalYear === undefined || item.fiscalQuarter === undefined)) {
-          const date = new Date(item.fullDate);
-          const fiscalInfo = getFiscalYearAndQuarter(date, fiscalYearEndMonth);
-          return {
-            ...item,
-            fiscalYear: fiscalInfo.fiscalYear,
-            fiscalQuarter: fiscalInfo.fiscalQuarter
-          };
-        }
-        return item;
-      });
-    }
+  // Calculate target fiscal year based on period start date
+  // The fiscalYearStartDate is the Q1 quarter-end date of the target fiscal year
+  const targetFiscalYear = useMemo(() => {
+    if (!fiscalYearStartDate) return null;
     
+    // Find the fiscal year of the start date (which is Q1 quarter-end date)
     const startDate = new Date(fiscalYearStartDate);
-    return stockData
-      .filter(item => {
-        const itemDate = new Date(item.fullDate);
-        return itemDate >= startDate;
-      })
+    const fiscalInfo = getFiscalYearAndQuarter(startDate, fiscalYearEndMonth);
+    return fiscalInfo.fiscalYear;
+  }, [fiscalYearStartDate, fiscalYearEndMonth]);
+
+  // Filter stock data to start from the fiscal year Q1 date and add fiscal info to quarterly data points
+  // IMPORTANT: Always include ALL daily price data (don't filter daily data by start date - only filter quarterly)
+  const filteredStockData = useMemo(() => {
+    // Strategy: Include ALL points with stockPrice (actual price data), then filter only quarterly metrics by period
+    // This ensures daily price data extends to the latest available date
+    
+    // Filter quarterly data based on target fiscal year (for period selection)
+    // This only affects which quarterly metrics to show, NOT which daily prices to show
+    // Filter by fiscal year rather than date to ensure we include all quarters of that fiscal year starting from Q1
+    // Since quarterly data uses quarter-end dates, we need to include all quarters (Q1-Q4) of the target fiscal year
+    // Also include Q4 of the previous fiscal year to have data at the fiscal year boundary
+    let filteredQuarterly = stockData.filter(item => {
+      if (!item.hasQuarterlyData) return false;
+      if (!targetFiscalYear) return true; // Include all if no target year
+      
+      // Get fiscal year and quarter of this item
+      const itemDate = new Date(item.fullDate);
+      const itemFiscalInfo = getFiscalYearAndQuarter(itemDate, fiscalYearEndMonth);
+      
+      // Include if fiscal year >= target fiscal year
+      if (itemFiscalInfo.fiscalYear >= targetFiscalYear) {
+        return true;
+      }
+      
+      // Also include Q4 of the fiscal year immediately before the target
+      // This ensures we have quarterly data at the fiscal year boundary (Q4 ends at fiscal year end)
+      if (itemFiscalInfo.fiscalYear === targetFiscalYear - 1 && itemFiscalInfo.fiscalQuarter === 4) {
+        return true;
+      }
+      
+      // Exclude all other previous fiscal years
+      return false;
+    });
+    
+    // Get ALL points with actual stock prices (this includes all daily price data)
+    // These should NOT be filtered by period - we want all available price data
+    const priceDataPoints = stockData.filter(item => 
+      item.stockPrice !== undefined && item.stockPrice !== null && !item.estimated
+    );
+    
+    // Combine: Use Map with price data as base, then overlay quarterly metrics
+    const combinedDataMap = new Map<string, TransformedDataPoint>();
+    
+    // First, add ALL price data points (this ensures all daily prices are included)
+    priceDataPoints.forEach(item => {
+      combinedDataMap.set(item.fullDate, item);
+    });
+    
+    // Then, overlay quarterly metrics on matching dates (this adds EPS, fair value, etc.)
+    filteredQuarterly.forEach(item => {
+      const existing = combinedDataMap.get(item.fullDate);
+      if (existing) {
+        // Merge quarterly metrics into existing price point
+        combinedDataMap.set(item.fullDate, {
+          ...existing,
+          // Add quarterly metrics
+          fairValue: item.fairValue,
+          normalPEValue: item.normalPEValue,
+          earnings: item.earnings,
+          eps_adjusted: item.eps_adjusted,
+          normalPE: item.normalPE,
+          dividendsPOR: item.dividendsPOR,
+          hasQuarterlyData: true,
+          peRatio: item.peRatio,
+          revenue: item.revenue,
+          dividend: item.dividend,
+          dividendScaled: item.dividendScaled,
+          calculatedNormalPE: item.calculatedNormalPE,
+          // Preserve stock price from existing (daily price takes precedence)
+          stockPrice: existing.stockPrice ?? item.stockPrice,
+        });
+      } else {
+        // Standalone quarterly point (no price data) - include it (not just forecasts)
+        // This ensures Q4 from previous fiscal year is included even if there's no price data on that exact date
+        combinedDataMap.set(item.fullDate, item);
+      }
+      });
+    
+    // Convert back to array and add fiscal info
+    return Array.from(combinedDataMap.values())
       .map(item => {
         // Add fiscal info to quarterly data points if not already present
         if (item.hasQuarterlyData && (item.fiscalYear === undefined || item.fiscalQuarter === undefined)) {
@@ -120,10 +229,9 @@ export default function StockAnalysisChart({
           };
         }
         return item;
-      });
-  }, [stockData, fiscalYearStartDate, fiscalYearEndMonth]);
-
-
+      })
+      .sort((a, b) => new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime());
+  }, [stockData, targetFiscalYear, fiscalYearEndMonth]);
 
   // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
   // Now aligned with fiscal year boundaries
@@ -146,8 +254,10 @@ export default function StockAnalysisChart({
     if (quarterlyDates.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
     
     // Calculate time range in fiscal years
+    // Use targetFiscalYear as the start if available, otherwise use min fiscal year
+    // This excludes the previous year's Q4 from the range calculation
     const fiscalYears = quarterlyDates.map(q => q.fiscalYear);
-    const minFiscalYear = Math.min(...fiscalYears);
+    const minFiscalYear = targetFiscalYear || Math.min(...fiscalYears);
     const maxFiscalYear = Math.max(...fiscalYears);
     const fiscalYearsDiff = maxFiscalYear - minFiscalYear + 1;
     
@@ -182,21 +292,61 @@ export default function StockAnalysisChart({
       .sort();
     
     return { xAxisTicks: q4Dates, isQuarterlyMode: false };
-  }, [filteredStockData, fiscalYearEndMonth]);
+  }, [filteredStockData, fiscalYearEndMonth, targetFiscalYear]);
+
+  // Convert data to use timestamps for x-axis (needed for proper time scale)
+  const chartDataWithTimestamps = useMemo(() => {
+    return filteredStockData.map(point => ({
+      ...point,
+      timestamp: new Date(point.fullDate).getTime()
+    }));
+  }, [filteredStockData]);
+  
+  // Calculate chart domain - start from fiscal year start date if it's earlier than first data point
+  const chartDomain = useMemo(() => {
+    if (chartDataWithTimestamps.length === 0) return ['dataMin', 'dataMax'];
+    
+    const dataMin = Math.min(...chartDataWithTimestamps.map(d => d.timestamp));
+    const dataMax = Math.max(...chartDataWithTimestamps.map(d => d.timestamp));
+    
+    // If we have a fiscal year start date, use it as the minimum if it's before the first data point
+    let domainMin = dataMin;
+    if (fiscalYearStartDate) {
+      const fiscalYearStartTimestamp = new Date(fiscalYearStartDate).getTime();
+      if (fiscalYearStartTimestamp < dataMin) {
+        domainMin = fiscalYearStartTimestamp;
+      }
+    }
+    
+    return [domainMin, dataMax];
+  }, [chartDataWithTimestamps, fiscalYearStartDate]);
+  
+  // Convert xAxisTicks to timestamps for proper rendering
+  const xAxisTickTimestamps = useMemo(() => {
+    return xAxisTicks.map(date => new Date(date).getTime());
+  }, [xAxisTicks]);
+  
+  // Get estimated data points for overlay rendering
+  const estimatedPoints = useMemo(() => {
+    return chartDataWithTimestamps.filter(p => p.estimated && p.hasQuarterlyData);
+  }, [chartDataWithTimestamps]);
+  
+  // Find the transition timestamp for reference line (last actual point before first estimated)
+  const forecastStartTimestamp = useMemo(() => {
+    if (estimatedPoints.length === 0) return null;
+    const sortedData = [...chartDataWithTimestamps].sort((a, b) => 
+      a.timestamp - b.timestamp
+    );
+    const firstEstimated = sortedData.find(p => p.estimated && p.hasQuarterlyData);
+    if (!firstEstimated) return null;
+    const firstEstimatedIdx = sortedData.indexOf(firstEstimated);
+    return firstEstimatedIdx > 0 ? sortedData[firstEstimatedIdx - 1].timestamp : null;
+  }, [chartDataWithTimestamps, estimatedPoints]);
 
   // Filter table data to match chart ticks and aggregate when in yearly mode
   const tableData = useMemo(() => {
     return calculateTableData(filteredStockData, xAxisTicks, isQuarterlyMode, fiscalYearEndMonth);
   }, [filteredStockData, xAxisTicks, isQuarterlyMode, fiscalYearEndMonth]);
-
-  // Debug logging for chart data
-  console.log('Chart data debug:', {
-    totalPoints: filteredStockData.length,
-    firstDate: filteredStockData.length > 0 ? filteredStockData[0].fullDate : 'none',
-    lastDate: filteredStockData.length > 0 ? filteredStockData[filteredStockData.length - 1].fullDate : 'none',
-    sampleDates: filteredStockData.slice(0, 5).map(p => p.fullDate),
-    xAxisTicksCount: xAxisTicks.length
-  });
 
   // Handle legend click to toggle series visibility
   const handleLegendClick = (dataKey: keyof VisibleSeries) => {
@@ -237,9 +387,38 @@ export default function StockAnalysisChart({
   // Custom tooltip for the main chart
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      // Format the label (timestamp) as a date string
+      let formattedLabel = label;
+      if (typeof label === 'number') {
+        // It's a timestamp, convert to date string
+        const date = new Date(label);
+        formattedLabel = date.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      } else if (typeof label === 'string' && !isNaN(Date.parse(label))) {
+        // It's a date string, format it nicely
+        const date = new Date(label);
+        formattedLabel = date.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      }
+      
+      // Get fiscal quarter info from the payload data point
+      let fiscalQuarterLabel = '';
+      if (payload && payload.length > 0 && payload[0].payload) {
+        const dataPoint = payload[0].payload;
+        if (dataPoint.fiscalYear !== undefined && dataPoint.fiscalQuarter !== undefined) {
+          fiscalQuarterLabel = ` ${dataPoint.fiscalYear}Q${dataPoint.fiscalQuarter}`;
+        }
+      }
+      
       return (
         <div className="bg-white p-4 border border-gray-200 rounded-lg shadow-lg">
-          <p className="font-semibold text-gray-900 mb-2">{label}</p>
+          <p className="font-semibold text-gray-900 mb-2">{formattedLabel}{fiscalQuarterLabel}</p>
           {payload.map((entry: any, index: number) => {
             // For dividend, show the actual value (not scaled) in the tooltip
             // The payload contains the full data point, so we can access the original dividend
@@ -332,16 +511,25 @@ export default function StockAnalysisChart({
       {filteredStockData.length > 0 && (
         <>
           <ResponsiveContainer width="100%" height={400}>
-            <ComposedChart data={filteredStockData} margin={{ bottom: 20 }}>
+            <ComposedChart data={chartDataWithTimestamps} margin={{ bottom: 20 }}>
               <XAxis 
-                dataKey="fullDate" 
-                type="category"
-                scale="point"
+                dataKey="timestamp" 
+                type="number"
+                scale="time"
+                domain={chartDomain}
                 tick={{ fontSize: 12 }}
-                ticks={xAxisTicks}
+                ticks={xAxisTickTimestamps.length > 0 ? xAxisTickTimestamps : undefined}
                 tickFormatter={(value) => {
+                  // Convert timestamp back to date string
+                  const dateStr = new Date(value).toISOString().split('T')[0];
+                  
+                  // Only show labels for quarterly data points (check if in xAxisTicks)
+                  if (xAxisTicks.length > 0 && !xAxisTicks.includes(dateStr)) {
+                    return ''; // Return empty string to hide non-quarterly ticks
+                  }
+                  
                   // Find the data point to access stored fiscal info
-                  const dataPoint = filteredStockData.find(d => d.fullDate === value);
+                  const dataPoint = chartDataWithTimestamps.find(d => d.timestamp === value);
                   if (dataPoint && dataPoint.fiscalYear !== undefined) {
                     if (isQuarterlyMode && dataPoint.fiscalQuarter !== undefined) {
                       return `${dataPoint.fiscalYear}Q${dataPoint.fiscalQuarter}`;
@@ -349,12 +537,30 @@ export default function StockAnalysisChart({
                       return dataPoint.fiscalYear.toString();
                     }
                   }
-                  // Fallback: should not happen since we set fiscal info on all quarterly data points
-                  return value;
+                  // Fallback: format date
+                  const date = new Date(value);
+                  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
                 }}
               />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip 
+                content={<CustomTooltip />}
+                labelFormatter={(value) => {
+                  const date = new Date(value);
+                  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                }}
+              />
+              
+              {/* Reference line to mark start of forecasts */}
+              {forecastStartTimestamp && (
+                <ReferenceLine 
+                  x={forecastStartTimestamp} 
+                  stroke="#999" 
+                  strokeDasharray="3 3" 
+                  strokeWidth={1}
+                  opacity={0.5}
+                />
+              )}
               
               {/* Fair Value Area */}
               {visibleSeries.fairValue && (

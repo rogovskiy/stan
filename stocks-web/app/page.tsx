@@ -15,6 +15,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('8y');
+  const forecastYears = 2; // Number of fiscal years to forecast (8 quarters)
 
   // Fetch stock data
   const fetchStockData = async (ticker: string, selectedPeriod: string = period) => {
@@ -27,7 +28,7 @@ export default function Home() {
       // Fetch both daily and quarterly data in parallel
       const [dailyResponse, quarterlyResponse] = await Promise.all([
         fetch(`/api/daily-prices?ticker=${ticker}&period=${selectedPeriod}&refresh=false`),
-        fetch(`/api/quarterly-timeseries?ticker=${ticker}&period=${selectedPeriod}&maxAge=24`)
+        fetch(`/api/quarterly-timeseries?ticker=${ticker}`)
       ]);
 
       if (!dailyResponse.ok) {
@@ -145,6 +146,13 @@ export default function Home() {
   // Calculate metrics using top-level functions (memoized to avoid recalculating on every render)
   const normalPERatio = useMemo(() => calculateNormalPERatio(quarterlyCalcData), [quarterlyCalcData]);
   const growthRate = useMemo(() => calculateGrowthRate(quarterlyCalcData), [quarterlyCalcData]);
+  
+  // Calculate quarterly growth rate from annual growth rate
+  // Formula: quarterlyGrowthRate = (1 + annualGrowthRate/100)^(1/4) - 1
+  const quarterlyGrowthRate = useMemo(() => {
+    if (growthRate === null || growthRate === undefined) return null;
+    return Math.pow(1 + growthRate / 100, 1 / 4) - 1;
+  }, [growthRate]);
 
   // Calculate maximum available years from quarterly data
   const maxAvailableYears = useMemo(() => {
@@ -282,6 +290,9 @@ export default function Home() {
                 fairValueRatio={fairValueRatio}
                 currentPeriod={period}
                 normalPERatio={normalPERatio}
+                growthRate={growthRate}
+                quarterlyGrowthRate={quarterlyGrowthRate}
+                forecastYears={forecastYears}
               />
             </div>
 

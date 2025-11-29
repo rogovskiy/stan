@@ -178,12 +178,192 @@ export function calculateQuarterlyMetrics(
 }
 
 /**
+ * Generate future quarterly forecast data points based on continuous EPS growth
+ * 
+ * @param latestQuarterly - The most recent quarterly data point (actual data)
+ * @param quarterlyGrowthRate - Quarterly growth rate (as decimal, e.g., 0.05 for 5%)
+ * @param forecastYears - Number of fiscal years to forecast
+ * @param fiscalYearEndMonth - Fiscal year end month (1-12)
+ * @param normalPERatio - Normal P/E ratio for calculations
+ * @param fairValueRatio - Fair value ratio (typically 18)
+ * @returns Array of forecasted quarterly data points
+ */
+function generateFutureQuarterlyForecasts(
+  latestQuarterly: CalculatedQuarterlyDataPoint,
+  quarterlyGrowthRate: number | null,
+  forecastYears: number,
+  fiscalYearEndMonth: number,
+  normalPERatio: number | null,
+  fairValueRatio: number
+): CalculatedQuarterlyDataPoint[] {
+  if (!quarterlyGrowthRate || quarterlyGrowthRate === null) {
+    return []; // Cannot generate forecasts without growth rate
+  }
+
+  const forecasts: CalculatedQuarterlyDataPoint[] = [];
+  const numQuarters = forecastYears * 4;
+  
+  // Get the latest quarter's date and fiscal info
+  const latestDate = new Date(latestQuarterly.date);
+  const latestFiscalInfo = getFiscalYearAndQuarter(latestDate, fiscalYearEndMonth);
+  
+  // Start with the latest quarter's EPS values
+  let currentEps = latestQuarterly.eps_adjusted ?? latestQuarterly.eps ?? 0;
+  let currentEarnings = latestQuarterly.eps ?? 0;
+  
+  if (currentEps <= 0) {
+    return []; // Cannot generate forecasts without valid EPS
+  }
+  
+  // Start with the latest quarter's dividend value
+  // If no dividend is available, estimate it from EPS and payout ratio
+  let currentDividend = latestQuarterly.dividend ?? 0;
+  if (currentDividend <= 0 && latestQuarterly.dividendsPOR) {
+    // Calculate dividend from EPS and payout ratio (dividendsPOR is annual percentage)
+    const annualPayoutRatio = (latestQuarterly.dividendsPOR ?? 0) / 100;
+    const annualDividend = currentEps * 4 * annualPayoutRatio; // Annual dividend
+    currentDividend = annualDividend / 4; // Quarterly dividend
+  }
+  
+  // Calculate fiscal year start month (month after fiscal year end)
+  const fiscalYearStartMonth = (fiscalYearEndMonth % 12) + 1;
+  
+  // Start forecasting from the next quarter after the latest one
+  let currentFiscalYear = latestFiscalInfo.fiscalYear;
+  let currentFiscalQuarter = latestFiscalInfo.fiscalQuarter;
+  
+  // Calculate next quarter
+  let nextQuarter = currentFiscalQuarter + 1;
+  let nextFiscalYear = currentFiscalYear;
+  
+  if (nextQuarter > 4) {
+    nextQuarter = 1;
+    nextFiscalYear += 1;
+  }
+  
+  // Build up trailing quarters for each forecast (include actual latest + previous forecasts)
+  const allQuarterlyPoints: Array<{ date: string; eps_adjusted: number; earnings: number }> = [
+    {
+      date: latestQuarterly.date,
+      eps_adjusted: latestQuarterly.eps_adjusted ?? latestQuarterly.eps ?? 0,
+      earnings: latestQuarterly.eps ?? 0
+    }
+  ];
+  
+  // Generate forecast quarters
+  for (let i = 0; i < numQuarters; i++) {
+    // Calculate the quarter's end date
+    // Quarters end at: Q1=month 3, Q2=month 6, Q3=month 9, Q4=month 12 (of the fiscal year)
+    // Fiscal year number corresponds to the calendar year in which it ends
+    // For FY2025 ending Sep 2025: Q1 is in previous calendar year (2024), Q2-Q4 are in 2025
+    const monthsIntoFiscalYear = nextQuarter * 3; // Q1=3, Q2=6, Q3=9, Q4=12
+    let quarterEndMonth = fiscalYearStartMonth + monthsIntoFiscalYear - 1;
+    
+    // Determine calendar year: fiscal year number is the year it ends
+    // Q1 falls in the previous calendar year, Q2-Q4 in the fiscal year's calendar year
+    let quarterYear = nextFiscalYear; // Fiscal year number = year it ends
+    if (nextQuarter === 1) {
+      quarterYear = nextFiscalYear - 1; // Q1 is in the previous calendar year
+    }
+    
+    // Adjust month if it wraps around the calendar year
+    // When month > 12, subtract 12 but don't increment year (Q2-Q4 are in fiscal year's calendar year)
+    if (quarterEndMonth > 12) {
+      quarterEndMonth = quarterEndMonth - 12;
+      // Don't increment quarterYear - we're already in the correct calendar year for Q2-Q4
+      // For Q1, we already set it to the previous year above
+    } else if (quarterEndMonth < 1) {
+      quarterEndMonth = quarterEndMonth + 12;
+      quarterYear -= 1;
+    }
+    
+    // Use approximate quarter end date (last day of the quarter's last month)
+    const daysInMonth = new Date(quarterYear, quarterEndMonth, 0).getDate();
+    const quarterDate = new Date(quarterYear, quarterEndMonth - 1, daysInMonth); // month is 0-indexed
+    const quarterDateStr = quarterDate.toISOString().split('T')[0];
+    
+    // Apply quarterly growth rate to EPS
+    currentEps = currentEps * (1 + quarterlyGrowthRate);
+    currentEarnings = currentEarnings * (1 + quarterlyGrowthRate);
+    
+    // Apply same growth rate to dividends (assuming dividends grow with earnings)
+    currentDividend = currentDividend * (1 + quarterlyGrowthRate);
+    
+    // Add this forecast to the quarterly points for trailing calculation
+    allQuarterlyPoints.push({
+      date: quarterDateStr,
+      eps_adjusted: currentEps,
+      earnings: currentEarnings
+    });
+    
+    // Get trailing 4 quarters for this forecast point
+    const trailing4Quarters = allQuarterlyPoints
+      .filter(q => new Date(q.date) <= quarterDate)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 4);
+    
+    // Calculate annual EPS from trailing 4 quarters
+    let annualEps: number | null = null;
+    if (trailing4Quarters.length > 0) {
+      const quarterlyEpsValues = trailing4Quarters.map(q => q.eps_adjusted);
+      annualEps = calculateAnnualEps(quarterlyEpsValues);
+    }
+    
+    // Calculate derived metrics
+    const fairValue = calculateFairValue(annualEps, fairValueRatio);
+    const normalPEValue = annualEps !== null && normalPERatio !== null 
+      ? annualEps * normalPERatio 
+      : null;
+    
+    // Calculate dividendScaled for chart display (dividend × normalPE ratio)
+    // For forecasted quarters, use normalPERatio since we don't have actual price/PE
+    const dividendScaled = currentDividend > 0 && normalPERatio !== null
+      ? currentDividend * normalPERatio
+      : null;
+    
+    // Create forecast data point
+    const forecast: CalculatedQuarterlyDataPoint = {
+      date: quarterDateStr,
+      fyDate: quarterDateStr,
+      year: quarterYear,
+      quarter: `Q${nextQuarter}`,
+      eps: currentEarnings,
+      eps_adjusted: currentEps,
+      normalPE: normalPERatio ?? undefined,
+      fairValue: fairValue,
+      dividendsPOR: latestQuarterly.dividendsPOR ?? undefined,
+      estimated: true,
+      stockPrice: null, // No price for future quarters
+      normalPEValue: normalPEValue,
+      peRatio: null, // Cannot calculate without price
+      dividend: currentDividend > 0 ? currentDividend : 0,
+      dividendScaled: dividendScaled,
+      revenue: currentEps ? (currentEps * 4 * 16.0) : null
+    };
+    
+    forecasts.push(forecast);
+    
+    // Move to next quarter
+    nextQuarter += 1;
+    if (nextQuarter > 4) {
+      nextQuarter = 1;
+      nextFiscalYear += 1;
+    }
+  }
+  
+  return forecasts;
+}
+
+/**
  * Step 3: Combine enriched quarterly data with daily price data for charting
  */
 export function combineDataForCharting(
   enrichedQuarterly: CalculatedQuarterlyDataPoint[],
   dailyData: DailyDataPoint[],
-  normalPERatio: number | null
+  normalPERatio: number | null,
+  quarterlyGrowthRate: number | null = null,
+  forecastYears: number = 0,
+  fiscalYearEndMonth: number = 12
 ): TransformedDataPoint[] {
   // Create a map of enriched quarterly data by date
   const quarterlyMap = new Map<string, CalculatedQuarterlyDataPoint>();
@@ -274,6 +454,54 @@ export function combineDataForCharting(
     }
   });
   
+  // Generate and add forecast data points if growth rate and forecast years are provided
+  if (quarterlyGrowthRate !== null && forecastYears > 0 && enrichedQuarterly.length > 0) {
+    // Sort enriched quarterly to get the latest
+    const sortedQuarterly = [...enrichedQuarterly].sort((a, b) => 
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    const latestQuarterly = sortedQuarterly[0];
+    
+    // Generate forecasts
+    const forecasts = generateFutureQuarterlyForecasts(
+      latestQuarterly,
+      quarterlyGrowthRate,
+      forecastYears,
+      fiscalYearEndMonth,
+      normalPERatio,
+      18 // fairValueRatio - hardcoded to 18
+    );
+    
+    // Convert forecasts to TransformedDataPoint format and add to chart data
+    forecasts.forEach(f => {
+      const fiscalInfo = getFiscalYearAndQuarter(new Date(f.date), fiscalYearEndMonth);
+      chartData.push({
+        date: f.fyDate || f.date.slice(5, 7) + '/' + f.date.slice(2, 4),
+        fullDate: f.date,
+        stockPrice: undefined, // No price for future quarters
+        estimated: true,
+        year: f.year,
+        frequency: 'quarterly',
+        marketCap: null,
+        volume: 0,
+        fairValue: f.fairValue,
+        normalPEValue: f.normalPEValue,
+        earnings: f.eps || null,
+        eps_adjusted: f.eps_adjusted ?? null,
+        normalPE: f.normalPE || null,
+        dividendsPOR: f.dividendsPOR || null,
+        hasQuarterlyData: true,
+        peRatio: null,
+        revenue: f.revenue,
+        dividend: f.dividend,
+        dividendScaled: f.dividendScaled,
+        calculatedNormalPE: normalPERatio,
+        fiscalYear: fiscalInfo.fiscalYear,
+        fiscalQuarter: fiscalInfo.fiscalQuarter
+      });
+    });
+  }
+  
   // Sort by date
   return chartData.sort((a, b) => 
     new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime()
@@ -294,7 +522,14 @@ export function calculateTableData(
   // If quarterly mode, filter by exact tick dates and add fiscal info
   if (isQuarterlyMode) {
     const tickDatesSet = new Set(xAxisTicks);
-    return filteredStockData
+    
+    // Create a map for quick lookup by date, preserving tick order
+    const tickOrderMap = new Map<string, number>();
+    xAxisTicks.forEach((date, index) => {
+      tickOrderMap.set(date, index);
+    });
+    
+    const filtered = filteredStockData
       .filter(item => tickDatesSet.has(item.fullDate) && item.hasQuarterlyData)
       .map(item => {
         // Add fiscal year and quarter if not already present
@@ -309,6 +544,43 @@ export function calculateTableData(
         }
         return item;
       });
+    
+    // Sort by tick order first (to match xAxisTicks order), then by fiscal year/quarter as fallback
+    const sorted = filtered.sort((a, b) => {
+      const orderA = tickOrderMap.get(a.fullDate) ?? Infinity;
+      const orderB = tickOrderMap.get(b.fullDate) ?? Infinity;
+      
+      // If both have tick order, use that (preserves xAxisTicks order)
+      if (orderA !== Infinity && orderB !== Infinity) {
+        return orderA - orderB;
+      }
+      
+      // Fallback: sort by fiscal year and quarter
+      if (a.fiscalYear !== b.fiscalYear) {
+        return (a.fiscalYear || 0) - (b.fiscalYear || 0);
+      }
+      if (a.fiscalQuarter !== b.fiscalQuarter) {
+        return (a.fiscalQuarter || 0) - (b.fiscalQuarter || 0);
+      }
+      // Finally by date
+      return new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime();
+    });
+    
+    // Skip the first data point if it's Q4 from the previous fiscal year
+    // (we include it for the chart boundary but don't want it in the quarterly table)
+    if (sorted.length > 0) {
+      const firstItem = sorted[0];
+      // Check if first item is Q4 and from a fiscal year before the second item's fiscal year
+      if (sorted.length > 1 && 
+          firstItem.fiscalQuarter === 4 && 
+          firstItem.fiscalYear !== undefined &&
+          sorted[1].fiscalYear !== undefined &&
+          firstItem.fiscalYear < sorted[1].fiscalYear) {
+        return sorted.slice(1); // Skip the first item
+      }
+    }
+    
+    return sorted;
   }
   
   // If yearly mode, extract fiscal years from ticks and get ALL quarterly data for those fiscal years
@@ -336,6 +608,7 @@ export function calculateTableData(
     eps_adjusted: number[];
     dividend: number[];
     quarterCount: number; // Track number of quarters for this fiscal year
+    hasEstimatedQuarters: boolean; // Track if any quarter is estimated
   }>();
   
   quarterlyDataPoints.forEach(item => {
@@ -351,7 +624,8 @@ export function calculateTableData(
         earnings: [],
         eps_adjusted: [],
         dividend: [],
-        quarterCount: 0
+        quarterCount: 0,
+        hasEstimatedQuarters: false
       });
     }
     
@@ -384,6 +658,11 @@ export function calculateTableData(
       yearData.dividend.push(item.dividend);
     }
     
+    // Check if this quarter is estimated
+    if (item.estimated) {
+      yearData.hasEstimatedQuarters = true;
+    }
+    
     // Update fullDate to the latest date in the year
     if (new Date(item.fullDate) > new Date(yearData.fullDate)) {
       yearData.fullDate = item.fullDate;
@@ -397,6 +676,9 @@ export function calculateTableData(
   return sortedYearlyData.map((yearData, index) => {
     const isLastYear = index === sortedYearlyData.length - 1;
     const hasIncompleteYear = isLastYear && yearData.quarterCount < 4;
+    
+    // Mark as estimated if incomplete year OR if any quarters are estimated (forecasted)
+    const isEstimated = hasIncompleteYear || yearData.hasEstimatedQuarters;
     
     // Calculate annual EPS
     let annualEps: number | null = null;
@@ -414,7 +696,7 @@ export function calculateTableData(
       fullDate: yearData.fullDate,
       date: yearData.fiscalYear.toString(),
       stockPrice: yearData.stockPrice ?? undefined, // Convert null to undefined
-      estimated: hasIncompleteYear, // Mark as estimated if incomplete year
+      estimated: isEstimated, // Mark as estimated if incomplete year or has estimated quarters
       year: yearData.fiscalYear,
       frequency: 'yearly',
       marketCap: null,

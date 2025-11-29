@@ -59,6 +59,17 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
   // Use stockData directly - no client-side filtering since API handles period filtering
   const filteredStockData = stockData;
 
+  // Create chart data with scaled dividends for proportional display
+  // Dividends are scaled by PE ratio to match the scale of fairValue (which is EPS * PE)
+  const chartDataWithScaledDividends = useMemo(() => {
+    return filteredStockData.map(item => ({
+      ...item,
+      dividendScaled: item.dividend !== null && item.dividend !== undefined && item.peRatio !== null && item.peRatio !== undefined
+        ? item.dividend * item.peRatio
+        : null
+    }));
+  }, [filteredStockData]);
+
   // Calculate ticks based on time range: quarterly for <=3 years, yearly (Q4 only) for >3 years
   const { xAxisTicks, isQuarterlyMode } = useMemo(() => {
     if (filteredStockData.length === 0) return { xAxisTicks: [], isQuarterlyMode: true };
@@ -281,11 +292,25 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
       return (
         <div className="bg-white p-4 border border-gray-200 rounded-lg shadow-lg">
           <p className="font-semibold text-gray-900 mb-2">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <p key={index} style={{ color: entry.color }} className="text-sm">
-              {entry.name}: ${typeof entry.value === 'number' ? entry.value.toFixed(2) : entry.value}
-            </p>
-          ))}
+          {payload.map((entry: any, index: number) => {
+            // For dividend, show the actual value (not scaled) in the tooltip
+            // The payload contains the full data point, so we can access the original dividend
+            if (entry.dataKey === 'dividendScaled' && entry.payload) {
+              const actualDividend = entry.payload.dividend;
+              return (
+                <p key={index} style={{ color: entry.color }} className="text-sm">
+                  {entry.name}: ${actualDividend !== null && actualDividend !== undefined 
+                    ? actualDividend.toFixed(2) 
+                    : '-'}
+                </p>
+              );
+            }
+            return (
+              <p key={index} style={{ color: entry.color }} className="text-sm">
+                {entry.name}: ${typeof entry.value === 'number' ? entry.value.toFixed(2) : entry.value}
+              </p>
+            );
+          })}
         </div>
       );
     }
@@ -350,7 +375,7 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
       {filteredStockData.length > 0 && (
         <>
           <ResponsiveContainer width="100%" height={400}>
-            <ComposedChart data={filteredStockData} margin={{ bottom: 20 }}>
+            <ComposedChart data={chartDataWithScaledDividends} margin={{ bottom: 20 }}>
               <XAxis 
                 dataKey="fullDate" 
                 type="category"
@@ -388,11 +413,11 @@ export default function StockAnalysisChart({ stockData, onPeriodChange, currentP
                 />
               )}
               
-              {/* Dividends Line */}
+              {/* Dividends Line - scaled by PE ratio for proportional display */}
               {visibleSeries.dividendsPOR && (
                 <Line
                   type="linear"
-                  dataKey="dividend"
+                  dataKey="dividendScaled"
                   stroke="#fbbf24"
                   fill="#fbbf24"
                   fillOpacity={0.1}

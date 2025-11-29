@@ -1,33 +1,42 @@
 'use client';
 
+import { useMemo } from 'react';
+
 type IntervalOption = {
   value: string;
   label: string;
 };
 
-const INTERVAL_OPTIONS: IntervalOption[] = [
-  { value: 'max', label: 'Max' },
-  { value: '10y', label: '10Y' },
-  { value: '9y', label: '9Y' },
-  { value: '8y', label: '8Y' },
-  { value: '7y', label: '7Y' },
-  { value: '6y', label: '6Y' },
-  { value: '5y', label: '5Y' },
-  { value: '4y', label: '4Y' },
-  { value: '3y', label: '3Y' },
-  { value: '2y', label: '2Y' },
-  { value: '1y', label: '1Y' }
-];
-
 interface PeriodSelectorProps {
   currentPeriod: string;
   onPeriodChange: (period: string) => void;
+  maxYears?: number; // Maximum years of data available
 }
 
-export default function PeriodSelector({ currentPeriod, onPeriodChange }: PeriodSelectorProps) {
+export default function PeriodSelector({ currentPeriod, onPeriodChange, maxYears }: PeriodSelectorProps) {
+  // Dynamically generate interval options based on available data
+  const intervalOptions = useMemo((): IntervalOption[] => {
+    const options: IntervalOption[] = [{ value: 'max', label: 'Max' }];
+    
+    // If maxYears is provided, generate options up to that value
+    // Otherwise, default to 10 years (fallback)
+    const max = maxYears || 10;
+    
+    // Generate options from max down to 1 year
+    // Cap at 20 years for UI practicality (can be adjusted if needed)
+    for (let years = Math.min(max, 20); years >= 1; years--) {
+      options.push({
+        value: `${years}y`,
+        label: `${years}Y`
+      });
+    }
+    
+    return options;
+  }, [maxYears]);
+
   return (
     <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-      {INTERVAL_OPTIONS.map((option) => (
+      {intervalOptions.map((option) => (
         <button
           key={option.value}
           onClick={() => onPeriodChange(option.value)}

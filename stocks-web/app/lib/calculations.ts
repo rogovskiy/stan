@@ -261,6 +261,47 @@ export function inferFiscalYearEndMonth(quarterlyDates: string[]): number {
 }
 
 /**
+ * Calculate maximum available years from quarterly data
+ * Finds the earliest date in the quarterly data and calculates years from that date to today
+ * 
+ * @param quarterlyData - Array of quarterly data points with date field
+ * @param defaultYears - Default fallback value if no data available (default: 10)
+ * @returns Maximum available years or default fallback
+ */
+export function calculateMaxAvailableYears(
+  quarterlyData: Array<{ date: string }>,
+  defaultYears: number = 10
+): number {
+  if (quarterlyData.length === 0) {
+    return defaultYears;
+  }
+
+  // Find the earliest date in the quarterly data
+  const dates = quarterlyData
+    .map(item => {
+      const dateStr = item.date;
+      return dateStr ? new Date(dateStr) : null;
+    })
+    .filter((date: Date | null) => date !== null && !isNaN(date.getTime())) as Date[];
+
+  if (dates.length === 0) {
+    return defaultYears;
+  }
+
+  const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())));
+  const endDate = new Date();
+
+  // Calculate years difference
+  const yearsDiff = endDate.getFullYear() - earliestDate.getFullYear();
+  const monthsDiff = endDate.getMonth() - earliestDate.getMonth();
+
+  // Add 1 to include the first year, and round up to ensure we include all data
+  const yearsBack = yearsDiff + (monthsDiff < 0 ? 0 : 1);
+
+  return Math.max(1, yearsBack); // At least 1 year, no upper cap
+}
+
+/**
  * Calculate fiscal year start date (Q1) based on period
  * 
  * @param quarterlyDates - Array of quarterly date strings

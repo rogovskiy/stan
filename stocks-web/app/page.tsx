@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint, calculateAnnualEps, getTrailing4QuartersEps, calculateFairValue, QuarterlyDataPoint as CalcQuarterlyDataPoint } from './lib/calculations';
+import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint, calculateAnnualEps, getTrailing4QuartersEps, calculateFairValue, QuarterlyDataPoint as CalcQuarterlyDataPoint, calculateMaxAvailableYears } from './lib/calculations';
 import { DailyPriceResponse, QuarterlyDataResponse, DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from './types/api';
 import StockAnalysisChart from './components/StockAnalysisChart';
 import PeriodSelector from './components/PeriodSelector';
@@ -146,6 +146,11 @@ export default function Home() {
   const normalPERatio = useMemo(() => calculateNormalPERatio(quarterlyCalcData), [quarterlyCalcData]);
   const growthRate = useMemo(() => calculateGrowthRate(quarterlyCalcData), [quarterlyCalcData]);
 
+  // Calculate maximum available years from quarterly data
+  const maxAvailableYears = useMemo(() => {
+    return calculateMaxAvailableYears(quarterlyData);
+  }, [quarterlyData]);
+
   const fairValueRatio = 18; // Hardcoded to 18 (as used in fair value calculation)
 
   // Current snapshot for header/sidebar, derived from latest daily + quarterly data
@@ -266,6 +271,7 @@ export default function Home() {
                 <PeriodSelector 
                   currentPeriod={period}
                   onPeriodChange={handlePeriodChange}
+                  maxYears={maxAvailableYears}
                 />
               </div>
               

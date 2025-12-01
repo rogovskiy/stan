@@ -21,7 +21,7 @@ anything else?
 
 ## Debt 
 - make sure UI doesn't write into firebase
-
+- rename FirebaseCache
 
 ## Deployment 
 - deploy analyst refesh 

@@ -34,6 +34,7 @@ export default function StockSidebar({
 }: StockSidebarProps) {
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [exchange, setExchange] = useState<string | null>(null);
+  const [companySummary, setCompanySummary] = useState<string | null>(null);
 
   // Fetch company name when ticker changes
   useEffect(() => {
@@ -63,6 +64,32 @@ export default function StockSidebar({
     };
 
     fetchCompanyInfo();
+  }, [selectedTicker]);
+
+  // Fetch company summary when ticker changes
+  useEffect(() => {
+    const fetchCompanySummary = async () => {
+      if (!selectedTicker) {
+        setCompanySummary(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/company-summary?ticker=${selectedTicker}`);
+        const result = await response.json();
+        
+        if (result.success && result.data && result.data.summary) {
+          setCompanySummary(result.data.summary);
+        } else {
+          setCompanySummary(null);
+        }
+      } catch (err) {
+        console.error('Error fetching company summary:', err);
+        setCompanySummary(null);
+      }
+    };
+
+    fetchCompanySummary();
   }, [selectedTicker]);
 
   return (
@@ -98,6 +125,12 @@ export default function StockSidebar({
                     </span>
                   )}
                 </div>
+              )}
+              {/* Company Summary Paragraph */}
+              {companySummary && (
+                <p className="text-gray-600 text-sm mt-3 leading-relaxed">
+                  {companySummary}
+                </p>
               )}
             </div>
             

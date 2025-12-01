@@ -162,6 +162,25 @@ export async function getAnalystData(ticker: string): Promise<any | null> {
   }
 }
 
+/**
+ * Get company summary for a ticker
+ */
+export async function getCompanySummary(ticker: string): Promise<any | null> {
+  try {
+    const summaryRef = doc(db, 'tickers', ticker.toUpperCase(), 'company_summary', 'summary');
+    const summarySnap = await getDoc(summaryRef);
+    
+    if (summarySnap.exists()) {
+      return summarySnap.data();
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error getting company summary for ${ticker}:`, error);
+    return null;
+  }
+}
+
 // Create a service object for easier imports
 export const firebaseService = {
   getTickers,
@@ -169,5 +188,6 @@ export const firebaseService = {
   getTickerMetadata,
   hasTickerData,
   getQuarterlyTimeseries,
-  getAnalystData
+  getAnalystData,
+  getCompanySummary
 };

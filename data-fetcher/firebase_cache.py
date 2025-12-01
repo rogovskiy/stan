@@ -762,3 +762,228 @@ class FirebaseCache:
                 'growth_estimates': None,
                 'earnings_trend': None
             }
+    
+    def store_ir_document(self, ticker: str, document_id: str, document_data: Dict[str, Any], 
+                         file_content: bytes, file_extension: str = 'pdf', verbose: bool = True) -> None:
+        """Store IR document in Firebase Storage and metadata in Firestore
+        
+        Args:
+            ticker: Stock ticker symbol
+            document_id: Unique document identifier
+            document_data: Document metadata dictionary
+            file_content: Binary content of the document
+            file_extension: File extension (default: 'pdf')
+            verbose: Enable verbose output
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # 1. Upload document to Firebase Storage
+            storage_path = f'ir_documents/{upper_ticker}/{document_id}.{file_extension}'
+            
+            if verbose:
+                print(f'Uploading IR document {document_id} for {ticker} to Storage...')
+            
+            blob = self.bucket.blob(storage_path)
+            blob.upload_from_string(file_content, content_type=f'application/{file_extension}')
+            
+            # Make blob publicly readable
+            blob.make_public()
+            download_url = blob.public_url
+            
+            # 2. Store metadata in Firestore
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('ir_documents')
+                      .document(document_id))
+            
+            metadata = {
+                **document_data,
+                'document_storage_ref': storage_path,
+                'document_download_url': download_url,
+                'scanned_at': datetime.now().isoformat()
+            }
+            
+            doc_ref.set(metadata)
+            
+            if verbose:
+                print(f'✅ Stored IR document {document_id} for {ticker}')
+                
+        except Exception as error:
+            print(f'Error storing IR document {document_id} for {ticker}: {error}')
+            raise error
+    
+    def get_ir_documents_for_quarter(self, ticker: str, quarter_key: str) -> List[Dict[str, Any]]:
+        """Get all IR documents for a specific quarter
+        
+        Args:
+            ticker: Stock ticker symbol
+            quarter_key: Quarter key in format YYYYQN (e.g., "2024Q3")
+            
+        Returns:
+            List of document metadata dictionaries
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Query documents by quarter_key
+            docs_ref = (self.db.collection('tickers')
+                       .document(upper_ticker)
+                       .collection('ir_documents'))
+            
+            query = docs_ref.where('quarter_key', '==', quarter_key)
+            docs = query.stream()
+            
+            documents = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                doc_data['document_id'] = doc.id
+                documents.append(doc_data)
+            
+            return documents
+            
+        except Exception as error:
+            print(f'Error getting IR documents for {ticker} {quarter_key}: {error}')
+            return []
+    
+    def get_ir_document_content(self, ticker: str, document_id: str) -> Optional[bytes]:
+        """Download document content from Firebase Storage
+        
+        Args:
+            ticker: Stock ticker symbol
+            document_id: Document identifier
+            
+        Returns:
+            Document content as bytes, or None if not found
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Get document metadata to find storage path
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('ir_documents')
+                      .document(document_id))
+            
+            doc = doc_ref.get()
+            if not doc.exists:
+                return None
+            
+            doc_data = doc.to_dict()
+            storage_ref = doc_data.get('document_storage_ref')
+            
+            if not storage_ref:
+                return None
+            
+            # Download from Storage
+            blob = self.bucket.blob(storage_ref)
+            if not blob.exists():
+                return None
+            
+            return blob.download_as_bytes()
+            
+        except Exception as error:
+            print(f'Error getting document content for {ticker} {document_id}: {error}')
+            return None
+    
+    def store_ir_kpis(self, ticker: str, quarter_key: str, kpis: Dict[str, Any], 
+                     source_documents: List[str], llm_metadata: Dict[str, Any], 
+                     verbose: bool = True) -> None:
+        """Store consolidated KPIs for a quarter
+        
+        Args:
+            ticker: Stock ticker symbol
+            quarter_key: Quarter key in format YYYYQN (e.g., "2024Q3")
+            kpis: Dictionary of extracted KPIs
+            source_documents: List of document IDs used for extraction
+            llm_metadata: Metadata about LLM extraction (model, etc.)
+            verbose: Enable verbose output
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Parse quarter_key to get fiscal year and quarter
+            year_str, quarter_str = quarter_key.split('Q')
+            fiscal_year = int(year_str)
+            fiscal_quarter = int(quarter_str)
+            
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('ir_kpis')
+                      .document(quarter_key))
+            
+            kpi_data = {
+                'ticker': upper_ticker,
+                'quarter_key': quarter_key,
+                'fiscal_year': fiscal_year,
+                'fiscal_quarter': fiscal_quarter,
+                'extracted_kpis': kpis,
+                'source_documents': source_documents,
+                'extraction_timestamp': datetime.now().isoformat(),
+                'llm_metadata': llm_metadata
+            }
+            
+            doc_ref.set(kpi_data)
+            
+            if verbose:
+                print(f'✅ Stored IR KPIs for {ticker} {quarter_key}')
+                
+        except Exception as error:
+            print(f'Error storing IR KPIs for {ticker} {quarter_key}: {error}')
+            raise error
+    
+    def get_ir_kpis(self, ticker: str, quarter_key: str) -> Optional[Dict[str, Any]]:
+        """Get consolidated KPIs for a quarter
+        
+        Args:
+            ticker: Stock ticker symbol
+            quarter_key: Quarter key in format YYYYQN (e.g., "2024Q3")
+            
+        Returns:
+            KPI data dictionary or None if not found
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('ir_kpis')
+                      .document(quarter_key))
+            
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            
+            return None
+            
+        except Exception as error:
+            print(f'Error getting IR KPIs for {ticker} {quarter_key}: {error}')
+            return None
+    
+    def get_existing_quarter_kpis(self, ticker: str, quarter_key: str) -> Optional[Dict[str, Any]]:
+        """Get existing KPIs from quarters collection for context
+        
+        Args:
+            ticker: Stock ticker symbol
+            quarter_key: Quarter key in format YYYYQN (e.g., "2024Q3")
+            
+        Returns:
+            Financial data dictionary from quarters collection or None
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('quarters')
+                      .document(quarter_key))
+            
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            
+            return None
+            
+        except Exception as error:
+            print(f'Error getting existing quarter KPIs for {ticker} {quarter_key}: {error}')
+            return None

@@ -22,7 +22,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 from firebase_cache import FirebaseCache
 import yfinance as yf
-from openai import OpenAI  # Only needed for HTML parsing with LLM
+import google.generativeai as genai  # Only needed for HTML parsing with LLM
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
@@ -201,8 +201,8 @@ def get_page_html_with_playwright(url: str, wait_time: int = 10, verbose: bool =
             print('Falling back to simple HTTP request...')
         return None
 
-def parse_html_page(url: str, ticker: str, client: OpenAI, verbose: bool = False) -> List[Dict[str, Any]]:
-    """Parse HTML page and use OpenAI to identify earnings releases/presentations"""
+def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[str, Any]]:
+    """Parse HTML page and use Gemini to identify earnings releases/presentations"""
     try:
         # Try to get HTML using Playwright first (for dynamic pages)
         html_content = get_page_html_with_playwright(url, wait_time=10, verbose=verbose)
@@ -272,7 +272,7 @@ def parse_html_page(url: str, ticker: str, client: OpenAI, verbose: bool = False
                 print('No links found on page')
             return []
         
-        # Pre-filter links to only include financial documents before sending to OpenAI
+        # Pre-filter links to only include financial documents before sending to Gemini
         # This reduces token usage significantly
         financial_keywords = [
             'earnings', 'quarterly', 'results', 'financial', 'statement', 'filing',
@@ -314,9 +314,9 @@ def parse_html_page(url: str, ticker: str, client: OpenAI, verbose: bool = False
             return []
         
         if verbose:
-            print(f'Sending {len(links_data)} candidate links to OpenAI for analysis...')
+            print(f'Sending {len(links_data)} candidate links to Gemini for analysis...')
         
-        # Prepare prompt for OpenAI
+        # Prepare prompt for Gemini
         links_summary = '\n'.join([
             f"{i+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
             for i, link in enumerate(links_data)
@@ -329,74 +329,104 @@ Below are links found on the page. Identify which links are relevant financial d
 1. Earnings releases (quarterly or annual financial results)
 2. Earnings presentations or slides
 3. SEC filings (10-K, 10-Q, 8-K, etc.)
-4. Financial statements (consolidated financial statements, income statements, balance sheets, cash flow statements)
-5. Annual reports
-6. Proxy statements
-7. Other regulatory or financial documents
+4. Annual reports
+5. Proxy statements
+6. Other regulatory or financial documents
 
 For each relevant link, extract:
-- The link URL
+- The link URL: Return the EXACT URL as provided below - DO NOT modify, reconstruct, or guess the URL. Copy it exactly as shown.
 - The document title: Extract a descriptive title from the link text and context. Include quarter/year information if available (e.g., "Apple Reports Q3 2024 Results" not just "Press Release")
 - The fiscal year: Extract from URL, title, or context (e.g., FY25, 2025, 2024)
 - The fiscal quarter: Extract from URL, title, or context (1, 2, 3, or 4). If it's an annual report or 10-K, use 4. If not clear, use null.
 - The release/presentation date: If available in context, format as YYYY-MM-DD. Otherwise use null.
-- The document type: earnings_release, presentation, sec_filing_10k, sec_filing_10q, financial_statements, annual_report, proxy_statement, or other
+- The document type: earnings_release, presentation, sec_filing_10k, sec_filing_10q, annual_report, proxy_statement, or other
 
 Return a JSON array with this structure:
 [
   {{
+    "link_index": 1,
     "url": "full_url_here",
     "title": "descriptive_document_title_with_quarter_and_year_if_available",
     "fiscal_year": 2025 or null,
     "fiscal_quarter": 1, 2, 3, 4, or null,
     "release_date": "YYYY-MM-DD or null if not found",
-    "document_type": "earnings_release|presentation|sec_filing_10k|sec_filing_10q|financial_statements|annual_report|proxy_statement|other"
+    "document_type": "earnings_release|presentation|sec_filing_10k|sec_filing_10q|annual_report|proxy_statement|other"
   }},
   ...
 ]
+
+Note: link_index should be the number from the link list above (1, 2, 3, etc.). This ensures we can match back to the original URL.
 
 Links found on page:
 {links_summary}
 
 IMPORTANT: 
-- Include ALL financial documents: earnings releases, presentations, SEC filings (10-K, 10-Q, 8-K), financial statements, annual reports, proxy statements, and any other regulatory or financial documents
+- CRITICAL: Return URLs EXACTLY as shown in the links below - DO NOT modify, reconstruct, or guess URLs. Copy them character-for-character as provided.
+- Include ALL financial documents: earnings releases, presentations, SEC filings (10-K, 10-Q, 8-K), annual reports, proxy statements, and any other regulatory or financial documents
+- EXCLUDE Consolidated Financial Statements - these are obtained from a different data source and should not be downloaded here
 - Be INCLUSIVE - when in doubt, include the link. It's better to include too many than miss important documents.
-- Extract descriptive titles that include quarter/year information when available (e.g., "Q3 2024 Earnings Release", "FY22 Q2 Consolidated Financial Statements", "10-Q Q3 2025")
+- Extract descriptive titles that include quarter/year information when available (e.g., "Q3 2024 Earnings Release", "10-Q Q3 2025")
 - For SEC filings, use the filing type in the title (e.g., "10-K Annual Report 2024", "10-Q Q3 2025")
-- For financial statements, include the fiscal period (e.g., "FY22 Q2 Consolidated Financial Statements")
-- Extract titles from URLs when link text is generic (e.g., if URL contains "FY22_Q2", use "FY22 Q2 Consolidated Financial Statements")
-- Include ALL PDF links that appear to be financial documents, even if the link text is generic like "Financial Statements" or "10-K"
+- Extract titles from URLs when link text is generic (e.g., if URL contains "FY22_Q2", use "FY22 Q2 Earnings Release")
+- Include ALL PDF links that appear to be financial documents, even if the link text is generic like "10-K"
 - Include historical documents (past quarters/years) - don't filter by date
-- Exclude ONLY: general news articles, press releases about products/features (not financial), marketing materials, or clearly non-financial content
-- If a link points to a PDF and the URL or context suggests it's financial (contains terms like: earnings, financial, statement, filing, 10-k, 10-q, quarterly, annual, report), INCLUDE IT
+- Exclude ONLY: general news articles, press releases about products/features (not financial), marketing materials, Consolidated Financial Statements, or clearly non-financial content
+- If a link points to a PDF and the URL or context suggests it's financial (contains terms like: earnings, filing, 10-k, 10-q, quarterly, annual, report), INCLUDE IT (but still exclude Consolidated Financial Statements)
 - If no date is found, use null for release_date
 - Return ALL relevant links found, not just a subset
 """
         
-        # Call OpenAI
+        # Call Gemini
         if verbose:
-            print('Calling OpenAI to identify relevant filings...')
+            print('Calling Gemini to identify relevant filings...')
             print('\n' + '='*80)
-            print('PROMPT SENT TO OPENAI:')
+            print('PROMPT SENT TO GEMINI:')
             print('='*80)
             print(prompt)
             print('='*80 + '\n')
         
-        # Use model from env var or default to gpt-4o-mini (newer, larger context, cheaper than gpt-4)
-        # Can set OPENAI_MODEL=gpt-4o or gpt-4-turbo in .env.local if you have access
-        model = get_openai_model()
+        # Use model from env var or default to gemini-2.0-flash
+        model_name = get_gemini_model()
         
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive."},
-                {"role": "user", "content": prompt}
-            ],
+        # Combine system instruction with user prompt for Gemini
+        system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
+        full_prompt = f"{system_instruction}\n\n{prompt}"
+        
+        # Configure and call Gemini
+        generation_config = genai.types.GenerationConfig(
             temperature=0.2,
-            max_tokens=8000  # gpt-4o-mini supports up to 16k tokens
+            max_output_tokens=8000,
         )
         
-        result_text = response.choices[0].message.content.strip()
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                full_prompt,
+                generation_config=generation_config
+            )
+            
+            # Extract text from response
+            try:
+                result_text = response.text.strip()
+            except (ValueError, AttributeError) as text_error:
+                # Response might be blocked or have no text
+                if verbose:
+                    print(f'Warning: Could not extract text from Gemini response: {text_error}')
+                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                        print(f'Prompt feedback: {response.prompt_feedback}')
+                return []
+            
+            if not result_text:
+                if verbose:
+                    print('Warning: Gemini response was empty')
+                return []
+                
+        except Exception as e:
+            print(f'Error calling Gemini API: {e}')
+            if verbose:
+                import traceback
+                traceback.print_exc()
+            return []
         
         if verbose:
             print('='*80)
@@ -405,13 +435,105 @@ IMPORTANT:
             print(result_text)
             print('='*80 + '\n')
         
+        # Create mappings for URL preservation
+        url_to_original_link = {link['url']: link for link in links_data}
+        index_to_original_link = {i+1: link for i, link in enumerate(links_data)}  # 1-indexed as shown in prompt
+        
         # Extract JSON from response
         result_text = extract_json_from_llm_response(result_text)
         releases = json.loads(result_text)
         
-        # Parse dates and convert to datetime objects
+        # Filter out Consolidated Financial Statements
+        original_count = len(releases)
+        filtered_out = [
+            r for r in releases 
+            if (
+                'consolidated financial' in r.get('title', '').lower() or
+                'consolidated financial' in r.get('url', '').lower() or
+                (r.get('document_type') == 'financial_statements' and 'consolidated' in r.get('title', '').lower())
+            )
+        ]
+        
+        releases = [
+            r for r in releases 
+            if not (
+                'consolidated financial' in r.get('title', '').lower() or
+                'consolidated financial' in r.get('url', '').lower() or
+                (r.get('document_type') == 'financial_statements' and 'consolidated' in r.get('title', '').lower())
+            )
+        ]
+        
+        if verbose and filtered_out:
+            print(f'\n⚠️  Filtered out {len(filtered_out)} Consolidated Financial Statement(s) (using different data source):')
+            for r in filtered_out:
+                print(f'  - {r.get("title", "N/A")} ({r.get("url", "N/A")[:60]}...)')
+            print(f'  Continuing with {len(releases)} remaining documents\n')
+        
+        # Parse dates and convert to datetime objects, matching back to original URLs
         parsed_releases = []
         for release in releases:
+            original_url = None
+            original_link = None
+            
+            # Try to match by link_index first (most reliable)
+            link_index = release.get('link_index')
+            if link_index and link_index in index_to_original_link:
+                original_link = index_to_original_link[link_index]
+                original_url = original_link['url']
+                if verbose:
+                    llm_url = release.get('url', 'N/A')
+                    if llm_url != original_url:
+                        print(f'  Using original URL from index {link_index}: {original_url[:60]}... (LLM had: {llm_url[:60]}...)')
+            else:
+                # Fall back to URL matching
+                llm_url = release.get('url', '')
+                
+                # Normalize URL for comparison (remove trailing slash, lowercase, etc.)
+                def normalize_url_for_match(u):
+                    u = u.rstrip('/')
+                    u_lower = u.lower()
+                    # Extract just the filename for matching
+                    parsed = urlparse(u_lower)
+                    filename = parsed.path.split('/')[-1] if parsed.path else ''
+                    return (u_lower, parsed.netloc, filename)
+                
+                llm_normalized = normalize_url_for_match(llm_url)
+                
+                # Try exact match first
+                if llm_url in url_to_original_link:
+                    original_link = url_to_original_link[llm_url]
+                    original_url = original_link['url']
+                else:
+                    # Try normalized match - match by filename and domain
+                    for orig_url, orig_link in url_to_original_link.items():
+                        orig_normalized = normalize_url_for_match(orig_url)
+                        # Match if same domain and same filename
+                        if (llm_normalized[1] == orig_normalized[1] and 
+                            llm_normalized[2] and orig_normalized[2] and
+                            llm_normalized[2] == orig_normalized[2]):
+                            original_link = orig_link
+                            original_url = orig_url
+                            if verbose:
+                                print(f'  Matched LLM URL (by filename) {llm_url[:60]}... to original {orig_url[:60]}...')
+                            break
+                    
+                    # If still no match, try case-insensitive URL match
+                    if not original_link:
+                        llm_url_lower = llm_url.lower().rstrip('/')
+                        for orig_url, orig_link in url_to_original_link.items():
+                            if orig_url.lower().rstrip('/') == llm_url_lower:
+                                original_link = orig_link
+                                original_url = orig_url
+                                if verbose:
+                                    print(f'  Matched LLM URL (case-insensitive) {llm_url[:60]}... to original {orig_url[:60]}...')
+                                break
+                
+                # If no match found, use LLM URL but warn
+                if not original_link:
+                    original_url = llm_url
+                    if verbose:
+                        print(f'  ⚠️  Warning: Could not match LLM URL {llm_url[:60]}... to original links, using LLM URL')
+            
             release_date = None
             if release.get('release_date') and release['release_date'] != 'null' and release['release_date']:
                 try:
@@ -430,10 +552,17 @@ IMPORTANT:
             fiscal_year = release.get('fiscal_year')
             fiscal_quarter = release.get('fiscal_quarter')
             
-            # If LLM provided fiscal info, use it; otherwise we'll calculate later
+            # Ensure we have a valid URL (fallback to LLM URL if no match found)
+            final_url = original_url if original_url else release.get('url', '')
+            if not final_url:
+                if verbose:
+                    print(f'  ⚠️  Warning: No URL found for release, skipping: {release.get("title", "N/A")}')
+                continue
+            
+            # Use original URL, not LLM URL
             parsed_releases.append({
                 'title': release.get('title', ''),
-                'url': release.get('url', ''),
+                'url': final_url,  # Use original URL from links_data
                 'release_date': release_date,
                 'fiscal_year': fiscal_year,
                 'fiscal_quarter': fiscal_quarter,
@@ -442,14 +571,14 @@ IMPORTANT:
             })
         
         if verbose:
-            print(f'\nOpenAI identified {len(parsed_releases)} relevant filings out of {len(links_data)} candidate links')
+            print(f'\nGemini identified {len(parsed_releases)} relevant filings out of {len(links_data)} candidate links')
             if len(parsed_releases) < len(links_data) * 0.3:  # If less than 30% of links were selected
                 print(f'⚠️  Warning: Only {len(parsed_releases)}/{len(links_data)} links were selected. This might be too restrictive.')
         
         return parsed_releases
         
     except json.JSONDecodeError as e:
-        print(f'Error parsing OpenAI response: {e}')
+        print(f'Error parsing Gemini response: {e}')
         if verbose:
             response_preview = result_text[:500] if 'result_text' in locals() else "N/A"
             print(f'Response: {response_preview}')
@@ -474,23 +603,47 @@ def extract_text_from_html(content: bytes) -> str:
         return ''
 
 def extract_date_from_url(url: str, fiscal_year_end_month: int) -> Optional[datetime]:
-    """Try to extract date from URL patterns (e.g., 2025/q4, FY25-Q4)"""
+    """Try to extract date from URL patterns (e.g., 2025/q4, FY25-Q4)
+    
+    Note: Assumes the year in the URL refers to fiscal year.
+    """
     url_date_match = re.search(r'(\d{4})[/-]q([1-4])|fy(\d{2})[/-]q([1-4])', url.lower())
     if url_date_match:
         groups = url_date_match.groups()
-        if groups[0]:  # YYYY-Q format
-            year = int(groups[0])
+        fiscal_year = None
+        quarter = None
+        
+        if groups[0]:  # YYYY-Q format (e.g., 2023/q2)
+            fiscal_year = int(groups[0])
             quarter = int(groups[1])
-            # Approximate date to middle of quarter
-            fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
-            quarter_start_month = fiscal_year_start_month + (quarter - 1) * 3
-            return datetime(year, quarter_start_month, 15)
-        elif groups[2]:  # FY##-Q format
-            year = 2000 + int(groups[2])
+        elif groups[2]:  # FY##-Q format (e.g., fy23-q2)
+            fiscal_year = 2000 + int(groups[2])
             quarter = int(groups[3])
+        
+        if fiscal_year and quarter:
+            # Calculate quarter start month based on fiscal year
             fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
             quarter_start_month = fiscal_year_start_month + (quarter - 1) * 3
-            return datetime(year, quarter_start_month, 15)
+            
+            # Handle month overflow (>12) - normalize to 1-12 range
+            # Match the pattern used elsewhere in the code (lines 723-728)
+            calendar_year = fiscal_year
+            if quarter_start_month > 12:
+                quarter_start_month = quarter_start_month - 12
+                calendar_year = fiscal_year - 1
+            elif quarter_start_month < 1:
+                # Handle underflow (shouldn't normally happen)
+                quarter_start_month = quarter_start_month + 12
+                calendar_year = fiscal_year - 1
+            
+            # Ensure month is in valid range (1-12)
+            quarter_start_month = max(1, min(12, quarter_start_month))
+            
+            try:
+                return datetime(calendar_year, quarter_start_month, 15)
+            except ValueError:
+                # If we still get a ValueError (e.g., invalid year), return None
+                return None
     return None
 
 def extract_json_from_llm_response(response_text: str) -> str:
@@ -501,9 +654,9 @@ def extract_json_from_llm_response(response_text: str) -> str:
         return response_text.split('```')[1].split('```')[0].strip()
     return response_text.strip()
 
-def get_openai_model() -> str:
-    """Get OpenAI model from env var or return default"""
-    return os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+def get_gemini_model() -> str:
+    """Get Gemini model from env var or return default"""
+    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 
 def download_document(url: str) -> Optional[bytes]:
     """Download document from URL"""
@@ -555,8 +708,8 @@ def determine_document_type(title: str, url: str) -> str:
         return 'sec_filing_10q'
     elif '8-k' in title_lower or '8-k' in url_lower:
         return 'sec_filing_8k'
-    # Check for financial statements
-    elif 'financial statement' in title_lower or 'consolidated financial' in title_lower:
+    # Check for financial statements (exclude Consolidated Financial Statements - they use a different data source)
+    elif 'financial statement' in title_lower and 'consolidated financial' not in title_lower:
         return 'financial_statements'
     # Check for presentations
     elif 'presentation' in title_lower or 'presentation' in url_lower:
@@ -577,6 +730,11 @@ def determine_document_type(title: str, url: str) -> str:
 
 def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: bool = False) -> None:
     """Step 1: Scan IR website and download documents"""
+    # Validate quarter format if provided
+    if target_quarter and not re.match(r'^\d{4}Q[1-4]$', target_quarter):
+        print(f'Error: Invalid quarter format: {target_quarter}. Use YYYYQN (e.g., 2024Q2)')
+        return
+    
     ir_urls = load_ir_urls()
     
     if ticker.upper() not in ir_urls:
@@ -587,22 +745,21 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     ir_url = ir_urls[ticker.upper()]
     print(f'Scanning IR website for {ticker}: {ir_url}')
     
-    # Initialize OpenAI client for HTML parsing
-    openai_api_key = os.getenv('OPENAI_API_KEY')
-    client = None
-    if openai_api_key:
-        client = OpenAI(api_key=openai_api_key)
+    # Initialize Gemini API for HTML parsing
+    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    if gemini_api_key:
+        genai.configure(api_key=gemini_api_key)
     else:
-        print('Warning: OPENAI_API_KEY not set. HTML page parsing will be limited.')
+        print('Warning: GEMINI_API_KEY not set. HTML page parsing will be limited.')
     
     # Determine if URL is RSS feed or HTML page
     if 'rss' in ir_url.lower() or ir_url.endswith('.xml') or ir_url.endswith('.rss'):
         releases = parse_rss_feed(ir_url)
     else:
-        if client:
-            releases = parse_html_page(ir_url, ticker, client, verbose)
+        if gemini_api_key:
+            releases = parse_html_page(ir_url, ticker, verbose)
         else:
-            print('Error: Cannot parse HTML page without OpenAI API key')
+            print('Error: Cannot parse HTML page without GEMINI_API_KEY')
             return
     
     if not releases:
@@ -610,9 +767,6 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
         return
     
     print(f'Found {len(releases)} potential releases')
-    
-    # Get fiscal year-end month
-    fiscal_year_end_month = get_fiscal_year_end_month(ticker)
     
     # Initialize Firebase
     firebase = FirebaseCache()
@@ -658,64 +812,24 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                         print(f'  Found {len(pdf_links)} PDF link(s) in the page')
                     release['pdf_links'] = pdf_links
             
-            # Use fiscal year/quarter from LLM if provided, otherwise calculate from date
+            # Use fiscal year/quarter and release date directly from LLM response (no date math needed)
             fiscal_year = release.get('fiscal_year')
             fiscal_quarter = release.get('fiscal_quarter')
+            release_date = release.get('release_date')  # Already parsed as datetime object from earlier step
             
-            # Extract or determine release date (LLM should provide this, fallback to URL patterns)
-            release_date = release.get('release_date')
-            if not release_date:
-                release_date = extract_date_from_url(release['url'], fiscal_year_end_month)
-            
-            # If LLM provided fiscal year/quarter, use it and calculate approximate date if needed
-            if fiscal_year and fiscal_quarter:
-                if verbose:
-                    print(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
-                
-                # If no release date but we have fiscal quarter, estimate date
-                if not release_date:
-                    # Estimate date to middle of the quarter
-                    fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
-                    quarter_start_month = fiscal_year_start_month + (fiscal_quarter - 1) * 3
-                    # Use the fiscal year (which might be different from calendar year)
-                    # For Apple (FY ends Sep), FY2025 Q1 = Oct 2024, so we need to adjust
-                    if quarter_start_month > 12:
-                        quarter_start_month = quarter_start_month - 12
-                        calendar_year = fiscal_year - 1
-                    else:
-                        calendar_year = fiscal_year
-                    release_date = datetime(calendar_year, quarter_start_month, 15)
-                    if verbose:
-                        print(f'  Estimated release date: {release_date.strftime("%Y-%m-%d")} (from fiscal {fiscal_year}Q{fiscal_quarter})')
-            else:
-                # Calculate fiscal quarter from date
-                if not release_date:
-                    if verbose:
-                        print(f'  Warning: No release date found, using current date')
-                    release_date = datetime.now()
-                
-                if verbose:
-                    print(f'  Release date: {release_date.strftime("%Y-%m-%d")}')
-                
-                # Determine fiscal quarter from date
-                calculated_fiscal_year, calculated_fiscal_quarter = get_fiscal_quarter_from_date(release_date, fiscal_year_end_month)
-                if calculated_fiscal_year and calculated_fiscal_quarter:
-                    fiscal_year = calculated_fiscal_year
-                    fiscal_quarter = calculated_fiscal_quarter
-                    if verbose:
-                        print(f'  Calculated fiscal quarter: {fiscal_year}Q{fiscal_quarter} (FY ends month {fiscal_year_end_month})')
-                else:
-                    if verbose:
-                        print(f'  Skipped: Could not determine fiscal quarter for date {release_date}')
-                    skipped_count += 1
-                    continue
-            
-            # Validate fiscal quarter
+            # Validate that we have required fiscal info from LLM
             if not fiscal_year or not fiscal_quarter:
                 if verbose:
-                    print(f'  Skipped: Missing fiscal year or quarter')
+                    print(f'  Skipped: Missing fiscal year or quarter from LLM response')
                 skipped_count += 1
                 continue
+            
+            if verbose:
+                print(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
+                if release_date:
+                    print(f'  Release date: {release_date.strftime("%Y-%m-%d")}')
+                else:
+                    print(f'  Release date: not provided by LLM')
             
             quarter_key = f"{fiscal_year}Q{fiscal_quarter}"
             
@@ -726,7 +840,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                 skipped_count += 1
                 continue
             
-            # Determine document type (use from OpenAI if available, otherwise infer)
+            # Determine document type (use from Gemini if available, otherwise infer)
             doc_type = release.get('document_type')
             if not doc_type or doc_type == 'other':
                 doc_type = determine_document_type(release['title'], release['url'])
@@ -751,7 +865,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                 'ticker': ticker.upper(),
                 'document_id': document_id,
                 'title': release['title'],
-                'release_date': release_date.isoformat(),
+                'release_date': release_date.isoformat() if release_date else None,
                 'fiscal_year': fiscal_year,
                 'fiscal_quarter': fiscal_quarter,
                 'quarter_key': quarter_key,
@@ -784,13 +898,8 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                                 print(f'    Skipped: PDF already exists')
                             continue
                         
-                        # Use the same release date as the parent document
+                        # Use the same release date as the parent document (no date math needed)
                         pdf_release_date = release_date
-                        if not pdf_release_date:
-                            # Try to extract from URL as fallback
-                            pdf_release_date = extract_date_from_url(pdf_url, fiscal_year_end_month)
-                        if not pdf_release_date:
-                            pdf_release_date = datetime.now()
                         
                         # Determine PDF document type
                         pdf_doc_type = 'earnings_release' if 'earnings' in pdf_url.lower() else 'presentation' if 'presentation' in pdf_url.lower() else 'other'
@@ -803,7 +912,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                             'ticker': ticker.upper(),
                             'document_id': pdf_document_id,
                             'title': f"{release['title']} - PDF",
-                            'release_date': pdf_release_date.isoformat(),
+                            'release_date': pdf_release_date.isoformat() if pdf_release_date else None,
                             'fiscal_year': fiscal_year,
                             'fiscal_quarter': fiscal_quarter,
                             'quarter_key': quarter_key,
@@ -965,6 +1074,21 @@ Examples:
     
     if args.scan and args.list:
         parser.error('Cannot specify both --scan and --list at the same time')
+    
+    # Validate year and quarter consistency if both are provided
+    if args.year and args.quarter:
+        # Extract year from quarter (format: YYYYQN)
+        quarter_year_match = re.match(r'^(\d{4})Q[1-4]$', args.quarter)
+        if quarter_year_match:
+            quarter_year = int(quarter_year_match.group(1))
+            if quarter_year != args.year:
+                parser.error(f'Year mismatch: --year {args.year} does not match year in --quarter {args.quarter} (year {quarter_year})')
+        else:
+            parser.error(f'Invalid quarter format: {args.quarter}. Use YYYYQN (e.g., 2024Q2)')
+    
+    # For --scan, year is ignored (quarter already contains the year)
+    if args.scan and args.year:
+        print(f'Note: --year {args.year} is ignored when using --scan. Using --quarter {args.quarter or "all quarters"} for filtering.')
     
     try:
         if args.scan:

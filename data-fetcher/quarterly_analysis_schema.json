@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quarterly Analysis Schema",
+  "description": "Schema for quarterly analysis data generated from IR documents. Includes summary, growth theses, and fields needed for rendering quarterly cards and details.",
+  "type": "object",
+  "required": ["ticker", "quarter_key", "summary", "growth_theses"],
+  "properties": {
+    "ticker": {
+      "type": "string",
+      "description": "Stock ticker symbol in uppercase (e.g., 'AAPL', 'MSFT')",
+      "pattern": "^[A-Z]{1,5}$",
+      "examples": ["AAPL", "MSFT", "GOOGL"]
+    },
+    "quarter_key": {
+      "type": "string",
+      "description": "Quarter identifier in format YYYYQN (e.g., '2025Q1')",
+      "pattern": "^\\d{4}Q[1-4]$",
+      "examples": ["2025Q1", "2024Q4", "2024Q3"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "Paragraph summary (3-5 sentences) followed by bullet points covering financial performance, key business metrics, strategic initiatives, and management commentary highlights. Bullet points are separated by newlines and prefixed with '•', '-', or '*'.",
+      "minLength": 1,
+      "examples": [
+        "Apple reported strong Q1 2025 results with record revenue. iPhone sales grew 15% year-over-year...\n\n• Revenue: $119.6B, up 8% YoY\n• iPhone Revenue: $69.7B, up 15% YoY\n• Services Revenue: $23.1B, up 11% YoY"
+      ]
+    },
+    "growth_theses": {
+      "type": "array",
+      "description": "Array of 2-5 investment thesis points explaining why someone would consider investing in this company based on this quarter's results",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["title", "summary", "strength"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short, compelling title for the thesis (1 line)",
+            "minLength": 1,
+            "maxLength": 100,
+            "examples": ["Services Revenue Growth", "Margin Expansion", "Product Innovation"]
+          },
+          "summary": {
+            "type": "string",
+            "description": "2-3 sentence summary explaining the thesis with key context",
+            "minLength": 1,
+            "maxLength": 400,
+            "examples": [
+              "Services revenue continues to grow at double-digit rates, reaching $23.1 billion and up 14.5% year-over-year. This higher-margin business now represents 19% of total revenue and drives margin expansion."
+            ]
+          },
+          "strength": {
+            "type": "string",
+            "description": "Conviction level indicating the strength of this thesis",
+            "enum": ["high", "medium", "low"],
+            "examples": ["high"]
+          },
+          "expected_eps_growth": {
+            "type": "number",
+            "description": "Expected EPS growth percentage contribution from this thesis (e.g., 8.5 for 8.5%)",
+            "minimum": -100,
+            "maximum": 1000
+          },
+          "metric_ids": {
+            "type": "array",
+            "description": "Array of 1-2 metric IDs that support this thesis. These reference metrics from custom_kpis array by name or from kpi_metrics array. Format: use the metric 'name' from custom_kpis/kpi_metrics as the ID (e.g., 'iPhone Revenue', 'Services Revenue').",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "examples": [
+              ["Services Revenue", "Paid Subscribers"],
+              ["iPhone Revenue"],
+              ["Americas Revenue", "Gross Margin"]
+            ]
+          }
+        }
+      }
+    },
+    "metric_ids": {
+      "type": "array",
+      "description": "Array of metric IDs referenced in this quarterly analysis. These are the IDs of metrics from custom_kpis or kpi_metrics arrays that are relevant to this quarter's analysis. Format: use the metric 'name' from custom_kpis/kpi_metrics as the ID.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "examples": [
+        ["Services Revenue", "Paid Subscribers", "iPhone Revenue", "Americas Revenue"]
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when the analysis was generated",
+      "format": "date-time",
+      "examples": ["2025-01-15T10:30:00.000Z"]
+    },
+    "source_documents": {
+      "type": "array",
+      "description": "List of document IDs used to generate this analysis",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["doc_123", "doc_456"]]
+    },
+    "highlights": {
+      "type": "array",
+      "description": "Top highlights for timeline summary (up to 3). Used for rendering quarterly cards.",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Highlight text (e.g., 'iPhone 15 sales +10%', 'China expansion +10%')",
+            "minLength": 1,
+            "examples": ["iPhone 15 sales +10%", "Services revenue +14.5% YoY", "China expansion +10%"]
+          },
+          "impact": {
+            "type": "string",
+            "description": "Optional impact description (e.g., '+3% EPS', 'for 3 quarters')",
+            "examples": ["+3% EPS", "for 3 quarters", "+2.5% margin expansion"]
+          },
+          "trend": {
+            "type": "string",
+            "description": "Direction indicator",
+            "enum": ["up", "down", "neutral"],
+            "examples": ["up"]
+          }
+        }
+      }
+    },
+    "kpi_metrics": {
+      "type": "array",
+      "description": "Key performance indicators / growth factors formatted for frontend rendering. These are derived from custom_kpis and formatted for display in growth cards.",
+      "items": {
+        "type": "object",
+        "required": ["name", "values"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the KPI (e.g., 'iPhone Sales in China', 'Efficiency Ratio')",
+            "examples": ["iPhone Sales in China", "Services Revenue Growth", "Efficiency Ratio"]
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit of measurement (e.g., '%', '$B', 'ratio')",
+            "examples": ["%", "$B", "ratio", "millions"]
+          },
+          "values": {
+            "type": "array",
+            "description": "Historical values (most recent first, e.g., [latest, previous, older])",
+            "minItems": 1,
+            "items": {
+              "type": "number"
+            },
+            "examples": [[50.6, 48.2, 45.8], [14.5, 12.3, 11.2]]
+          },
+          "labels": {
+            "type": "array",
+            "description": "Optional labels for each value (e.g., ['Q1', 'Q4', 'Q3'])",
+            "items": {
+              "type": "string"
+            },
+            "examples": [["2025Q1", "2024Q4", "2024Q3"]]
+          },
+          "trend": {
+            "type": "string",
+            "description": "Overall trend direction",
+            "enum": ["up", "down", "stable"],
+            "examples": ["up"]
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief description of why this matters",
+            "examples": [
+              "iPhone sales growth in Greater China region, a key growth market"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

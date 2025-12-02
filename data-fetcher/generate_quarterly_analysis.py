@@ -509,7 +509,7 @@ Remember: Consistency is key. Extract the same thoroughness every time, regardle
         return None
 
 
-def process_all_quarters_iteratively(ticker: str, verbose: bool = False, extract_custom_kpis: bool = False, start_quarter: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+def process_all_quarters_iteratively(ticker: str, verbose: bool = False, extract_custom_kpis: bool = False, start_quarter: Optional[str] = None, no_store: bool = False) -> Dict[str, Dict[str, Any]]:
     """Process all quarters iteratively, passing previous quarter data to each analysis
     
     Args:
@@ -517,10 +517,13 @@ def process_all_quarters_iteratively(ticker: str, verbose: bool = False, extract
         verbose: Enable verbose output
         extract_custom_kpis: If True, extract custom KPIs
         start_quarter: Optional quarter to start from (if None, starts from earliest)
+        no_store: If True, don't store results to Firebase
         
     Returns:
         Dictionary mapping quarter_key to analysis data
     """
+    firebase = FirebaseCache()
+    
     # Get all quarters with documents
     all_quarters = get_all_quarters_with_documents(ticker)
     
@@ -548,6 +551,17 @@ def process_all_quarters_iteratively(ticker: str, verbose: bool = False, extract
         print(f'Processing Quarter {i}/{len(all_quarters)}: {quarter_key}')
         print(f'{"="*80}')
         
+        # Try to load previous quarter data from storage if not in memory
+        if previous_quarter_data is None and i > 1:
+            prev_quarter_idx = i - 2
+            if prev_quarter_idx >= 0:
+                prev_quarter_key = all_quarters[prev_quarter_idx]
+                stored_prev = firebase.get_quarterly_analysis(ticker.upper(), prev_quarter_key)
+                if stored_prev:
+                    previous_quarter_data = stored_prev
+                    if verbose:
+                        print(f'   Loaded previous quarter ({prev_quarter_key}) from storage')
+        
         if previous_quarter_data and verbose:
             print(f'   Using previous quarter ({previous_quarter_data.get("quarter_key")}) context')
         
@@ -563,6 +577,13 @@ def process_all_quarters_iteratively(ticker: str, verbose: bool = False, extract
         if analysis_data:
             results[quarter_key] = analysis_data
             previous_quarter_data = analysis_data  # Use as context for next quarter
+            
+            # Store to Firebase unless --no-store is specified
+            if not no_store:
+                try:
+                    firebase.store_quarterly_analysis(ticker.upper(), quarter_key, analysis_data, verbose)
+                except Exception as e:
+                    print(f'⚠️  Error storing {quarter_key}: {e}')
             
             if verbose:
                 print(f'\n✅ Completed {quarter_key}')
@@ -623,7 +644,8 @@ Examples:
                 args.ticker.upper(), 
                 args.verbose, 
                 args.extract_custom_kpis,
-                args.start_quarter
+                args.start_quarter,
+                args.no_store
             )
             
             if not results:
@@ -634,6 +656,19 @@ Examples:
             print(f'✅ Completed processing {len(results)} quarters')
             print(f'{"="*80}')
             
+            # Store to Firebase unless --no-store is specified
+            if not args.no_store:
+                firebase = FirebaseCache()
+                stored_count = 0
+                for quarter_key, analysis_data in results.items():
+                    try:
+                        firebase.store_quarterly_analysis(args.ticker.upper(), quarter_key, analysis_data, args.verbose)
+                        stored_count += 1
+                    except Exception as e:
+                        print(f'⚠️  Error storing {quarter_key}: {e}')
+                
+                print(f'\n✅ Stored {stored_count}/{len(results)} quarterly analyses to Firebase')
+            
             # Summary
             for quarter_key, analysis_data in results.items():
                 print(f'\n{quarter_key}:')
@@ -642,11 +677,10 @@ Examples:
                 if args.extract_custom_kpis:
                     print(f'  Custom KPIs: {len(analysis_data.get("custom_kpis", []))}')
             
-            if not args.no_store:
-                print('\nNote: Storage functionality will be added in next phase')
-            else:
+            if args.no_store:
                 print('\n✅ All quarterly analyses generated (not stored)')
-                print(json.dumps(results, indent=2))
+                if args.verbose:
+                    print(json.dumps(results, indent=2))
         
         else:
             # Single quarter processing
@@ -668,9 +702,10 @@ Examples:
             
             # Store to Firebase unless --no-store is specified
             if not args.no_store:
-                # TODO: Add storage method to firebase_cache.py for quarterly analysis
-                print('\n✅ Quarterly analysis generated')
-                print('Note: Storage functionality will be added in next phase')
+                # Store to Firebase
+                firebase = FirebaseCache()
+                firebase.store_quarterly_analysis(args.ticker.upper(), args.quarter, analysis_data, args.verbose)
+                print('\n✅ Quarterly analysis generated and stored')
                 print('\nAnalysis preview:')
                 print('='*80)
                 print(f"Summary:\n{analysis_data.get('summary', 'N/A')[:500]}...")

@@ -147,19 +147,19 @@ function QuarterlyTimelineSummary({
                 ) : (
                   <div key={idx} className="flex-1 min-w-0 bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-2">
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-[11px] font-bold text-gray-900 leading-tight">
+                      <h4 className="text-sm font-bold text-gray-900 leading-tight">
                         {factor.driver.factor || 'Unknown Factor'}
                       </h4>
                       {factor.driver.contribution_percent !== undefined && (
-                        <span className="text-[10px] font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
+                        <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
                           {factor.driver.contribution_percent >= 0 ? '+' : ''}{factor.driver.contribution_percent.toFixed(1)}% EPS
                         </span>
                       )}
                     </div>
                     {factor.driver.thesis_points && factor.driver.thesis_points.length > 0 && (
-                      <div className="mb-2 space-y-1">
-                        {factor.driver.thesis_points.slice(0, 3).map((point, ptIdx) => (
-                          <div key={ptIdx} className="flex items-start gap-1.5 text-[10px] text-gray-800 leading-relaxed">
+                      <div className="mb-2 space-y-1.5">
+                        {factor.driver.thesis_points.slice(0, 2).map((point, ptIdx) => (
+                          <div key={ptIdx} className="flex items-start gap-1.5 text-xs text-gray-800 leading-relaxed">
                             <span className="text-blue-600 mt-0.5 flex-shrink-0 font-bold">•</span>
                             <span className="line-clamp-2">{point}</span>
                           </div>

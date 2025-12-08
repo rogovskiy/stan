@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import AnalystDataCard from './AnalystDataCard';
+import CompanyInfoCard from './CompanyInfoCard';
 
 interface SidebarCurrentData {
   stockPrice: number | null;
@@ -94,64 +95,20 @@ export default function StockSidebar({
 
   return (
     <div className="space-y-6">
-      {/* Integrated Header with Ratios - Sharp Modern Design */}
+      {/* Company Info Card - Reusable Component */}
+      <CompanyInfoCard 
+        ticker={selectedTicker} 
+        showPrice={true}
+        stockPrice={currentData?.stockPrice}
+        priceChange={priceChange}
+        priceChangePercent={priceChangePercent}
+        marketCap={currentData?.marketCap}
+        peRatio={currentData?.peRatio}
+        dividend={currentData?.dividendsPOR}
+      />
+      
+      {/* Integrated Ratios Section */}
       <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
-        {/* Company Info & Price Section */}
-        <div className="px-6 pt-6 pb-4 border-b border-gray-200">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-1">
-                {companyName || selectedTicker || 'Loading...'}
-              </h1>
-              <p className="text-gray-500 text-sm font-medium mb-2">
-                {exchange ? `${exchange}: ` : ''}{selectedTicker}
-              </p>
-              {/* Market Cap, P/E, and Dividend */}
-              {currentData && (
-                <div className="flex items-center gap-4 text-xs text-gray-600">
-                  {currentData.marketCap && (
-                    <span>
-                      <span className="font-semibold">Market Cap:</span> ${currentData.marketCap.toFixed(1)}B
-                    </span>
-                  )}
-                  {currentData.peRatio !== null && currentData.peRatio !== undefined && (
-                    <span>
-                      <span className="font-semibold">P/E:</span> {currentData.peRatio.toFixed(1)}
-                    </span>
-                  )}
-                  {currentData.dividendsPOR !== null && currentData.dividendsPOR !== undefined && (
-                    <span>
-                      <span className="font-semibold">Dividend:</span> {currentData.dividendsPOR.toFixed(1)}%
-                    </span>
-                  )}
-                </div>
-              )}
-              {/* Company Summary Paragraph */}
-              {companySummary && (
-                <p className="text-gray-600 text-sm mt-3 leading-relaxed">
-                  {companySummary}
-                </p>
-              )}
-            </div>
-            
-            {/* Price Display - Right aligned, less prominent */}
-            {currentData && (
-              <div className="text-right ml-4">
-                <div className="text-lg font-semibold text-gray-700 tracking-tight mb-1">
-                  ${currentData.stockPrice?.toFixed(2) || '0.00'}
-                </div>
-                <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                  <span className={`text-xs font-medium ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}
-                  </span>
-                  <span className={`text-xs font-medium ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
 
         {/* Ratios Grid - Integrated */}
         {currentData && (

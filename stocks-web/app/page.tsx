@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint, calculateAnnualEps, getTrailing4QuartersEps, calculateFairValue, QuarterlyDataPoint as CalcQuarterlyDataPoint, calculateMaxAvailableYears } from './lib/calculations';
 import { DailyPriceResponse, QuarterlyDataResponse, DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from './types/api';
 import StockAnalysisChart from './components/StockAnalysisChart';
@@ -15,6 +17,7 @@ interface AnalystPriceTargets {
 }
 
 export default function Home() {
+  const pathname = usePathname();
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
   const [quarterlyData, setQuarterlyData] = useState<ApiQuarterlyDataPoint[]>([]);
@@ -251,20 +254,42 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
       {/* Top Navigation Bar */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="w-full max-w-none px-6 py-2.5">
-          <div className="flex items-center justify-between gap-4">
+        <div className="w-full max-w-none px-6 py-3">
+          <div className="flex items-center gap-6">
             {/* Logo/Brand */}
-            <div className="flex items-center gap-3">
+            <div className="flex-shrink-0">
               <div className="text-lg font-bold text-blue-600 tracking-tight">StockAnalysis</div>
             </div>
             {/* Ticker Search Bar */}
-            <div className="flex-1 flex justify-center max-w-2xl">
+            <div className="flex-1 max-w-md">
               <TickerSearch 
                 selectedTicker={selectedTicker}
                 onTickerChange={handleTickerChange}
               />
             </div>
-            <div className="w-32"></div> {/* Spacer for centering */}
+            {/* Navigation Items */}
+            <nav className="flex items-center gap-6 flex-shrink-0">
+              <Link
+                href="/"
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === '/'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                Value
+              </Link>
+              <Link
+                href="/kpi-test"
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === '/kpi-test'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                KPI
+              </Link>
+            </nav>
           </div>
         </div>
       </div>

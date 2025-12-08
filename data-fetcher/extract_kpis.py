@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Generate Quarterly KPI Extraction
+Extract KPIs from Quarterly IR Documents
 
 Extracts custom KPIs (Key Performance Indicators) from quarterly investor relations documents.
 Focuses on extracting company-specific metrics that are not in standard financial statements.
+
+This script handles:
+- KPI extraction using LLM with structured output
+- KPI name normalization across quarters
+- Frequency tracking (how many quarters a KPI has been reported)
+- KPI matrix display showing metrics across quarters
 """
 
 import os
@@ -725,6 +731,289 @@ def print_kpi_matrix(results: Dict[str, List[Dict[str, Any]]]) -> None:
     print(f'{"="*80}\n')
 
 
+def normalize_annual_q4_values(
+    timeseries_values: List[Dict[str, Any]],
+    sorted_quarters: List[str],
+    verbose: bool = False
+) -> tuple[List[Dict[str, Any]], int]:
+    """Detect and normalize annual Q4 values to quarterly
+    
+    Args:
+        timeseries_values: List of quarter value dictionaries
+        sorted_quarters: Sorted list of quarter keys
+        verbose: Enable verbose output
+        
+    Returns:
+        Tuple of (normalized_timeseries_values, count_of_normalized_values)
+    """
+    normalized_count = 0
+    normalized_values = timeseries_values.copy()
+    
+    # Group quarters by year
+    years_data = {}  # year -> {q1: value, q2: value, q3: value, q4: value, ...}
+    
+    for i, quarter_key in enumerate(sorted_quarters):
+        year = int(quarter_key[:4])
+        quarter_num = int(quarter_key[5])
+        
+        if year not in years_data:
+            years_data[year] = {}
+        
+        if i < len(normalized_values) and normalized_values[i].get('value') is not None:
+            try:
+                # Try to parse value as float (handle strings like "100.5B", "50M", etc.)
+                value_str = str(normalized_values[i]['value'])
+                # Remove common suffixes and parse
+                value_str_clean = value_str.replace(',', '').strip()
+                
+                # Handle billions, millions, thousands
+                multiplier = 1.0
+                if value_str_clean.upper().endswith('B'):
+                    multiplier = 1e9
+                    value_str_clean = value_str_clean[:-1]
+                elif value_str_clean.upper().endswith('M'):
+                    multiplier = 1e6
+                    value_str_clean = value_str_clean[:-1]
+                elif value_str_clean.upper().endswith('K'):
+                    multiplier = 1e3
+                    value_str_clean = value_str_clean[:-1]
+                
+                # Remove currency symbols and parse
+                value_str_clean = value_str_clean.replace('$', '').replace('%', '').strip()
+                
+                value_float = float(value_str_clean) * multiplier
+                years_data[year][f'q{quarter_num}'] = {
+                    'value': value_float,
+                    'index': i,
+                    'original_value': normalized_values[i]['value']
+                }
+            except (ValueError, TypeError):
+                # Can't parse, skip
+                continue
+    
+    # Check each year for annual Q4 values
+    for year, quarters in years_data.items():
+        if 'q4' not in quarters:
+            continue
+        
+        q4_data = quarters['q4']
+        q4_value = q4_data['value']
+        
+        # Get Q1-Q3 values for this year
+        q1_q3_values = []
+        for q in ['q1', 'q2', 'q3']:
+            if q in quarters:
+                q1_q3_values.append(quarters[q]['value'])
+        
+        if len(q1_q3_values) < 2:  # Need at least 2 quarters to compare
+            continue
+        
+        # Calculate average of Q1-Q3
+        avg_q1_q3 = sum(q1_q3_values) / len(q1_q3_values)
+        sum_q1_q3 = sum(q1_q3_values)
+        
+        # Skip if Q4 or Q1-Q3 values are zero or too small (to avoid division issues)
+        if abs(q4_value) < 1e-6 or abs(avg_q1_q3) < 1e-6:
+            continue
+        
+        # Check if Q4 appears to be annual (roughly 4x average or close to sum of Q1-Q3)
+        # Use a tolerance range: 3.5x to 4.5x average, or 0.9x to 1.1x of (sum Q1-Q3)
+        ratio_to_avg = q4_value / avg_q1_q3 if abs(avg_q1_q3) > 1e-6 else 0
+        ratio_to_sum = q4_value / sum_q1_q3 if abs(sum_q1_q3) > 1e-6 else 0
+        
+        is_annual = False
+        if 3.5 <= ratio_to_avg <= 4.5:
+            # Q4 is roughly 4x the average of Q1-Q3
+            is_annual = True
+        elif 0.9 <= ratio_to_sum <= 1.1:
+            # Q4 is roughly equal to sum of Q1-Q3 (missing one quarter scenario)
+            is_annual = True
+        
+        if is_annual:
+            # Convert annual Q4 to quarterly by dividing by 4
+            q4_index = q4_data['index']
+            original_value = normalized_values[q4_index]['value']
+            quarterly_value = q4_value / 4.0
+            
+            # Format back to string preserving original format if possible
+            if isinstance(original_value, str):
+                # Try to preserve the format (e.g., "100.5B" -> "25.1B")
+                if 'B' in original_value.upper():
+                    quarterly_str = f"{quarterly_value / 1e9:.2f}B"
+                elif 'M' in original_value.upper():
+                    quarterly_str = f"{quarterly_value / 1e6:.2f}M"
+                elif 'K' in original_value.upper():
+                    quarterly_str = f"{quarterly_value / 1e3:.2f}K"
+                else:
+                    quarterly_str = str(quarterly_value)
+                normalized_values[q4_index]['value'] = quarterly_str
+            else:
+                normalized_values[q4_index]['value'] = quarterly_value
+            
+            normalized_values[q4_index]['was_annual'] = True
+            normalized_values[q4_index]['original_annual_value'] = original_value
+            normalized_count += 1
+            
+            if verbose:
+                print(f'   🔄 Normalized {year}Q4: {original_value} (annual) → {normalized_values[q4_index]["value"]} (quarterly)')
+    
+    return normalized_values, normalized_count
+
+
+def create_kpi_timeseries(
+    results: Dict[str, List[Dict[str, Any]]],
+    min_coverage: float = 0.6,
+    verbose: bool = False
+) -> Dict[str, Any]:
+    """Create timeseries for KPIs with sufficient data coverage
+    
+    Args:
+        results: Dictionary mapping quarter_key to list of KPIs
+        min_coverage: Minimum data coverage threshold (0.6 = 60%)
+        verbose: Enable verbose output
+        
+    Returns:
+        Dictionary containing KPI timeseries data
+    """
+    if not results:
+        return {
+            'kpis': [],
+            'metadata': {
+                'total_quarters': 0,
+                'quarters': [],
+                'min_coverage': min_coverage,
+                'min_quarters_required': 0,
+                'total_kpis_extracted': 0,
+                'kpis_included': 0,
+                'kpis_filtered_out': 0,
+                'created_at': datetime.now().isoformat()
+            }
+        }
+    
+    # Sort quarters chronologically
+    sorted_quarters = sorted(results.keys())
+    total_quarters = len(sorted_quarters)
+    min_quarters_required = int(total_quarters * min_coverage)
+    
+    if verbose:
+        print(f'\n📊 Creating KPI timeseries...')
+        print(f'   Total quarters: {total_quarters}')
+        print(f'   Minimum coverage: {min_coverage * 100:.0f}% ({min_quarters_required} quarters)')
+    
+    # Collect all unique KPI names and their appearances across quarters
+    kpi_data = {}  # kpi_name -> {quarter_key: kpi_dict, ...}
+    kpi_metadata = {}  # kpi_name -> {group, unit, frequency, etc.}
+    
+    for quarter_key, kpis in results.items():
+        for kpi in kpis:
+            kpi_name = kpi.get('name', '')
+            if not kpi_name:
+                continue
+            
+            if kpi_name not in kpi_data:
+                kpi_data[kpi_name] = {}
+                kpi_metadata[kpi_name] = {
+                    'group': kpi.get('group', 'Other'),
+                    'unit': kpi.get('unit', ''),
+                    'max_frequency': 0
+                }
+            
+            kpi_data[kpi_name][quarter_key] = kpi
+            kpi_metadata[kpi_name]['max_frequency'] = max(
+                kpi_metadata[kpi_name]['max_frequency'],
+                kpi.get('frequency', 1)
+            )
+    
+    # Filter KPIs by coverage threshold
+    kpi_timeseries = []
+    filtered_out = []
+    total_normalized = 0  # Track total normalized Q4 values across all KPIs
+    
+    for kpi_name, quarter_data in kpi_data.items():
+        coverage_count = len(quarter_data)
+        coverage_rate = coverage_count / total_quarters if total_quarters > 0 else 0
+        
+        if coverage_count >= min_quarters_required:
+            # Build timeseries for this KPI
+            timeseries_values = []
+            
+            for quarter_key in sorted_quarters:
+                if quarter_key in quarter_data:
+                    kpi = quarter_data[quarter_key]
+                    timeseries_values.append({
+                        'quarter': quarter_key,
+                        'value': kpi.get('value', None),
+                        'unit': kpi.get('unit', ''),
+                        'change': kpi.get('change', None),
+                        'change_type': kpi.get('change_type', None),
+                        'frequency': kpi.get('frequency', 1),
+                        'context': kpi.get('context', ''),
+                        'source': kpi.get('source', '')
+                    })
+                else:
+                    # Include missing quarters as null values to maintain continuity
+                    timeseries_values.append({
+                        'quarter': quarter_key,
+                        'value': None,
+                        'unit': kpi_metadata[kpi_name]['unit'],
+                        'change': None,
+                        'change_type': None,
+                        'frequency': 0,
+                        'context': None,
+                        'source': None
+                    })
+            
+            # Normalize annual Q4 values to quarterly
+            timeseries_values, normalized_count = normalize_annual_q4_values(
+                timeseries_values,
+                sorted_quarters,
+                verbose
+            )
+            total_normalized += normalized_count
+            
+            kpi_timeseries.append({
+                'name': kpi_name,
+                'group': kpi_metadata[kpi_name]['group'],
+                'unit': kpi_metadata[kpi_name]['unit'],
+                'coverage': coverage_rate,
+                'coverage_count': coverage_count,
+                'total_quarters': total_quarters,
+                'max_frequency': kpi_metadata[kpi_name]['max_frequency'],
+                'values': timeseries_values
+            })
+        else:
+            filtered_out.append({
+                'name': kpi_name,
+                'coverage': coverage_rate,
+                'coverage_count': coverage_count
+            })
+    
+    # Sort by coverage (highest first), then by name
+    kpi_timeseries.sort(key=lambda x: (-x['coverage'], x['name']))
+    
+    if verbose:
+        print(f'   ✅ Included KPIs: {len(kpi_timeseries)} (≥{min_coverage * 100:.0f}% coverage)')
+        if filtered_out:
+            print(f'   ⚠️  Filtered out: {len(filtered_out)} KPIs (<{min_coverage * 100:.0f}% coverage)')
+        if total_normalized > 0:
+            print(f'   🔄 Normalized {total_normalized} annual Q4 value(s) to quarterly')
+    
+    return {
+        'kpis': kpi_timeseries,
+        'metadata': {
+            'total_quarters': total_quarters,
+            'quarters': sorted_quarters,
+            'min_coverage': min_coverage,
+            'min_quarters_required': min_quarters_required,
+                'total_kpis_extracted': len(kpi_data),
+                'kpis_included': len(kpi_timeseries),
+                'kpis_filtered_out': len(filtered_out),
+                'annual_q4_normalized': total_normalized,
+                'created_at': datetime.now().isoformat()
+        }
+    }
+
+
 def get_all_quarters_with_documents(ticker: str) -> List[str]:
     """Get all quarters that have IR documents, sorted chronologically
     
@@ -770,16 +1059,16 @@ def main():
         epilog='''
 Examples:
   # Extract KPIs for a specific quarter
-  python generate_quarterly_analysis.py AAPL 2025Q1
+  python extract_kpis.py AAPL 2025Q1
   
   # Extract with verbose output
-  python generate_quarterly_analysis.py AAPL 2025Q1 --verbose
+  python extract_kpis.py AAPL 2025Q1 --verbose
   
   # Extract without storing (for testing)
-  python generate_quarterly_analysis.py AAPL 2025Q1 --no-store
+  python extract_kpis.py AAPL 2025Q1 --no-store
   
   # Extract KPIs for all quarters starting from 2022Q1
-  python generate_quarterly_analysis.py AAPL --all-quarters --start-quarter 2022Q1
+  python extract_kpis.py AAPL --all-quarters --start-quarter 2022Q1
         '''
     )
     
@@ -917,6 +1206,26 @@ Examples:
             
             # Print KPI matrix
             print_kpi_matrix(results)
+            
+            # Create and store KPI timeseries (only for KPIs with >60% coverage)
+            if results and not args.no_store:
+                try:
+                    timeseries_data = create_kpi_timeseries(results, min_coverage=0.6, verbose=args.verbose)
+                    timeseries_data['ticker'] = args.ticker.upper()
+                    
+                    firebase.cache_kpi_timeseries(args.ticker.upper(), timeseries_data)
+                    
+                    if args.verbose:
+                        print(f'\n📈 KPI Timeseries Summary:')
+                        print(f'   Total KPIs extracted: {timeseries_data["metadata"]["total_kpis_extracted"]}')
+                        print(f'   KPIs included (≥60% coverage): {timeseries_data["metadata"]["kpis_included"]}')
+                        print(f'   KPIs filtered out: {timeseries_data["metadata"]["kpis_filtered_out"]}')
+                        print(f'   Stored at: tickers/{args.ticker.upper()}/timeseries/kpi')
+                except Exception as e:
+                    print(f'⚠️  Error creating/storing KPI timeseries: {e}')
+                    if args.verbose:
+                        import traceback
+                        traceback.print_exc()
         
         else:
             # Single quarter KPI extraction

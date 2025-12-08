@@ -405,6 +405,25 @@ class FirebaseCache:
             print(f'Error getting quarterly timeseries for {ticker}: {error}')
             return None
     
+    def cache_kpi_timeseries(self, ticker: str, data: Dict[str, Any]) -> None:
+        """Cache KPI time series data in ticker-specific collection
+        
+        Args:
+            ticker: Stock ticker symbol
+            data: KPI timeseries data dictionary
+        """
+        try:
+            doc_ref = self.db.collection('tickers').document(ticker.upper()).collection('timeseries').document('kpi')
+            data_with_timestamp = {
+                **data,
+                'last_updated': datetime.now().isoformat()
+            }
+            doc_ref.set(data_with_timestamp)
+            print(f'Cached KPI timeseries for {ticker.upper()} in tickers/{ticker.upper()}/timeseries/kpi')
+        except Exception as error:
+            print(f'Error caching KPI timeseries for {ticker}: {error}')
+            raise error
+    
     def set_sec_financial_data(self, ticker: str, period_key: str, data: Dict[str, Any]) -> None:
         """Cache SEC comprehensive financial statement data
         

@@ -181,6 +181,32 @@ export async function getCompanySummary(ticker: string): Promise<any | null> {
   }
 }
 
+/**
+ * Get KPI timeseries data from ticker-specific collection
+ */
+export async function getKPITimeseries(ticker: string): Promise<any | null> {
+  try {
+    const kpiRef = doc(db, 'tickers', ticker.toUpperCase(), 'timeseries', 'kpi');
+    const kpiSnap = await getDoc(kpiRef);
+    
+    if (kpiSnap.exists()) {
+      const data = kpiSnap.data();
+      
+      // Return the data if it exists (no expiration logic)
+      if (data) {
+        // Remove last_updated from returned data
+        const { last_updated, ...kpiData } = data;
+        return kpiData;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error getting KPI timeseries for ${ticker}:`, error);
+    return null;
+  }
+}
+
 // Create a service object for easier imports
 export const firebaseService = {
   getTickers,
@@ -189,5 +215,6 @@ export const firebaseService = {
   hasTickerData,
   getQuarterlyTimeseries,
   getAnalystData,
-  getCompanySummary
+  getCompanySummary,
+  getKPITimeseries
 };

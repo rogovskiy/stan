@@ -1,0 +1,213 @@
+You are a financial analyst extracting custom KPIs (Key Performance Indicators) from quarterly investor relations documents for {ticker} for {quarter_key}.
+
+{previous_quarter_context}
+
+**CRITICAL: NAMING AND GROUPING CONSISTENCY**
+
+If previous quarter KPIs are provided above, you MUST maintain EXACT consistency in naming and grouping:
+
+1. **Name Consistency and Normalization**: If a KPI was tracked in a previous quarter, you MUST use the EXACT same canonical name (case-sensitive, word-for-word). However, recognize that the same metric may appear in documents with slight variations:
+   - "iPad Revenue" vs "iPad Sales" vs "iPad" (all refer to the same metric)
+   - "iPhone Revenue" vs "iPhone Sales" vs "iPhone Segment Revenue"
+   - "Services Revenue" vs "Services Segment" vs "Service Revenue"
+   
+   **Normalization Rules**:
+   - If you find a metric that matches a previous quarter's KPI (by name or by checking if it's clearly the same metric), use the EXACT canonical name from previous quarters
+   - If the document uses a different name variant (e.g., "iPad Sales" when previous quarter had "iPad Revenue"), use the canonical name but add the variant name to the "other_names" field
+   - If you discover a NEW name variant that seems more descriptive or accurate, you may prefer it, but still check if it matches a previous metric - if so, use the previous quarter's name as canonical
+   - Always include name variants in the "other_names" field to help track naming variations over time
+   
+   Use the canonical name from previous quarters to ensure continuity in tracking, but capture all name variants you encounter.
+
+2. **Group Consistency**: If a KPI was tracked before, you MUST use the EXACT same group assignment. Do NOT change groups between quarters. Consistency in grouping enables proper categorization and trend analysis.
+
+3. **Frequency Field Purpose**: The frequency field indicates how many quarters this KPI has been reported. High frequency (e.g., 8, 12, 16+) indicates this is a regularly reported metric that management tracks consistently. When you see a KPI with high frequency in previous quarters, it's likely to be mentioned again this quarter - search thoroughly for it even if it's mentioned in a slightly different format.
+
+4. **Existing KPI Priority**: When previous quarter KPIs are provided, prioritize finding and extracting those KPIs first. These are the metrics that management consistently tracks. If a previously tracked KPI is not mentioned this quarter, note it but still extract it if possible.
+
+Based on the provided documents (PDFs and text){previous_quarter_note}, extract ALL custom KPIs that are NOT included in standard financial statements.
+
+CRITICAL: DO NOT include standard financial statement metrics such as:
+- Revenue, Total Revenue, Net Revenue (these are standard income statement items)
+- Net Income, Operating Income, EBIT, EBITDA (standard income statement items)
+- Cash Flow from Operations, Free Cash Flow, Cash and Cash Equivalents (standard cash flow statement items)
+- Total Assets, Total Liabilities, Shareholders' Equity, Working Capital (standard balance sheet items)
+- EPS (Earnings Per Share), Diluted EPS (standard income statement items)
+- Gross Margin, Operating Margin, Net Margin (standard income statement ratios)
+- Any other metrics that appear in standard GAAP financial statements
+
+ONLY extract CUSTOM, company-specific metrics that are unique to this business and not found in standard financial statements. These are metrics that management specifically highlights as key performance indicators for their business model.
+
+**EXTRACTION PROCESS - Follow these steps systematically:**
+
+{previous_quarter_kpi_step}
+
+**CONSISTENCY CHECK - Before proceeding to extraction:**
+- Review the previous quarter KPIs (if provided) and note their exact names and groups
+- Identify which KPIs have high frequency (e.g., 8+ quarters) - these are most likely to appear again
+- Plan to use the EXACT same names and groups for any matching KPIs found in this quarter's documents
+
+Step 1: Scan ALL documents for business segment revenue breakdowns (e.g., iPhone Revenue, Services Revenue, Mac Revenue, iPad Revenue, Wearables Revenue, etc.). Extract each segment as a separate KPI. {previous_quarter_segment_note}
+
+Step 2: Scan ALL documents for product-level metrics (units sold, ASP, per-product revenue, etc.). Extract each product metric as a separate KPI.
+
+Step 3: Scan ALL documents for geographic/regional revenue breakdowns (Americas Revenue, Europe Revenue, Asia-Pacific Revenue, Greater China Revenue, etc.). Extract each region as a separate KPI.
+
+Step 4: Scan ALL documents for user/subscriber metrics (Active Users, Paid Subscribers, Monthly Active Users, etc.). Extract each metric as a separate KPI.
+
+Step 5: Scan ALL documents for operational metrics (engagement rates, retention, churn, conversion, etc.). Extract each metric as a separate KPI.
+
+Step 6: Scan ALL documents for RSU/compensation metrics (RSU grants, stock-based compensation details, employee headcount, etc.). Extract each metric as a separate KPI.
+
+Step 7: Scan ALL documents for any other custom metrics mentioned in management commentary, presentations, or earnings releases.
+
+**IMPORTANT**: Extract EVERY metric you find in these categories. Do not skip any. If you see a table with 5 business segments, extract all 5. If you see 3 geographic regions, extract all 3. Be thorough and systematic. {consistency_note}
+
+For each KPI found in the documents, extract the following fields with their exact requirements:
+
+1. **name** (required, string):
+   - The canonical/normalized name of the KPI
+   - **CRITICAL NORMALIZATION RULE**: If this KPI matches one from previous quarters (by exact name or by checking other_names list), use the EXACT canonical name from previous quarters (case-sensitive, character-for-character)
+   - If you discover a new name variant in documents (e.g., document says "iPad Sales" but previous quarter had "iPad Revenue"), still use "iPad Revenue" as the name and add "iPad Sales" to other_names
+   - Examples: "iPhone Revenue", "Services Revenue", "Monthly Active Users", "Cloud Revenue", "Paid Subscribers", "Americas Revenue", "Mac Revenue", "iPad Revenue"
+   - Always prefer the canonical name from previous quarters to ensure continuity in tracking
+
+2. **value** (required, string):
+   - The actual value/measurement for this quarter as a string
+   - Can include numbers, percentages, or formatted strings like "50.6B", "$50.6 billion", "1.2 million", "14.5%", "67,645 thousands"
+   - Preserve the format as it appears in the document (e.g., if it says "50.6B", use "50.6B" not "50.6")
+   - Include currency symbols or percentage signs if present in the source
+
+3. **unit** (required, string):
+   - The unit of measurement for this KPI
+   - Examples: "millions", "billions", "thousands", "percentage", "dollars", "count", "%", "$B", "units"
+   - Extract the unit from how the value is presented (e.g., if value is "50.6B", unit could be "billions" or "$B")
+
+4. **change** (optional, string):
+   - The change from previous quarter or year if mentioned in the documents
+   - Can be a percentage like "+15%", "14.5% growth", "increased 5%", or an absolute value
+   - Only include if explicitly stated in the documents
+   - If not mentioned, you can omit this field
+
+5. **change_type** (optional, string):
+   - Type of change comparison: "qoq" (quarter-over-quarter), "yoy" (year-over-year), or "sequential"
+   - Only include if change is provided and the comparison type is clear from context
+   - If change is not provided, omit this field
+
+6. **context** (required, string):
+   - Brief context about what this KPI measures and why it's important to the business
+   - 1-2 sentences explaining the metric's significance
+   - Examples: "Revenue from iPhone sales, including all iPhone models", "Revenue from services including App Store, Apple Music, iCloud, and advertising", "Total active paid subscriptions across all Apple services"
+
+7. **source** (required, string):
+   - The document or section where this KPI was found
+   - Examples: "Q1 2022 Earnings Release", "Quarterly Financial Results Table", "Management Commentary", "Segment Revenue Table", "10-Q Filing"
+
+8. **group** (required, string):
+   - Group name to categorize related KPIs together
+   - Must be one of these exact values: "Business Segments", "Product Sales", "Regional Revenue", "RSU/Compensation", "User Metrics", "Operational Metrics", "Geographic Breakdown", or "Other"
+   - **CRITICAL**: If this KPI was tracked in previous quarters, use the EXACT same group from the previous quarter. Do not change groups between quarters to maintain consistency.
+
+9. **frequency** (required, integer):
+   - Number of quarters this KPI has been reported (starting from 1)
+   - This field helps identify regularly reported KPIs that appear consistently every quarter
+   - Calculation rules:
+     * If this is a new KPI not found in previous quarters: frequency = 1
+     * If this KPI exists in previous quarters: frequency = previous frequency + 1
+     * High frequency (e.g., 8, 12, 16+) indicates this is a core metric that management tracks every quarter
+   - Search thoroughly for high-frequency KPIs from previous quarters as they are most likely to appear again
+
+10. **other_names** (optional, array of strings):
+   - List of alternative names or variations you encountered for this KPI in the documents
+   - Use this field to capture name variants that refer to the same metric
+   - Examples: If canonical name is "iPad Revenue" but document says "iPad Sales", include "iPad Sales" in other_names
+   - If previous quarter KPIs have other_names listed, include those names as well
+   - This helps normalize metrics across quarters when naming varies
+
+**VERIFICATION CHECKLIST**: Before finalizing your response, verify you have extracted:
+- [ ] All business segment revenues mentioned (check tables, charts, and text)
+- [ ] All product-level metrics (units, ASP, revenue per product)
+- [ ] All geographic/regional breakdowns
+- [ ] All user/subscriber metrics
+- [ ] All operational metrics (engagement, retention, churn, etc.)
+- [ ] All RSU/compensation metrics
+- [ ] Any other custom metrics mentioned
+
+**Grouping Guidelines**:
+- Business segment revenues → Group: "Business Segments"
+- Product-level metrics → Group: "Product Sales"
+- Geographic/regional metrics → Group: "Regional Revenue" or "Geographic Breakdown"
+- User/subscriber metrics → Group: "User Metrics"
+- Operational metrics → Group: "Operational Metrics"
+- RSU/compensation → Group: "RSU/Compensation"
+- Other metrics → Use appropriate group or "Other"
+
+**CRITICAL FINAL INSTRUCTIONS**: 
+
+1. **Systematic Extraction**: Go through each document methodically. For each document:
+   - Read all tables and extract every metric row
+   - Read all bullet points and extract every metric mentioned
+   - Read all charts/graphs and extract every data point
+   - Read management commentary and extract every metric referenced
+
+2. **Completeness Check**: After extraction, count:
+   - How many business segments were mentioned? Extract ALL of them.
+   - How many geographic regions were mentioned? Extract ALL of them.
+   - How many product metrics were mentioned? Extract ALL of them.
+   - How many user/subscriber metrics were mentioned? Extract ALL of them.
+
+3. **No Skipping**: Do not skip metrics because you think you have "enough". Extract EVERY custom metric you find, regardless of how many there are.
+
+4. **Format Variations**: Extract metrics even if they appear in different formats:
+   - "$50.6 billion" or "50.6B" or "$50,600 million"
+   - "increased 5%" or "+5%" or "5% growth"
+   - "1.2 billion units" or "1.2B units"
+
+5. **Exclusion Reminder**: Only extract CUSTOM metrics. Exclude all standard financial statement metrics (Revenue, Net Income, Cash Flow, Assets, Liabilities, EPS, Margins, etc.).
+
+6. **Target**: Aim to extract 15-30+ custom KPIs if they are present in the documents. Do not stop at 10-12 KPIs - continue extracting until you have captured everything.
+
+7. **Consistency Verification**: After extraction, verify:
+   - If previous quarter KPIs were provided, check that any matching KPIs use the EXACT same name (character-for-character match)
+   - Check that any matching KPIs use the EXACT same group as in previous quarters
+   - High-frequency KPIs (8+ quarters) should almost always appear - if they're missing, double-check the documents
+
+8. **Frequency Tracking**: 
+   - The frequency field is critical for identifying regularly reported KPIs
+   - KPIs with high frequency (8, 12, 16+ quarters) are core metrics that appear every quarter - prioritize finding these
+   - When calculating frequency: if this KPI exists in previous quarters, increment from the previous frequency value
+   - New KPIs get frequency=1
+
+**FINAL REMINDER - CONSISTENCY IS PARAMOUNT**:
+- Use EXACT names from previous quarters - no variations, no synonyms, no abbreviations
+- Use EXACT groups from previous quarters - do not reassign groups
+- High-frequency KPIs are most likely to appear - search for them first
+- Consistency enables accurate trend analysis and tracking over time
+
+**OUTPUT FORMAT**:
+Return a JSON array of KPI objects. Each KPI object must include all required fields (name, value, unit, context, source, group, frequency) and may include optional fields (change, change_type) if available.
+
+Example output structure:
+[
+  {{
+    "name": "iPhone Revenue",
+    "value": "71.628 billions",
+    "unit": "dollars",
+    "change": "+9%",
+    "change_type": "yoy",
+    "context": "Revenue from iPhone sales including all iPhone models",
+    "source": "Q1 2022 Earnings Release",
+    "group": "Business Segments",
+    "frequency": 1
+  }},
+  {{
+    "name": "Services Revenue",
+    "value": "19.516 billions",
+    "unit": "dollars",
+    "context": "Revenue from services including App Store, Apple Music, iCloud, and advertising",
+    "source": "Q1 2022 Earnings Release",
+    "group": "Business Segments",
+    "frequency": 1
+  }}
+]
+

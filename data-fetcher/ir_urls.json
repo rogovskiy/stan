@@ -1,7 +1,7 @@
 {
   "AAPL": "https://investor.apple.com/investor-relations/default.aspx",
   "MSFT": "https://www.microsoft.com/investor/rss/",
-  "GOOGL": "https://abc.xyz/investor/news/",
+  "GOOG": "https://abc.xyz/investor/",
   "AMZN": "https://ir.aboutamazon.com/news-releases",
   "META": "https://investor.fb.com/news/"
 }

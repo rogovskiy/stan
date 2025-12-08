@@ -614,9 +614,6 @@ export default function KPITestPage() {
                       {/* Group Header */}
                       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-500 rounded-lg p-4">
                         <h2 className="text-2xl font-bold text-gray-900">{groupName}</h2>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {groupKPIs.length} {groupKPIs.length === 1 ? 'KPI' : 'KPIs'}
-                        </p>
                       </div>
 
                       {/* Render based on display mode */}

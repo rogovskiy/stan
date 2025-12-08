@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Key Growth Factor Card Model",
+  "description": "JSON model representing a growth factor or risk factor with associated KPI metrics",
+  "type": "object",
+  "required": ["driver", "metric_id"],
+  "properties": {
+    "driver": {
+      "type": "object",
+      "description": "EPS Growth Driver - represents a factor that contributes to or impacts EPS growth",
+      "required": ["factor", "contribution_percent"],
+      "properties": {
+        "factor": {
+          "type": "string",
+          "description": "Name of the growth or risk factor",
+          "examples": [
+            "Services Revenue Growth",
+            "iPhone Sales in China",
+            "Margin Expansion",
+            "Regulatory and Litigation Risks"
+          ]
+        },
+        "contribution_percent": {
+          "type": "number",
+          "description": "Percentage contribution to EPS growth. Positive values indicate growth drivers, negative values indicate risk factors",
+          "examples": [4.2, 2.3, -1.5, 6.5]
+        },
+        "is_risk": {
+          "type": "boolean",
+          "description": "Flag indicating if this factor represents a risk rather than a growth opportunity",
+          "default": false,
+          "examples": [false, true]
+        },
+        "thesis_points": {
+          "type": "array",
+          "description": "Bullet points explaining the reasoning or thesis behind this growth factor or risk",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "examples": [
+            [
+              "Growing installed base of devices expands addressable market for services",
+              "Increasing subscription penetration across App Store, iCloud, and Apple Music"
+            ]
+          ]
+        }
+      }
+    },
+    "metric_id": {
+      "type": "array",
+      "description": "Array of metric IDs that support or relate to this growth factor. Format: 'kpi/{metric_name}' or simple identifier like 'eps'. The actual metric data is resolved separately using these IDs.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0,
+      "maxItems": 2,
+      "examples": [
+        ["kpi/efficiency_ratio"],
+        ["kpi/iphone_sales", "kpi/services_revenue"],
+        ["eps", "kpi/operating_margin"]
+      ]
+    }
+  },
+  "examples": [
+    {
+      "driver": {
+        "factor": "Services Revenue Growth",
+        "contribution_percent": 4.2,
+        "thesis_points": [
+          "Growing installed base of devices expands addressable market for services",
+          "Increasing subscription penetration across App Store, iCloud, and Apple Music"
+        ]
+      },
+      "metric_id": ["kpi/efficiency_ratio"]
+    },
+    {
+      "driver": {
+        "factor": "iPhone Sales in China",
+        "contribution_percent": 3.8,
+        "is_risk": false,
+        "thesis_points": [
+          "Strong iPhone 15 sales momentum in Chinese market",
+          "Expanding retail presence and partnerships with local carriers"
+        ]
+      },
+      "metric_id": ["kpi/iphone_sales"]
+    },
+    {
+      "driver": {
+        "factor": "Regulatory and Litigation Risks",
+        "contribution_percent": -1.5,
+        "is_risk": true,
+        "thesis_points": [
+          "Ongoing antitrust investigations in EU and US markets",
+          "Potential regulatory changes affecting App Store revenue model"
+        ]
+      },
+      "metric_id": ["kpi/legal_costs"]
+    }
+  ]
+}

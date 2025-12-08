@@ -76,7 +76,7 @@ export default function StockSidebar({
       }
 
       try {
-        const response = await fetch(`/api/company-summary?ticker=${selectedTicker}`);
+        const response = await fetch(`/api/company-summary/${selectedTicker}`);
         const result = await response.json();
         
         if (result.success && result.data && result.data.summary) {

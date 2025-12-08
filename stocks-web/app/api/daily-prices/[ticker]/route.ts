@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirebaseCache } from '../../lib/cache';
-import { DailyPriceResponse } from '../../types/api';
+import { FirebaseCache } from '../../../lib/cache';
+import { DailyPriceResponse } from '../../../types/api';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db } from '../../../lib/firebase';
 
 const cache = new FirebaseCache();
 
@@ -40,10 +40,13 @@ function getStartDateFromPeriod(period: string): Date {
   return startDate;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ ticker: string }> }
+) {
   try {
+    const { ticker } = await params;
     const { searchParams } = new URL(request.url);
-    const ticker = searchParams.get('ticker');
     const period = searchParams.get('period') || '5y';
 
     if (!ticker) {

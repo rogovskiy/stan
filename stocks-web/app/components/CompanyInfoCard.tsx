@@ -63,8 +63,8 @@ export default function CompanyInfoCard({
         // Fetch company metadata
         const [tickerResponse, summaryResponse, priceResponse] = await Promise.all([
           fetch(`/api/tickers?ticker=${ticker}`),
-          fetch(`/api/company-summary?ticker=${ticker}`),
-          showPrice ? fetch(`/api/daily-prices?ticker=${ticker}&period=1d`) : Promise.resolve(null)
+          fetch(`/api/company-summary/${ticker}`),
+          showPrice ? fetch(`/api/daily-prices/${ticker}?period=1d`) : Promise.resolve(null)
         ]);
         
         const tickerResult = await tickerResponse.json();

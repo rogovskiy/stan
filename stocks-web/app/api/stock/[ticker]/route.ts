@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirebaseCache } from '../../lib/cache';
-import { YFinanceService } from '../../lib/yfinance';
+import { FirebaseCache } from '../../../lib/cache';
+import { YFinanceService } from '../../../lib/yfinance';
 
 const cache = new FirebaseCache();
 const yfinanceService = new YFinanceService();
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ ticker: string }> }
+) {
   try {
+    const { ticker } = await params;
     const { searchParams } = new URL(request.url);
-    const ticker = searchParams.get('ticker');
     const period = searchParams.get('period') || '5y';
     const forceRefresh = searchParams.get('refresh') === 'true';
 
@@ -58,8 +61,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error generating stock data:', error);
     
-    const { searchParams } = new URL(request.url);
-    const ticker = searchParams.get('ticker');
+    const { ticker } = await params;
     
     return NextResponse.json(
       { error: `Unable to generate data for ticker ${ticker}. Please try again.` },
@@ -69,11 +71,14 @@ export async function GET(request: NextRequest) {
 }
 
 // Optional: Add POST method to clear cache and get earnings summary
-export async function POST(request: NextRequest) {
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ ticker: string }> }
+) {
   try {
+    const { ticker } = await params;
     const { searchParams } = new URL(request.url);
     const action = searchParams.get('action');
-    const ticker = searchParams.get('ticker');
 
     if (action === 'clear-cache') {
       await cache.clearCache(ticker || undefined);

@@ -8,7 +8,7 @@ export default function Navigation() {
 
   const navItems = [
     { href: '/', label: 'Value' },
-    { href: '/kpi-test', label: 'KPI' },
+    { href: '/kpi', label: 'KPI' },
   ];
 
   return (

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../lib/firebaseService';
-import { QuarterlyDataResponse, QuarterlyDataPoint } from '../../types/api';
+import { firebaseService } from '../../../lib/firebaseService';
+import { QuarterlyDataResponse, QuarterlyDataPoint } from '../../../types/api';
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ ticker: string }> }
+) {
   try {
-    const { searchParams } = new URL(request.url);
-    const ticker = searchParams.get('ticker');
+    const { ticker } = await params;
 
     if (!ticker) {
       return NextResponse.json(

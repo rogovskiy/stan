@@ -83,7 +83,7 @@ export default function AnalystDataCard({ ticker, currentPrice, currentData }: A
       setError(null);
 
       try {
-        const response = await fetch(`/api/analyst?ticker=${ticker}`);
+        const response = await fetch(`/api/analyst/${ticker}`);
         const result = await response.json();
 
         if (result.success && result.data) {

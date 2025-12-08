@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { GET } from '../api/stock/route';
+import { GET } from '../api/stock/[ticker]/route';
 
 describe('Stock API Integration Tests', () => {
   // Increase timeout for real API calls
@@ -7,10 +7,10 @@ describe('Stock API Integration Tests', () => {
 
   describe('Real API Integration', () => {
     it('should return price data for a valid ticker (AAPL)', async () => {
-      const url = new URL('http://localhost:3000/api/stock?ticker=AAPL&period=1y');
+      const url = new URL('http://localhost:3000/api/stock/AAPL?period=1y');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: 'AAPL' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -33,10 +33,10 @@ describe('Stock API Integration Tests', () => {
     });
 
     it('should return earnings data for a valid ticker (AAPL)', async () => {
-      const url = new URL('http://localhost:3000/api/stock?ticker=AAPL&period=2y');
+      const url = new URL('http://localhost:3000/api/stock/AAPL?period=2y');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: 'AAPL' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -75,10 +75,10 @@ describe('Stock API Integration Tests', () => {
     });
 
     it('should work with different tickers (MSFT)', async () => {
-      const url = new URL('http://localhost:3000/api/stock?ticker=MSFT&period=1y');
+      const url = new URL('http://localhost:3000/api/stock/MSFT?period=1y');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: 'MSFT' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -106,21 +106,21 @@ describe('Stock API Integration Tests', () => {
       const ticker = 'GOOGL';
       
       // First call - should fetch fresh data
-      const url1 = new URL(`http://localhost:3000/api/stock?ticker=${ticker}&period=1y&refresh=true`);
+      const url1 = new URL(`http://localhost:3000/api/stock/${ticker}?period=1y&refresh=true`);
       const request1 = new NextRequest(url1);
 
-      const response1 = await GET(request1);
+      const response1 = await GET(request1, { params: Promise.resolve({ ticker }) });
       const data1 = await response1.json();
 
       expect(response1.status).toBe(200);
       expect(data1).toHaveProperty('symbol', ticker.toUpperCase());
 
       // Second call without refresh - should use cache if available
-      const url2 = new URL(`http://localhost:3000/api/stock?ticker=${ticker}&period=1y`);
+      const url2 = new URL(`http://localhost:3000/api/stock/${ticker}?period=1y`);
       const request2 = new NextRequest(url2);
 
       const startTime = Date.now();
-      const response2 = await GET(request2);
+      const response2 = await GET(request2, { params: Promise.resolve({ ticker }) });
       const endTime = Date.now();
       const data2 = await response2.json();
 
@@ -137,10 +137,10 @@ describe('Stock API Integration Tests', () => {
     });
 
     it('should return error for invalid ticker', async () => {
-      const url = new URL('http://localhost:3000/api/stock?ticker=INVALIDTICKER123');
+      const url = new URL('http://localhost:3000/api/stock/INVALIDTICKER123');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: 'INVALIDTICKER123' }) });
       const data = await response.json();
 
       expect(response.status).toBe(500);
@@ -149,10 +149,10 @@ describe('Stock API Integration Tests', () => {
     });
 
     it('should return error when no ticker provided', async () => {
-      const url = new URL('http://localhost:3000/api/stock');
+      const url = new URL('http://localhost:3000/api/stock/');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: '' }) });
       const data = await response.json();
 
       expect(response.status).toBe(400);
@@ -163,10 +163,10 @@ describe('Stock API Integration Tests', () => {
       const periods = ['1y', '2y', '5y'];
       
       for (const period of periods) {
-        const url = new URL(`http://localhost:3000/api/stock?ticker=AAPL&period=${period}&refresh=true`);
+        const url = new URL(`http://localhost:3000/api/stock/AAPL?period=${period}&refresh=true`);
         const request = new NextRequest(url);
 
-        const response = await GET(request);
+        const response = await GET(request, { params: Promise.resolve({ ticker: 'AAPL' }) });
         const data = await response.json();
 
         expect(response.status).toBe(200);
@@ -187,10 +187,10 @@ describe('Stock API Integration Tests', () => {
     });
 
     it('should validate data quality and consistency', async () => {
-      const url = new URL('http://localhost:3000/api/stock?ticker=AAPL&period=1y');
+      const url = new URL('http://localhost:3000/api/stock/AAPL?period=1y');
       const request = new NextRequest(url);
 
-      const response = await GET(request);
+      const response = await GET(request, { params: Promise.resolve({ ticker: 'AAPL' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);

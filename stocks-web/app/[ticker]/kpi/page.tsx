@@ -48,15 +48,17 @@ type DisplayMode = 'separate' | 'combined-bars' | 'stacked-area' | 'stacked-bars
 type AggregationMode = 'quarterly' | 'annual';
 
 // Reusable Tooltip Component
-function KPITooltip({ active, payload, changeType, formatValue, formatChange }: any) {
+function KPITooltip({ active, payload, changeType, formatValue, formatChange, aggregationMode }: any) {
   if (!active || !payload || payload.length === 0) return null;
   
   const data = payload[0].payload;
   const isSingleSeries = payload.length === 1;
+  const isAnnual = aggregationMode === 'annual';
   
   // Detect if we're in combined chart mode (has aggregate values or KPI-specific keys)
   const isCombinedChart = data._aggregateDisplayYoY !== undefined || 
                           data._aggregateDisplayQoQ !== undefined ||
+                          data._annualPercentChange !== undefined ||
                           (payload[0]?.dataKey && data[`${payload[0].dataKey}_displayYoY`] !== undefined);
   
   // Use pre-calculated display values for top line (always show both)
@@ -64,9 +66,18 @@ function KPITooltip({ active, payload, changeType, formatValue, formatChange }: 
   // For combined charts: use aggregate YoY/QoQ (sum across all KPIs), or fall back to individual if aggregate is null
   let yoyValue: number | null = null;
   let qoqValue: number | null = null;
+  let annualPercentChange: number | null = null;
   
-  if (isCombinedChart) {
-    // Combined chart mode
+  if (isAnnual && isCombinedChart) {
+    // Annual mode: prioritize _percentChange (calculated for visible series only)
+    // then fall back to _annualPercentChange (includes all series)
+    if (data._percentChange !== null && data._percentChange !== undefined && !isNaN(data._percentChange)) {
+      annualPercentChange = data._percentChange;
+    } else {
+      annualPercentChange = data._annualPercentChange ?? null;
+    }
+  } else if (isCombinedChart) {
+    // Combined chart mode (quarterly)
     if (isSingleSeries && payload[0]?.dataKey) {
       // When only 1 series is visible, use that series's individual values
       yoyValue = data[`${payload[0].dataKey}_displayYoY`] ?? null;
@@ -101,8 +112,12 @@ function KPITooltip({ active, payload, changeType, formatValue, formatChange }: 
     }
   } else {
     // Separate chart mode: use individual values
-    yoyValue = data.displayYoY ?? null;
-    qoqValue = data.displayQoQ ?? null;
+    if (isAnnual && data.annualPercentChange !== null && data.annualPercentChange !== undefined) {
+      annualPercentChange = data.annualPercentChange;
+    } else {
+      yoyValue = data.displayYoY ?? null;
+      qoqValue = data.displayQoQ ?? null;
+    }
   }
   
   return (
@@ -111,17 +126,22 @@ function KPITooltip({ active, payload, changeType, formatValue, formatChange }: 
         {data.quarter}
       </p>
       
-      {/* Top line: YoY: xx%, QoQ: yy% */}
+      {/* Top line: Annual percent change for annual mode, or YoY/QoQ for quarterly mode */}
       <p className="text-sm font-medium mb-2 pb-2 border-b border-gray-200">
-        {yoyValue !== null && yoyValue !== undefined && (
+        {isAnnual && annualPercentChange !== null && annualPercentChange !== undefined && (
+          <span className={annualPercentChange >= 0 ? 'text-green-600' : 'text-red-600'}>
+            Annual: {annualPercentChange >= 0 ? '+' : ''}{annualPercentChange.toFixed(2)}%
+          </span>
+        )}
+        {!isAnnual && yoyValue !== null && yoyValue !== undefined && (
           <span className={yoyValue >= 0 ? 'text-green-600' : 'text-red-600'}>
             YoY: {yoyValue >= 0 ? '+' : ''}{yoyValue.toFixed(2)}%
           </span>
         )}
-        {yoyValue !== null && yoyValue !== undefined && qoqValue !== null && qoqValue !== undefined && (
+        {!isAnnual && yoyValue !== null && yoyValue !== undefined && qoqValue !== null && qoqValue !== undefined && (
           <span className="text-gray-400 mx-1">,</span>
         )}
-        {qoqValue !== null && qoqValue !== undefined && (
+        {!isAnnual && qoqValue !== null && qoqValue !== undefined && (
           <span className={qoqValue >= 0 ? 'text-green-600' : 'text-red-600'}>
             QoQ: {qoqValue >= 0 ? '+' : ''}{qoqValue.toFixed(2)}%
           </span>
@@ -236,7 +256,7 @@ export default function KPITestPage() {
   const [data, setData] = useState<KPITimeseriesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [displayMode, setDisplayMode] = useState<DisplayMode>('separate');
+  const [displayMode, setDisplayMode] = useState<DisplayMode>('stacked-bars');
   const [aggregationMode, setAggregationMode] = useState<AggregationMode>('quarterly');
   const [changeType, setChangeType] = useState<'qoq' | 'yoy'>('yoy'); // Toggle between QoQ and YoY
   // Track visibility of series per group
@@ -600,6 +620,39 @@ export default function KPITestPage() {
     return colors[index % colors.length];
   };
 
+  // Calculate average value for a KPI (used for sorting stacked charts)
+  const calculateKPIAverage = (kpi: KPITimeseries, useAnnual: boolean = false): number => {
+    const values = useAnnual ? aggregateToAnnual(kpi.values, kpi.name, kpi.unit) : kpi.values;
+    const numericValues: number[] = [];
+    
+    values.forEach(v => {
+      if (v.value !== null && v.value !== undefined) {
+        let numValue: number;
+        if (typeof v.value === 'string') {
+          const cleaned = v.value.replace(/,/g, '').trim();
+          numValue = parseFloat(cleaned);
+        } else {
+          numValue = v.value;
+        }
+        if (!isNaN(numValue)) {
+          numericValues.push(numValue);
+        }
+      }
+    });
+    
+    if (numericValues.length === 0) return 0;
+    return numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
+  };
+
+  // Sort KPIs by average value (descending) for stacked charts
+  const sortKPIsByValue = (kpis: KPITimeseries[], useAnnual: boolean = false): KPITimeseries[] => {
+    return [...kpis].sort((a, b) => {
+      const avgA = calculateKPIAverage(a, useAnnual);
+      const avgB = calculateKPIAverage(b, useAnnual);
+      return avgB - avgA; // Descending order (bigger values first)
+    });
+  };
+
   // Aggregate quarterly values into annual values
   const aggregateToAnnual = (values: KPITimeseriesValue[], kpiName: string, unit: string): KPITimeseriesValue[] => {
     // Group by year
@@ -830,6 +883,51 @@ export default function KPITestPage() {
         // Store aggregate values
         dataPoint._aggregateDisplayYoY = yoyValue;
         dataPoint._aggregateDisplayQoQ = qoqValue;
+      });
+    } else {
+      // Calculate annual percent change (comparing annual totals year-over-year)
+      dataPoints.forEach((dataPoint, idx) => {
+        // Calculate current annual total (sum of all KPI values for this year)
+        let currentTotal = 0;
+        kpis.forEach(kpi => {
+          const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+          currentTotal += dataPoint[key] || 0;
+        });
+        
+        // Parse year from period string (e.g., "2024 Annual")
+        const periodStr = dataPoint.quarter ? String(dataPoint.quarter) : '';
+        const yearMatch = periodStr.match(/(\d{4})/);
+        
+        if (yearMatch && currentTotal > 0) {
+          const currentYear = parseInt(yearMatch[1], 10);
+          const previousYear = currentYear - 1;
+          const previousYearPeriod = `${previousYear} Annual`;
+          
+          // Find previous year's annual data point
+          const prevYearDataPoint = dataPoints.find(d => 
+            d.quarter === previousYearPeriod || 
+            (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes('Annual'))
+          );
+          
+          if (prevYearDataPoint) {
+            let prevYearTotal = 0;
+            kpis.forEach(kpi => {
+              const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+              prevYearTotal += prevYearDataPoint[key] || 0;
+            });
+            
+            if (prevYearTotal > 0) {
+              const annualPercentChange = ((currentTotal - prevYearTotal) / prevYearTotal) * 100;
+              dataPoint._annualPercentChange = annualPercentChange;
+            } else {
+              dataPoint._annualPercentChange = null;
+            }
+          } else {
+            dataPoint._annualPercentChange = null;
+          }
+        } else {
+          dataPoint._annualPercentChange = null;
+        }
       });
     }
     
@@ -1193,10 +1291,46 @@ export default function KPITestPage() {
                                         ? calculateYearOverYearChange(kpi.values, v.quarter)
                                         : null;
                                       
+                                      // Calculate annual percent change for annual mode
+                                      let annualPercentChange: number | null = null;
+                                      if (aggregationMode === 'annual') {
+                                        const periodStr = v.quarter ? String(v.quarter) : '';
+                                        const yearMatch = periodStr.match(/(\d{4})/);
+                                        
+                                        if (yearMatch && numValue !== null && !isNaN(numValue) && numValue > 0) {
+                                          const currentYear = parseInt(yearMatch[1], 10);
+                                          const previousYear = currentYear - 1;
+                                          const previousYearPeriod = `${previousYear} Annual`;
+                                          
+                                          // Find previous year's annual value
+                                          const annualValues = aggregateToAnnual(kpi.values, kpi.name, kpi.unit);
+                                          const prevYearValue = annualValues.find(av => 
+                                            av.quarter === previousYearPeriod || 
+                                            (av.quarter && String(av.quarter).includes(`${previousYear}`) && String(av.quarter).includes('Annual'))
+                                          );
+                                          
+                                          if (prevYearValue && prevYearValue.value !== null && prevYearValue.value !== undefined) {
+                                            let prevNumValue: number;
+                                            if (typeof prevYearValue.value === 'string') {
+                                              const cleaned = prevYearValue.value.replace(/,/g, '').trim();
+                                              prevNumValue = parseFloat(cleaned);
+                                            } else {
+                                              prevNumValue = prevYearValue.value;
+                                            }
+                                            
+                                            if (!isNaN(prevNumValue) && prevNumValue > 0) {
+                                              annualPercentChange = ((numValue - prevNumValue) / prevNumValue) * 100;
+                                            }
+                                          }
+                                        }
+                                      }
+                                      
                                       // Calculate the selected change value (for bar labels and tooltip consistency)
-                                      const selectedChangeValue = changeType === 'qoq'
-                                        ? (qoqChange?.change || null)
-                                        : (yoyChange?.change || null);
+                                      const selectedChangeValue = aggregationMode === 'annual'
+                                        ? annualPercentChange
+                                        : (changeType === 'qoq'
+                                          ? (qoqChange?.change || null)
+                                          : (yoyChange?.change || null));
                                       
                                       return {
                                         quarter: v.quarter,
@@ -1210,6 +1344,7 @@ export default function KPITestPage() {
                                         qoqPreviousQuarter: qoqChange?.previousQuarter || null,
                                         yoyChange: yoyChange?.change || null,
                                         yoyPreviousQuarter: yoyChange?.previousYearQuarter || null,
+                                        annualPercentChange: annualPercentChange,
                                         selectedChangeValue: selectedChangeValue,
                                         // For tooltip top line - always show both
                                         displayYoY: yoyChange?.change || null,
@@ -1232,7 +1367,7 @@ export default function KPITestPage() {
                                     <Tooltip
                                       wrapperStyle={{ zIndex: 1000 }}
                                       content={(props: any) => (
-                                        <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                        <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} aggregationMode={aggregationMode} />
                                       )}
                                     />
                                     <Bar dataKey="value" radius={[4, 4, 0, 0]}>
@@ -1250,7 +1385,7 @@ export default function KPITestPage() {
                                           const changeValue = payload.selectedChangeValue !== null && payload.selectedChangeValue !== undefined && !isNaN(Number(payload.selectedChangeValue))
                                             ? Number(payload.selectedChangeValue)
                                             : null;
-                                          const changeLabel = changeType === 'qoq' ? 'QoQ' : 'YoY';
+                                          const changeLabel = aggregationMode === 'annual' ? 'Annual' : (changeType === 'qoq' ? 'QoQ' : 'YoY');
                                           
                                           // Only render if we have a change value to show
                                           if (changeValue === null) return null;
@@ -1295,6 +1430,7 @@ export default function KPITestPage() {
                         <div className="bg-white rounded-lg shadow-sm p-6">
                           <ResponsiveContainer width="100%" height={400}>
                             <BarChart
+                              maxBarSize={aggregationMode === 'annual' ? 80 : undefined}
                               data={combinedData}
                               margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
                             >
@@ -1311,7 +1447,7 @@ export default function KPITestPage() {
                               <Tooltip
                                 wrapperStyle={{ zIndex: 1000 }}
                                 content={(props: any) => (
-                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} aggregationMode={aggregationMode} />
                                 )}
                               />
                               <Legend 
@@ -1360,38 +1496,92 @@ export default function KPITestPage() {
                         </div>
                       )}
 
-                      {displayMode === 'stacked-area' && (
-                        <div className="bg-white rounded-lg shadow-sm p-6">
-                          <ResponsiveContainer width="100%" height={400}>
-                            <AreaChart
-                              data={combinedData}
-                              margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
-                            >
-                              <defs>
-                                {groupKPIs.map((kpi, index) => {
-                                  const color = getKPIColor(index, groupKPIs.length);
-                                  return (
-                                    <linearGradient key={index} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
-                                      <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
-                                      <stop offset="95%" stopColor={color} stopOpacity={0.1}/>
-                                    </linearGradient>
-                                  );
+                      {displayMode === 'stacked-area' && (() => {
+                        // Sort KPIs by average value (descending) for stacked charts
+                        const sortedKPIs = sortKPIsByValue(groupKPIs, aggregationMode === 'annual');
+                        
+                        return (
+                          <div className="bg-white rounded-lg shadow-sm p-6">
+                            <ResponsiveContainer width="100%" height={400}>
+                              <AreaChart
+                                data={combinedData.map((item, idx) => {
+                                  // For annual mode, calculate percent change based on visible series
+                                  if (aggregationMode === 'annual') {
+                                    // Calculate total for this period (sum of visible series)
+                                    let total = 0;
+                                    sortedKPIs.forEach(kpi => {
+                                      const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                      if (groupVisibleSeries[key] !== false && item[key] !== undefined) {
+                                        total += item[key] || 0;
+                                      }
+                                    });
+                                    
+                                    const periodStr = item.quarter ? String(item.quarter) : '';
+                                    const yearMatch = periodStr.match(/(\d{4})/);
+                                    
+                                    let annualPercentChange: number | null = null;
+                                    if (yearMatch && total > 0) {
+                                      const currentYear = parseInt(yearMatch[1], 10);
+                                      const previousYear = currentYear - 1;
+                                      const previousYearPeriod = `${previousYear} Annual`;
+                                      
+                                      // Find previous year's annual data point
+                                      const prevYearItem = combinedData.find(d => 
+                                        d.quarter === previousYearPeriod || 
+                                        (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes('Annual'))
+                                      );
+                                      
+                                      if (prevYearItem) {
+                                        let prevYearTotal = 0;
+                                        sortedKPIs.forEach(kpi => {
+                                          const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                          if (groupVisibleSeries[key] !== false && prevYearItem[key] !== undefined) {
+                                            prevYearTotal += prevYearItem[key] || 0;
+                                          }
+                                        });
+                                        
+                                        if (prevYearTotal > 0) {
+                                          annualPercentChange = ((total - prevYearTotal) / prevYearTotal) * 100;
+                                        }
+                                      }
+                                    }
+                                    
+                                    return {
+                                      ...item,
+                                      _total: total,
+                                      _percentChange: annualPercentChange,
+                                      _annualPercentChange: annualPercentChange
+                                    };
+                                  }
+                                  return item;
                                 })}
-                              </defs>
-                              <XAxis 
-                                dataKey="quarter" 
-                                angle={-45}
-                                textAnchor="end"
-                                height={100}
-                                tick={{ fontSize: 12 }}
-                              />
-                              <YAxis 
-                                tick={{ fontSize: 12 }}
-                              />
+                                margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                              >
+                                <defs>
+                                  {sortedKPIs.map((kpi, index) => {
+                                    const color = getKPIColor(index, sortedKPIs.length);
+                                    return (
+                                      <linearGradient key={index} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
+                                        <stop offset="95%" stopColor={color} stopOpacity={0.1}/>
+                                      </linearGradient>
+                                    );
+                                  })}
+                                </defs>
+                                <XAxis 
+                                  dataKey="quarter" 
+                                  angle={-45}
+                                  textAnchor="end"
+                                  height={100}
+                                  tick={{ fontSize: 12 }}
+                                />
+                                <YAxis 
+                                  tick={{ fontSize: 12 }}
+                                />
                               <Tooltip
                                 wrapperStyle={{ zIndex: 1000 }}
                                 content={(props: any) => (
-                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} aggregationMode={aggregationMode} />
                                 )}
                               />
                               <Legend 
@@ -1420,231 +1610,277 @@ export default function KPITestPage() {
                                   );
                                 }}
                               />
-                              {groupKPIs.map((kpi, index) => {
+                              {sortedKPIs.map((kpi, index) => {
                                 const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
                                 const isHidden = groupVisibleSeries[key] === false;
                                 return (
-                                  <Area 
-                                    key={index}
-                                    type="monotone"
-                                    dataKey={key}
-                                    name={kpi.name}
-                                    stackId="1"
-                                    stroke={getKPIColor(index, groupKPIs.length)}
-                                    fill={`url(#color${index})`}
-                                    hide={isHidden}
-                                    opacity={isHidden ? 0 : 1}
-                                  />
-                                );
-                              })}
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
+                                  <Area
+                                      key={index}
+                                      type="monotone"
+                                      dataKey={key}
+                                      name={kpi.name}
+                                      stackId="1"
+                                      stroke={getKPIColor(index, sortedKPIs.length)}
+                                      fill={`url(#color${index})`}
+                                      hide={isHidden}
+                                      opacity={isHidden ? 0 : 1}
+                                    />
+                                  );
+                                })}
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        );
+                      })()}
 
-                      {displayMode === 'stacked-bars' && (
-                        <div className="bg-white rounded-lg shadow-sm p-6">
-                          <ResponsiveContainer width="100%" height={400}>
-                            <BarChart
-                              data={combinedData.map((item, idx) => {
-                                // Calculate total for this period (sum of visible series)
-                                let total = 0;
-                                groupKPIs.forEach(kpi => {
-                                  const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
-                                  if (groupVisibleSeries[key] !== false && item[key] !== undefined) {
-                                    total += item[key] || 0;
-                                  }
-                                });
-                                
-                                // Calculate percent change based on toggle
-                                let percentChange: number | null = null;
-                                const quarterStr = item.quarter ? String(item.quarter) : '';
-                                
-                                if (changeType === 'qoq') {
-                                  // Quarter-over-quarter: find previous quarter and compare
-                                  const yearMatch = quarterStr.match(/(\d{4})/);
-                                  const quarterMatch = quarterStr.match(/Q(\d)/);
-                                  
-                                  if (yearMatch && quarterMatch) {
-                                    const currentYear = parseInt(yearMatch[1], 10);
-                                    const currentQuarterNum = parseInt(quarterMatch[1], 10);
-                                    
-                                    // Calculate previous quarter
-                                    let previousYear = currentYear;
-                                    let previousQuarterNum = currentQuarterNum - 1;
-                                    
-                                    if (previousQuarterNum < 1) {
-                                      previousQuarterNum = 4;
-                                      previousYear = currentYear - 1;
+                      {displayMode === 'stacked-bars' && (() => {
+                        // Sort KPIs by average value (descending) for stacked charts
+                        const sortedKPIs = sortKPIsByValue(groupKPIs, aggregationMode === 'annual');
+                        
+                        return (
+                          <div className="bg-white rounded-lg shadow-sm p-6">
+                            <ResponsiveContainer width="100%" height={400}>
+                              <BarChart
+                                maxBarSize={aggregationMode === 'annual' ? 80 : undefined}
+                                data={combinedData.map((item, idx) => {
+                                  // Calculate total for this period (sum of visible series)
+                                  let total = 0;
+                                  sortedKPIs.forEach(kpi => {
+                                    const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                    if (groupVisibleSeries[key] !== false && item[key] !== undefined) {
+                                      total += item[key] || 0;
                                     }
+                                  });
+                                  
+                                  // Calculate percent change based on toggle
+                                  let percentChange: number | null = null;
+                                  const quarterStr = item.quarter ? String(item.quarter) : '';
+                                  
+                                  if (changeType === 'qoq') {
+                                    // Quarter-over-quarter: find previous quarter and compare
+                                    const yearMatch = quarterStr.match(/(\d{4})/);
+                                    const quarterMatch = quarterStr.match(/Q(\d)/);
                                     
-                                    const previousQuarter = `${previousYear}Q${previousQuarterNum}`;
-                                    
-                                    // Find previous quarter's data point
-                                    const prevQuarterItem = combinedData.find(d => 
-                                      d.quarter === previousQuarter || 
-                                      (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${previousQuarterNum}`))
-                                    );
-                                    
-                                    if (prevQuarterItem) {
-                                      let prevTotal = 0;
-                                      groupKPIs.forEach(kpi => {
-                                        const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
-                                        if (groupVisibleSeries[key] !== false && prevQuarterItem[key] !== undefined) {
-                                          prevTotal += prevQuarterItem[key] || 0;
-                                        }
-                                      });
+                                    if (yearMatch && quarterMatch) {
+                                      const currentYear = parseInt(yearMatch[1], 10);
+                                      const currentQuarterNum = parseInt(quarterMatch[1], 10);
                                       
-                                      if (prevTotal > 0) {
-                                        percentChange = ((total - prevTotal) / prevTotal) * 100;
+                                      // Calculate previous quarter
+                                      let previousYear = currentYear;
+                                      let previousQuarterNum = currentQuarterNum - 1;
+                                      
+                                      if (previousQuarterNum < 1) {
+                                        previousQuarterNum = 4;
+                                        previousYear = currentYear - 1;
+                                      }
+                                      
+                                      const previousQuarter = `${previousYear}Q${previousQuarterNum}`;
+                                      
+                                      // Find previous quarter's data point
+                                      const prevQuarterItem = combinedData.find(d => 
+                                        d.quarter === previousQuarter || 
+                                        (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${previousQuarterNum}`))
+                                      );
+                                      
+                                      if (prevQuarterItem) {
+                                        let prevTotal = 0;
+                                        sortedKPIs.forEach(kpi => {
+                                          const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                          if (groupVisibleSeries[key] !== false && prevQuarterItem[key] !== undefined) {
+                                            prevTotal += prevQuarterItem[key] || 0;
+                                          }
+                                        });
+                                        
+                                        if (prevTotal > 0) {
+                                          percentChange = ((total - prevTotal) / prevTotal) * 100;
+                                        }
                                       }
                                     }
-                                  }
-                                } else {
-                                  // Year-over-year: find same quarter previous year
-                                  if (quarterStr) {
-                                    const yearMatch = quarterStr.match(/(\d{4})/);
-                                    if (yearMatch) {
-                                      const currentYear = parseInt(yearMatch[1], 10);
-                                      const previousYear = currentYear - 1;
-                                      
-                                      // Extract quarter number
-                                      const quarterMatch = quarterStr.match(/Q(\d)/);
-                                      if (quarterMatch) {
-                                        const quarterNum = quarterMatch[1];
-                                        const previousYearQuarter = `${previousYear}Q${quarterNum}`;
+                                  } else {
+                                    // Year-over-year: find same quarter previous year
+                                    if (quarterStr) {
+                                      const yearMatch = quarterStr.match(/(\d{4})/);
+                                      if (yearMatch) {
+                                        const currentYear = parseInt(yearMatch[1], 10);
+                                        const previousYear = currentYear - 1;
                                         
-                                        // Find previous year's same quarter
-                                        const prevYearItem = combinedData.find(d => 
-                                          d.quarter === previousYearQuarter || 
-                                          (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${quarterNum}`))
-                                        );
-                                        
-                                        if (prevYearItem) {
-                                          let prevYearTotal = 0;
-                                          groupKPIs.forEach(kpi => {
-                                            const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
-                                            if (groupVisibleSeries[key] !== false && prevYearItem[key] !== undefined) {
-                                              prevYearTotal += prevYearItem[key] || 0;
-                                            }
-                                          });
+                                        // Extract quarter number
+                                        const quarterMatch = quarterStr.match(/Q(\d)/);
+                                        if (quarterMatch) {
+                                          const quarterNum = quarterMatch[1];
+                                          const previousYearQuarter = `${previousYear}Q${quarterNum}`;
                                           
-                                          if (prevYearTotal > 0) {
-                                            percentChange = ((total - prevYearTotal) / prevYearTotal) * 100;
+                                          // Find previous year's same quarter
+                                          const prevYearItem = combinedData.find(d => 
+                                            d.quarter === previousYearQuarter || 
+                                            (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${quarterNum}`))
+                                          );
+                                          
+                                          if (prevYearItem) {
+                                            let prevYearTotal = 0;
+                                            sortedKPIs.forEach(kpi => {
+                                              const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                              if (groupVisibleSeries[key] !== false && prevYearItem[key] !== undefined) {
+                                                prevYearTotal += prevYearItem[key] || 0;
+                                              }
+                                            });
+                                            
+                                            if (prevYearTotal > 0) {
+                                              percentChange = ((total - prevYearTotal) / prevYearTotal) * 100;
+                                            }
                                           }
                                         }
                                       }
                                     }
                                   }
-                                }
-                                
-                                return {
-                                  ...item,
-                                  _total: total,
-                                  _percentChange: percentChange
-                                };
-                              })}
-                              margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
-                            >
-                              <XAxis 
-                                dataKey="quarter" 
-                                angle={-45}
-                                textAnchor="end"
-                                height={100}
-                                tick={{ fontSize: 12 }}
-                              />
-                              <YAxis 
-                                tick={{ fontSize: 12 }}
-                              />
-                              <Tooltip
-                                wrapperStyle={{ zIndex: 1000 }}
-                                content={(props: any) => (
-                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
-                                )}
-                              />
-                              <Legend 
-                                onClick={(e: any) => {
-                                  if (e.dataKey) {
-                                    toggleSeries(e.dataKey);
+                                  
+                                  // For annual mode, calculate percent change based on visible series
+                                  let annualPercentChange: number | null = null;
+                                  if (aggregationMode === 'annual') {
+                                    const periodStr = item.quarter ? String(item.quarter) : '';
+                                    const yearMatch = periodStr.match(/(\d{4})/);
+                                    
+                                    if (yearMatch && total > 0) {
+                                      const currentYear = parseInt(yearMatch[1], 10);
+                                      const previousYear = currentYear - 1;
+                                      const previousYearPeriod = `${previousYear} Annual`;
+                                      
+                                      // Find previous year's annual data point
+                                      const prevYearItem = combinedData.find(d => 
+                                        d.quarter === previousYearPeriod || 
+                                        (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes('Annual'))
+                                      );
+                                      
+                                      if (prevYearItem) {
+                                        let prevYearTotal = 0;
+                                        sortedKPIs.forEach(kpi => {
+                                          const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                          if (groupVisibleSeries[key] !== false && prevYearItem[key] !== undefined) {
+                                            prevYearTotal += prevYearItem[key] || 0;
+                                          }
+                                        });
+                                        
+                                        if (prevYearTotal > 0) {
+                                          annualPercentChange = ((total - prevYearTotal) / prevYearTotal) * 100;
+                                        }
+                                      }
+                                    }
                                   }
-                                }}
-                                wrapperStyle={{ cursor: 'pointer' }}
-                                iconType="line"
-                                formatter={(value: string, entry: any) => {
-                                  const key = entry.dataKey || entry.payload?.dataKey;
-                                  const isHidden = key ? groupVisibleSeries[key] === false : false;
-                                  const isFocused = key ? focusedSeries[groupName] === key : false;
+                                  
+                                  // For annual mode, use the calculated annual percent change based on visible series
+                                  const finalPercentChange = aggregationMode === 'annual' 
+                                    ? annualPercentChange
+                                    : percentChange;
+                                  
+                                  return {
+                                    ...item,
+                                    _total: total,
+                                    _percentChange: finalPercentChange,
+                                    _annualPercentChange: aggregationMode === 'annual' ? annualPercentChange : null
+                                  };
+                                })}
+                                margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                              >
+                                <XAxis 
+                                  dataKey="quarter" 
+                                  angle={-45}
+                                  textAnchor="end"
+                                  height={100}
+                                  tick={{ fontSize: 12 }}
+                                />
+                                <YAxis 
+                                  tick={{ fontSize: 12 }}
+                                />
+                                <Tooltip
+                                  wrapperStyle={{ zIndex: 1000 }}
+                                  content={(props: any) => (
+                                    <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} aggregationMode={aggregationMode} />
+                                  )}
+                                />
+                                <Legend 
+                                  onClick={(e: any) => {
+                                    if (e.dataKey) {
+                                      toggleSeries(e.dataKey);
+                                    }
+                                  }}
+                                  wrapperStyle={{ cursor: 'pointer' }}
+                                  iconType="line"
+                                  formatter={(value: string, entry: any) => {
+                                    const key = entry.dataKey || entry.payload?.dataKey;
+                                    const isHidden = key ? groupVisibleSeries[key] === false : false;
+                                    const isFocused = key ? focusedSeries[groupName] === key : false;
+                                    return (
+                                      <span style={{ 
+                                        opacity: isHidden ? 0.5 : 1,
+                                        textDecoration: isHidden ? 'line-through' : 'none',
+                                        fontWeight: isFocused ? 'bold' : 'normal',
+                                        cursor: 'pointer',
+                                        borderBottom: isFocused ? '2px solid currentColor' : 'none',
+                                        paddingBottom: isFocused ? '2px' : '0'
+                                      }}>
+                                        {value}
+                                      </span>
+                                    );
+                                  }}
+                                />
+                                {sortedKPIs.map((kpi, index) => {
+                                  const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                  const isHidden = groupVisibleSeries[key] === false;
+                                  // Find the last visible series for rounded corners and label
+                                  const visibleIndices = sortedKPIs
+                                    .map((k, i) => ({ key: k.name.replace(/[^a-zA-Z0-9]/g, '_'), index: i }))
+                                    .filter(({ key: k }) => groupVisibleSeries[k] !== false)
+                                    .map(({ index: i }) => i);
+                                  const isLastVisible = visibleIndices.length > 0 && visibleIndices[visibleIndices.length - 1] === index;
                                   return (
-                                    <span style={{ 
-                                      opacity: isHidden ? 0.5 : 1,
-                                      textDecoration: isHidden ? 'line-through' : 'none',
-                                      fontWeight: isFocused ? 'bold' : 'normal',
-                                      cursor: 'pointer',
-                                      borderBottom: isFocused ? '2px solid currentColor' : 'none',
-                                      paddingBottom: isFocused ? '2px' : '0'
-                                    }}>
-                                      {value}
-                                    </span>
+                                    <Bar 
+                                      key={index}
+                                      dataKey={key}
+                                      name={kpi.name}
+                                      stackId="1"
+                                      fill={getKPIColor(index, sortedKPIs.length)}
+                                      radius={isLastVisible ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                      hide={isHidden}
+                                      opacity={isHidden ? 0 : 1}
+                                    >
+                                      {isLastVisible && (
+                                        <LabelList
+                                          dataKey={aggregationMode === 'annual' ? "_annualPercentChange" : "_percentChange"}
+                                          position="top"
+                                          content={(props: any) => {
+                                            const { x, y, width, value, payload } = props;
+                                            if (value === null || value === undefined || isNaN(value)) return null;
+                                            const change = parseFloat(value);
+                                            const sign = change >= 0 ? '+' : '';
+                                            const color = change >= 0 ? '#10b981' : '#ef4444';
+                                            const changeLabel = aggregationMode === 'annual' ? 'Annual' : (changeType === 'qoq' ? 'QoQ' : 'YoY');
+                                            
+                                            // Calculate center x position of the bar
+                                            const centerX = x + (width / 2);
+                                            
+                                            return (
+                                              <text
+                                                x={centerX}
+                                                y={y - 5}
+                                                fill={color}
+                                                fontSize={12}
+                                                fontWeight={600}
+                                                textAnchor="middle"
+                                              >
+                                                {sign}{change.toFixed(1)}% {changeLabel}
+                                              </text>
+                                            );
+                                          }}
+                                        />
+                                      )}
+                                    </Bar>
                                   );
-                                }}
-                              />
-                              {groupKPIs.map((kpi, index) => {
-                                const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
-                                const isHidden = groupVisibleSeries[key] === false;
-                                // Find the last visible series for rounded corners and label
-                                const visibleIndices = groupKPIs
-                                  .map((k, i) => ({ key: k.name.replace(/[^a-zA-Z0-9]/g, '_'), index: i }))
-                                  .filter(({ key: k }) => groupVisibleSeries[k] !== false)
-                                  .map(({ index: i }) => i);
-                                const isLastVisible = visibleIndices.length > 0 && visibleIndices[visibleIndices.length - 1] === index;
-                                return (
-                                  <Bar 
-                                    key={index}
-                                    dataKey={key}
-                                    name={kpi.name}
-                                    stackId="1"
-                                    fill={getKPIColor(index, groupKPIs.length)}
-                                    radius={isLastVisible ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                                    hide={isHidden}
-                                    opacity={isHidden ? 0 : 1}
-                                  >
-                                    {isLastVisible && (
-                                      <LabelList
-                                        dataKey="_percentChange"
-                                        position="top"
-                                        content={(props: any) => {
-                                          const { x, y, width, value, payload } = props;
-                                          if (value === null || value === undefined || isNaN(value)) return null;
-                                          const change = parseFloat(value);
-                                          const sign = change >= 0 ? '+' : '';
-                                          const color = change >= 0 ? '#10b981' : '#ef4444';
-                                          const changeLabel = changeType === 'qoq' ? 'QoQ' : 'YoY';
-                                          
-                                          // Calculate center x position of the bar
-                                          const centerX = x + (width / 2);
-                                          
-                                          return (
-                                            <text
-                                              x={centerX}
-                                              y={y - 5}
-                                              fill={color}
-                                              fontSize={12}
-                                              fontWeight={600}
-                                              textAnchor="middle"
-                                            >
-                                              {sign}{change.toFixed(1)}% {changeLabel}
-                                            </text>
-                                          );
-                                        }}
-                                      />
-                                    )}
-                                  </Bar>
-                                );
-                              })}
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
+                                })}
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 });

@@ -47,6 +47,187 @@ interface KPITimeseriesResponse {
 type DisplayMode = 'separate' | 'combined-bars' | 'stacked-area' | 'stacked-bars';
 type AggregationMode = 'quarterly' | 'annual';
 
+// Reusable Tooltip Component
+function KPITooltip({ active, payload, changeType, formatValue, formatChange }: any) {
+  if (!active || !payload || payload.length === 0) return null;
+  
+  const data = payload[0].payload;
+  const isSingleSeries = payload.length === 1;
+  
+  // Detect if we're in combined chart mode (has aggregate values or KPI-specific keys)
+  const isCombinedChart = data._aggregateDisplayYoY !== undefined || 
+                          data._aggregateDisplayQoQ !== undefined ||
+                          (payload[0]?.dataKey && data[`${payload[0].dataKey}_displayYoY`] !== undefined);
+  
+  // Use pre-calculated display values for top line (always show both)
+  // For separate charts: use individual KPI's YoY/QoQ
+  // For combined charts: use aggregate YoY/QoQ (sum across all KPIs), or fall back to individual if aggregate is null
+  let yoyValue: number | null = null;
+  let qoqValue: number | null = null;
+  
+  if (isCombinedChart) {
+    // Combined chart mode
+    if (isSingleSeries && payload[0]?.dataKey) {
+      // When only 1 series is visible, use that series's individual values
+      yoyValue = data[`${payload[0].dataKey}_displayYoY`] ?? null;
+      qoqValue = data[`${payload[0].dataKey}_displayQoQ`] ?? null;
+    } else {
+      // When multiple series are visible, use aggregate values (sum across all KPIs)
+      // Fall back to first series's individual value if aggregate is null/undefined
+      // For YoY: prioritize _percentChange (used by bar labels, includes only visible series)
+      // then fall back to _aggregateDisplayYoY (includes all series)
+      if (changeType === 'yoy' && data._percentChange !== null && data._percentChange !== undefined && !isNaN(data._percentChange)) {
+        // Use _percentChange to match bar labels (calculated for visible series only)
+        yoyValue = data._percentChange;
+      } else if (data._aggregateDisplayYoY !== null && data._aggregateDisplayYoY !== undefined && !isNaN(data._aggregateDisplayYoY)) {
+        // Use aggregate YoY (includes all KPIs in group)
+        yoyValue = data._aggregateDisplayYoY;
+      } else if (payload[0]?.dataKey) {
+        yoyValue = data[`${payload[0].dataKey}_displayYoY`] ?? null;
+      }
+      
+      // For QoQ: prioritize _percentChange (used by bar labels, includes only visible series)
+      // then fall back to _aggregateDisplayQoQ (includes all series)
+      if (changeType === 'qoq' && data._percentChange !== null && data._percentChange !== undefined && !isNaN(data._percentChange)) {
+        // Use _percentChange to match bar labels (calculated for visible series only)
+        qoqValue = data._percentChange;
+      } else if (data._aggregateDisplayQoQ !== null && data._aggregateDisplayQoQ !== undefined && !isNaN(data._aggregateDisplayQoQ)) {
+        // Use aggregate QoQ (includes all KPIs in group)
+        qoqValue = data._aggregateDisplayQoQ;
+      } else if (payload[0]?.dataKey) {
+        // Last resort: use first series's individual value
+        qoqValue = data[`${payload[0].dataKey}_displayQoQ`] ?? null;
+      }
+    }
+  } else {
+    // Separate chart mode: use individual values
+    yoyValue = data.displayYoY ?? null;
+    qoqValue = data.displayQoQ ?? null;
+  }
+  
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-md">
+      <p className="font-semibold text-gray-900 mb-2 border-b border-gray-200 pb-1">
+        {data.quarter}
+      </p>
+      
+      {/* Top line: YoY: xx%, QoQ: yy% */}
+      <p className="text-sm font-medium mb-2 pb-2 border-b border-gray-200">
+        {yoyValue !== null && yoyValue !== undefined && (
+          <span className={yoyValue >= 0 ? 'text-green-600' : 'text-red-600'}>
+            YoY: {yoyValue >= 0 ? '+' : ''}{yoyValue.toFixed(2)}%
+          </span>
+        )}
+        {yoyValue !== null && yoyValue !== undefined && qoqValue !== null && qoqValue !== undefined && (
+          <span className="text-gray-400 mx-1">,</span>
+        )}
+        {qoqValue !== null && qoqValue !== undefined && (
+          <span className={qoqValue >= 0 ? 'text-green-600' : 'text-red-600'}>
+            QoQ: {qoqValue >= 0 ? '+' : ''}{qoqValue.toFixed(2)}%
+          </span>
+        )}
+      </p>
+      
+      {/* Single series mode */}
+      {isSingleSeries && (
+        <>
+          <p className="text-sm text-gray-700 mb-2">
+            <span className="font-medium">Value:</span> {
+              // For combined charts, use entry.value; for separate charts, use data.value
+              isCombinedChart && payload[0]?.value !== undefined
+                ? formatValue(payload[0].value, data[`${payload[0].dataKey}_unit`] || '')
+                : formatValue(data.value, data.unit)
+            }
+          </p>
+          
+          {/* Show selected change type in detail */}
+          {changeType === 'qoq' && (
+            isCombinedChart && payload[0]?.dataKey
+              ? (data[`${payload[0].dataKey}_qoqChange`] !== null && data[`${payload[0].dataKey}_qoqChange`] !== undefined && data[`${payload[0].dataKey}_qoqPreviousQuarter`] && (
+                  <p className={`text-sm font-medium mb-1 ${
+                    data[`${payload[0].dataKey}_qoqChange`] >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    <span className="font-medium text-gray-700">Change from Previous Quarter ({data[`${payload[0].dataKey}_qoqPreviousQuarter`]}):</span>{' '}
+                    {data[`${payload[0].dataKey}_qoqChange`] >= 0 ? '+' : ''}{data[`${payload[0].dataKey}_qoqChange`].toFixed(2)}%
+                  </p>
+                ))
+              : (data.qoqChange !== null && data.qoqChange !== undefined && data.qoqPreviousQuarter && (
+                  <p className={`text-sm font-medium mb-1 ${
+                    data.qoqChange >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    <span className="font-medium text-gray-700">Change from Previous Quarter ({data.qoqPreviousQuarter}):</span>{' '}
+                    {data.qoqChange >= 0 ? '+' : ''}{data.qoqChange.toFixed(2)}%
+                  </p>
+                ))
+          )}
+          
+          {changeType === 'yoy' && (
+            isCombinedChart && payload[0]?.dataKey
+              ? (data[`${payload[0].dataKey}_yoyChange`] !== null && data[`${payload[0].dataKey}_yoyChange`] !== undefined && data[`${payload[0].dataKey}_yoyPreviousQuarter`] && (
+                  <p className={`text-sm font-medium mb-1 ${
+                    data[`${payload[0].dataKey}_yoyChange`] >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    <span className="font-medium text-gray-700">Change Year-over-Year ({data[`${payload[0].dataKey}_yoyPreviousQuarter`]}):</span>{' '}
+                    {data[`${payload[0].dataKey}_yoyChange`] >= 0 ? '+' : ''}{data[`${payload[0].dataKey}_yoyChange`].toFixed(2)}%
+                  </p>
+                ))
+              : (data.yoyChange !== null && data.yoyChange !== undefined && data.yoyPreviousQuarter && (
+                  <p className={`text-sm font-medium mb-1 ${
+                    data.yoyChange >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    <span className="font-medium text-gray-700">Change Year-over-Year ({data.yoyPreviousQuarter}):</span>{' '}
+                    {data.yoyChange >= 0 ? '+' : ''}{data.yoyChange.toFixed(2)}%
+                  </p>
+                ))
+          )}
+          
+          {/* Legacy change field (if present) */}
+          {data.change !== null && data.change !== undefined && 
+           data.qoqChange === null && data.yoyChange === null && (
+            <p className="text-sm text-gray-700 mb-1">
+              <span className="font-medium">Change:</span> {formatChange(data.change, data.changeType)}
+            </p>
+          )}
+          
+          {(isCombinedChart && payload[0]?.dataKey ? data[`${payload[0].dataKey}_context`] : data.context) && (
+            <p className="text-sm text-gray-600 mt-2 pt-2 border-t border-gray-200 max-w-xs">
+              <span className="font-medium">Context:</span> {isCombinedChart && payload[0]?.dataKey ? data[`${payload[0].dataKey}_context`] : data.context}
+            </p>
+          )}
+        </>
+      )}
+      
+      {/* Multiple series mode */}
+      {!isSingleSeries && payload.map((entry: any, idx: number) => {
+        const kpiName = entry.dataKey.replace(/_/g, ' ');
+        const context = data[`${entry.dataKey}_context`];
+        const unit = data[`${entry.dataKey}_unit`] || '';
+        // Use pre-calculated selected change value (for consistency with bar labels)
+        const selectedChange = data[`${entry.dataKey}_selectedChangeValue`];
+        
+        return (
+          <div key={idx} className="mb-3 pb-3 border-b border-gray-100 last:border-0 last:mb-0">
+            <p className="text-sm font-medium text-gray-700 mb-1">
+              <span style={{ color: entry.color }}>●</span> {kpiName}: {formatValue(entry.value, unit)}
+              {selectedChange !== null && selectedChange !== undefined && (
+                <span className={`ml-2 text-xs font-medium ${
+                  selectedChange >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  ({changeType === 'qoq' ? 'QoQ' : 'YoY'}: {selectedChange >= 0 ? '+' : ''}{selectedChange.toFixed(2)}%)
+                </span>
+              )}
+            </p>
+            
+            {context && (
+              <p className="text-xs text-gray-500 mt-1 ml-4">{context}</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function KPITestPage() {
   const pathname = usePathname();
   const params = useParams();
@@ -57,6 +238,7 @@ export default function KPITestPage() {
   const [error, setError] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<DisplayMode>('separate');
   const [aggregationMode, setAggregationMode] = useState<AggregationMode>('quarterly');
+  const [changeType, setChangeType] = useState<'qoq' | 'yoy'>('yoy'); // Toggle between QoQ and YoY
   // Track visibility of series per group
   const [visibleSeries, setVisibleSeries] = useState<Record<string, Record<string, boolean>>>({});
   // Track focused series per group (the first one clicked)
@@ -176,6 +358,233 @@ export default function KPITestPage() {
     return `${sign}${numChange.toFixed(2)}${type}`;
   };
 
+  // Calculate annual total (sum of Q1+Q2+Q3+Q4 for a given year)
+  const calculateAnnualTotal = (
+    values: KPITimeseriesValue[],
+    currentQuarter: string
+  ): number | null => {
+    if (!currentQuarter) return null;
+    
+    // Check if it's Q4 (handle formats like "2024Q4", "2024-Q4", etc.)
+    const isQ4 = currentQuarter.includes('Q4') || currentQuarter.endsWith('Q4');
+    if (!isQ4) return null;
+    
+    // Extract year from quarter string (handle formats like "2024Q4", "2024-Q4", etc.)
+    const yearMatch = currentQuarter.match(/(\d{4})/);
+    if (!yearMatch) return null;
+    
+    const year = yearMatch[1];
+    
+    // Find all quarters for this year (Q1, Q2, Q3, Q4)
+    const yearQuarters = values.filter(v => {
+      if (!v.quarter) return false;
+      return v.quarter.includes(year) && (v.quarter.includes('Q1') || v.quarter.includes('Q2') || v.quarter.includes('Q3') || v.quarter.includes('Q4'));
+    });
+    
+    if (yearQuarters.length === 0) return null;
+    
+    // Sum all quarter values for the year
+    let annualTotal = 0;
+    let hasValidValue = false;
+    
+    yearQuarters.forEach(q => {
+      if (q.value !== null && q.value !== undefined) {
+        let numValue: number;
+        if (typeof q.value === 'string') {
+          const cleaned = q.value.replace(/,/g, '').trim();
+          numValue = parseFloat(cleaned);
+        } else {
+          numValue = q.value;
+        }
+        
+        if (!isNaN(numValue)) {
+          annualTotal += numValue;
+          hasValidValue = true;
+        }
+      }
+    });
+    
+    return hasValidValue ? annualTotal : null;
+  };
+
+  // Calculate quarter-over-quarter change (from previous quarter)
+  const calculateQuarterOverQuarterChange = (
+    values: KPITimeseriesValue[],
+    currentQuarter: string
+  ): { change: number; previousQuarter: string } | null => {
+    if (!currentQuarter) return null;
+    
+    // Find current quarter index
+    const currentIndex = values.findIndex(v => v.quarter === currentQuarter);
+    if (currentIndex < 0 || currentIndex === 0) return null; // No previous quarter
+    
+    const currentValue = values[currentIndex];
+    const previousValue = values[currentIndex - 1];
+    
+    if (!currentValue || !previousValue) return null;
+    if (currentValue.value === null || currentValue.value === undefined) return null;
+    if (previousValue.value === null || previousValue.value === undefined) return null;
+    
+    // Convert to numbers
+    let currentNum: number;
+    let previousNum: number;
+    
+    if (typeof currentValue.value === 'string') {
+      const cleaned = currentValue.value.replace(/,/g, '').trim();
+      currentNum = parseFloat(cleaned);
+    } else {
+      currentNum = currentValue.value;
+    }
+    
+    if (typeof previousValue.value === 'string') {
+      const cleaned = previousValue.value.replace(/,/g, '').trim();
+      previousNum = parseFloat(cleaned);
+    } else {
+      previousNum = previousValue.value;
+    }
+    
+    if (isNaN(currentNum) || isNaN(previousNum) || previousNum === 0) {
+      return null;
+    }
+    
+    const change = ((currentNum - previousNum) / previousNum) * 100;
+    return { change, previousQuarter: previousValue.quarter };
+  };
+
+  // Calculate year-over-year change (same quarter, previous year)
+  const calculateYearOverYearChange = (
+    values: KPITimeseriesValue[],
+    currentQuarter: string
+  ): { change: number; previousYearQuarter: string } | null => {
+    if (!currentQuarter) return null;
+    
+    // Extract year and quarter from current quarter string
+    const yearMatch = currentQuarter.match(/(\d{4})/);
+    if (!yearMatch) return null;
+    
+    const currentYear = parseInt(yearMatch[1], 10);
+    const previousYear = currentYear - 1;
+    
+    // Extract quarter number (Q1, Q2, Q3, Q4)
+    const quarterMatch = currentQuarter.match(/Q(\d)/);
+    if (!quarterMatch) return null;
+    const quarterNum = quarterMatch[1];
+    
+    // Find previous year's same quarter
+    const previousYearQuarterOptions = [
+      `${previousYear}Q${quarterNum}`,
+      `${previousYear}-Q${quarterNum}`,
+      `${previousYear} Q${quarterNum}`
+    ];
+    
+    const currentValue = values.find(v => v.quarter === currentQuarter);
+    let previousYearValue: KPITimeseriesValue | undefined;
+    
+    for (const option of previousYearQuarterOptions) {
+      previousYearValue = values.find(v => v.quarter === option);
+      if (previousYearValue) break;
+    }
+    
+    // If not found, try flexible matching
+    if (!previousYearValue) {
+      previousYearValue = values.find(v => {
+        if (!v.quarter) return false;
+        const match = v.quarter.match(/(\d{4})/);
+        return match && parseInt(match[1], 10) === previousYear && v.quarter.includes(`Q${quarterNum}`);
+      });
+    }
+    
+    if (!currentValue || !previousYearValue) return null;
+    if (currentValue.value === null || currentValue.value === undefined) return null;
+    if (previousYearValue.value === null || previousYearValue.value === undefined) return null;
+    
+    // Convert to numbers
+    let currentNum: number;
+    let previousNum: number;
+    
+    if (typeof currentValue.value === 'string') {
+      const cleaned = currentValue.value.replace(/,/g, '').trim();
+      currentNum = parseFloat(cleaned);
+    } else {
+      currentNum = currentValue.value;
+    }
+    
+    if (typeof previousYearValue.value === 'string') {
+      const cleaned = previousYearValue.value.replace(/,/g, '').trim();
+      previousNum = parseFloat(cleaned);
+    } else {
+      previousNum = previousYearValue.value;
+    }
+    
+    if (isNaN(currentNum) || isNaN(previousNum) || previousNum === 0) {
+      return null;
+    }
+    
+    const change = ((currentNum - previousNum) / previousNum) * 100;
+    return { change, previousYearQuarter: previousYearValue.quarter };
+  };
+
+  // Calculate annual percent change for Q4 quarters (comparing to Q4 of previous year)
+  const calculateAnnualPercentChange = (
+    values: KPITimeseriesValue[],
+    currentQuarter: string
+  ): number | null => {
+    if (!currentQuarter) return null;
+    
+    // Check if it's Q4 (handle formats like "2024Q4", "2024-Q4", etc.)
+    const isQ4 = currentQuarter.includes('Q4') || currentQuarter.endsWith('Q4');
+    if (!isQ4) return null;
+    
+    // Extract year from quarter string (handle formats like "2024Q4", "2024-Q4", etc.)
+    const yearMatch = currentQuarter.match(/(\d{4})/);
+    if (!yearMatch) return null;
+    
+    const currentYear = parseInt(yearMatch[1], 10);
+    const previousYear = currentYear - 1;
+    
+    // Find previous year's Q4 (try different formats)
+    const previousYearQ4Options = [
+      `${previousYear}Q4`,
+      `${previousYear}-Q4`,
+      `${previousYear} Q4`
+    ];
+    
+    let previousYearQ4: string | null = null;
+    for (const option of previousYearQ4Options) {
+      const found = values.find(v => v.quarter === option || v.quarter?.includes(`${previousYear}`) && v.quarter?.includes('Q4'));
+      if (found) {
+        previousYearQ4 = found.quarter;
+        break;
+      }
+    }
+    
+    if (!previousYearQ4) {
+      // Try to find any Q4 from previous year
+      const prevYearQ4 = values.find(v => {
+        if (!v.quarter) return false;
+        const match = v.quarter.match(/(\d{4})/);
+        return match && parseInt(match[1], 10) === previousYear && (v.quarter.includes('Q4') || v.quarter.endsWith('Q4'));
+      });
+      if (prevYearQ4) {
+        previousYearQ4 = prevYearQ4.quarter;
+      }
+    }
+    
+    if (!previousYearQ4) return null;
+    
+    // Calculate annual totals for current and previous year
+    const currentAnnualTotal = calculateAnnualTotal(values, currentQuarter);
+    const previousAnnualTotal = calculateAnnualTotal(values, previousYearQ4);
+    
+    if (currentAnnualTotal === null || previousAnnualTotal === null || previousAnnualTotal === 0) {
+      return null;
+    }
+    
+    // Calculate annual percent change based on annual totals
+    const annualChange = ((currentAnnualTotal - previousAnnualTotal) / previousAnnualTotal) * 100;
+    return annualChange;
+  };
+
   // Generate colors for KPIs
   const getKPIColor = (index: number, total: number): string => {
     const colors = [
@@ -274,7 +683,7 @@ export default function KPITestPage() {
   };
 
   // Prepare combined data for a group
-  const prepareCombinedData = (kpis: KPITimeseries[], useAnnual: boolean = false) => {
+  const prepareCombinedData = (kpis: KPITimeseries[], useAnnual: boolean = false, currentChangeType: 'qoq' | 'yoy' = 'yoy') => {
     // Get all unique quarters or years
     const allPeriods = new Set<string>();
     
@@ -292,7 +701,7 @@ export default function KPITestPage() {
     });
 
     // Create data points for each period
-    return sortedPeriods.map(period => {
+    const dataPoints = sortedPeriods.map(period => {
       const dataPoint: any = { quarter: period };
       
       kpis.forEach(kpi => {
@@ -317,10 +726,114 @@ export default function KPITestPage() {
         dataPoint[`${key}_unit`] = value?.unit || kpi.unit;
         dataPoint[`${key}_change`] = value?.change || null;
         dataPoint[`${key}_changeType`] = value?.change_type || null;
+        
+        // Calculate verbose changes for quarterly mode
+        if (!useAnnual) {
+          const qoqChange = calculateQuarterOverQuarterChange(kpi.values, period);
+          const yoyChange = calculateYearOverYearChange(kpi.values, period);
+          
+          dataPoint[`${key}_qoqChange`] = qoqChange?.change || null;
+          dataPoint[`${key}_qoqPreviousQuarter`] = qoqChange?.previousQuarter || null;
+          dataPoint[`${key}_yoyChange`] = yoyChange?.change || null;
+          dataPoint[`${key}_yoyPreviousQuarter`] = yoyChange?.previousYearQuarter || null;
+          
+          // Calculate display values for tooltip top line (always show both)
+          dataPoint[`${key}_displayYoY`] = yoyChange?.change || null;
+          dataPoint[`${key}_displayQoQ`] = qoqChange?.change || null;
+          
+          // Calculate selected change value (for bar labels and tooltip consistency)
+          dataPoint[`${key}_selectedChangeValue`] = currentChangeType === 'qoq'
+            ? (qoqChange?.change || null)
+            : (yoyChange?.change || null);
+        }
       });
       
       return dataPoint;
     });
+    
+    // Calculate aggregate display values for tooltip top line (sum across all KPIs)
+    if (!useAnnual) {
+      dataPoints.forEach((dataPoint, idx) => {
+        // Calculate current total (sum of all KPI values)
+        let currentTotal = 0;
+        kpis.forEach(kpi => {
+          const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+          currentTotal += dataPoint[key] || 0;
+        });
+        
+        // Parse quarter string once for both QoQ and YoY calculations
+        const quarterStr = dataPoint.quarter ? String(dataPoint.quarter) : '';
+        const yearMatch = quarterStr.match(/(\d{4})/);
+        const quarterMatch = quarterStr.match(/Q(\d)/);
+        
+        // Calculate QoQ: find previous quarter and sum its values
+        let qoqValue: number | null = null;
+        if (yearMatch && quarterMatch) {
+          const currentYear = parseInt(yearMatch[1], 10);
+          const currentQuarterNum = parseInt(quarterMatch[1], 10);
+          
+          // Calculate previous quarter
+          let previousYear = currentYear;
+          let previousQuarterNum = currentQuarterNum - 1;
+          
+          if (previousQuarterNum < 1) {
+            previousQuarterNum = 4;
+            previousYear = currentYear - 1;
+          }
+          
+          const previousQuarter = `${previousYear}Q${previousQuarterNum}`;
+          
+          // Find previous quarter's data point
+          const prevQuarterDataPoint = dataPoints.find(d => 
+            d.quarter === previousQuarter || 
+            (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${previousQuarterNum}`))
+          );
+          
+          if (prevQuarterDataPoint) {
+            let prevTotal = 0;
+            kpis.forEach(kpi => {
+              const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+              prevTotal += prevQuarterDataPoint[key] || 0;
+            });
+            if (prevTotal > 0) {
+              qoqValue = ((currentTotal - prevTotal) / prevTotal) * 100;
+            }
+          }
+        }
+        
+        // Calculate YoY: find previous year's same quarter and sum its values
+        let yoyValue: number | null = null;
+        if (yearMatch && quarterMatch) {
+          const currentYear = parseInt(yearMatch[1], 10);
+          const previousYear = currentYear - 1;
+          const quarterNum = quarterMatch[1];
+          const previousYearQuarter = `${previousYear}Q${quarterNum}`;
+          
+          // Find previous year's same quarter
+          const prevYearDataPoint = dataPoints.find(d => 
+            d.quarter === previousYearQuarter || 
+            (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${quarterNum}`))
+          );
+          
+          if (prevYearDataPoint) {
+            let prevYearTotal = 0;
+            kpis.forEach(kpi => {
+              const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+              prevYearTotal += prevYearDataPoint[key] || 0;
+            });
+            if (prevYearTotal > 0) {
+              yoyValue = ((currentTotal - prevYearTotal) / prevYearTotal) * 100;
+            }
+          }
+        }
+        
+        // Store aggregate values
+        dataPoint._aggregateDisplayYoY = yoyValue;
+        dataPoint._aggregateDisplayQoQ = qoqValue;
+      });
+    }
+    
+    return dataPoints;
   };
 
   return (
@@ -450,6 +963,27 @@ export default function KPITestPage() {
                     </button>
                   </div>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700">Change:</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={changeType === 'yoy'}
+                      onChange={() => setChangeType(changeType === 'yoy' ? 'qoq' : 'yoy')}
+                      className="sr-only"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors ${
+                      changeType === 'yoy' ? 'bg-gray-400' : 'bg-gray-200'
+                    }`}>
+                      <div className={`absolute top-[1px] left-[1px] bg-white border border-gray-300 rounded-full h-3 w-3 transition-transform ${
+                        changeType === 'yoy' ? 'translate-x-3' : 'translate-x-0'
+                      }`}></div>
+                    </div>
+                    <span className="ml-2 text-xs text-gray-600 font-medium">
+                      {changeType === 'yoy' ? 'YoY' : 'QoQ'}
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -499,7 +1033,7 @@ export default function KPITestPage() {
 
                 return sortedGroups.map((groupName) => {
                   const groupKPIs = groupedKPIs[groupName];
-                  const combinedData = prepareCombinedData(groupKPIs, aggregationMode === 'annual');
+                  const combinedData = prepareCombinedData(groupKPIs, aggregationMode === 'annual', changeType);
                   
                   // Get visibility state for this group (defaults to all visible)
                   const groupVisibleSeries = visibleSeries[groupName] || (() => {
@@ -639,7 +1173,7 @@ export default function KPITestPage() {
                                     data={(aggregationMode === 'annual' 
                                       ? aggregateToAnnual(kpi.values, kpi.name, kpi.unit)
                                       : kpi.values
-                                    ).map(v => {
+                                    ).map((v, idx) => {
                                       // Handle string values with commas
                                       let numValue: number | null = null;
                                       if (v.value !== null && v.value !== undefined) {
@@ -650,6 +1184,20 @@ export default function KPITestPage() {
                                           numValue = v.value;
                                         }
                                       }
+                                      
+                                      // Calculate various changes for display
+                                      const qoqChange = aggregationMode === 'quarterly' 
+                                        ? calculateQuarterOverQuarterChange(kpi.values, v.quarter)
+                                        : null;
+                                      const yoyChange = aggregationMode === 'quarterly' 
+                                        ? calculateYearOverYearChange(kpi.values, v.quarter)
+                                        : null;
+                                      
+                                      // Calculate the selected change value (for bar labels and tooltip consistency)
+                                      const selectedChangeValue = changeType === 'qoq'
+                                        ? (qoqChange?.change || null)
+                                        : (yoyChange?.change || null);
+                                      
                                       return {
                                         quarter: v.quarter,
                                         value: numValue !== null && !isNaN(numValue) ? numValue : 0,
@@ -657,10 +1205,18 @@ export default function KPITestPage() {
                                         change: v.change,
                                         changeType: v.change_type,
                                         unit: v.unit || kpi.unit,
-                                        hasValue: v.value !== null && v.value !== undefined
+                                        hasValue: v.value !== null && v.value !== undefined,
+                                        qoqChange: qoqChange?.change || null,
+                                        qoqPreviousQuarter: qoqChange?.previousQuarter || null,
+                                        yoyChange: yoyChange?.change || null,
+                                        yoyPreviousQuarter: yoyChange?.previousYearQuarter || null,
+                                        selectedChangeValue: selectedChangeValue,
+                                        // For tooltip top line - always show both
+                                        displayYoY: yoyChange?.change || null,
+                                        displayQoQ: qoqChange?.change || null
                                       };
                                     })}
-                                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                                    margin={{ top: 40, right: 30, left: 20, bottom: 5 }}
                                   >
                                     <XAxis 
                                       dataKey="quarter" 
@@ -674,34 +1230,48 @@ export default function KPITestPage() {
                                       label={{ value: kpi.unit || 'Value', angle: -90, position: 'insideLeft' }}
                                     />
                                     <Tooltip
-                                      content={({ active, payload }: any) => {
-                                        if (active && payload && payload.length) {
-                                          const data = payload[0].payload;
-                                          return (
-                                            <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-                                              <p className="font-semibold text-gray-900 mb-1">
-                                                {data.quarter}
-                                              </p>
-                                              <p className="text-sm text-gray-700 mb-1">
-                                                <span className="font-medium">Value:</span> {formatValue(data.value, data.unit)}
-                                              </p>
-                                              {data.change !== null && data.change !== undefined && (
-                                                <p className="text-sm text-gray-700 mb-1">
-                                                  <span className="font-medium">Change:</span> {formatChange(data.change, data.changeType)}
-                                                </p>
-                                              )}
-                                              {data.context && (
-                                                <p className="text-sm text-gray-600 mt-2 pt-2 border-t border-gray-200 max-w-xs">
-                                                  <span className="font-medium">Context:</span> {data.context}
-                                                </p>
-                                              )}
-                                            </div>
-                                          );
-                                        }
-                                        return null;
-                                      }}
+                                      wrapperStyle={{ zIndex: 1000 }}
+                                      content={(props: any) => (
+                                        <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                      )}
                                     />
                                     <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                                      <LabelList
+                                        dataKey="quarter"
+                                        position="top"
+                                        content={(props: any) => {
+                                          const { x, y, width, payload } = props;
+                                          
+                                          if (!payload || !payload.quarter) return null;
+                                          const quarterStr = String(payload.quarter);
+                                          const isQ4 = quarterStr.includes('Q4') || quarterStr.endsWith('Q4');
+                                          
+                                          // Use pre-calculated selected change value
+                                          const changeValue = payload.selectedChangeValue !== null && payload.selectedChangeValue !== undefined && !isNaN(Number(payload.selectedChangeValue))
+                                            ? Number(payload.selectedChangeValue)
+                                            : null;
+                                          const changeLabel = changeType === 'qoq' ? 'QoQ' : 'YoY';
+                                          
+                                          // Only render if we have a change value to show
+                                          if (changeValue === null) return null;
+                                          
+                                          // Calculate center x position of the bar
+                                          const centerX = x + (width / 2);
+                                          
+                                          return (
+                                            <text
+                                              x={centerX}
+                                              y={y - 5}
+                                              fill={changeValue >= 0 ? '#10b981' : '#ef4444'}
+                                              fontSize={11}
+                                              fontWeight={600}
+                                              textAnchor="middle"
+                                            >
+                                              {changeValue >= 0 ? '+' : ''}{changeValue.toFixed(1)}% {changeLabel}
+                                            </text>
+                                          );
+                                        }}
+                                      />
                                       {kpi.values.map((entry, index) => {
                                         const hasValue = entry.value !== null && entry.value !== undefined;
                                         return (
@@ -739,34 +1309,10 @@ export default function KPITestPage() {
                                 tick={{ fontSize: 12 }}
                               />
                               <Tooltip
-                                content={({ active, payload }: any) => {
-                                  if (active && payload && payload.length) {
-                                    const data = payload[0].payload;
-                                    return (
-                                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 max-w-md">
-                                        <p className="font-semibold text-gray-900 mb-2">
-                                          {data.quarter}
-                                        </p>
-                                        {payload.map((entry: any, idx: number) => {
-                                          const kpiName = entry.dataKey.replace(/_/g, ' ');
-                                          const context = data[`${entry.dataKey}_context`];
-                                          const unit = data[`${entry.dataKey}_unit`] || '';
-                                          return (
-                                            <div key={idx} className="mb-2 pb-2 border-b border-gray-100 last:border-0">
-                                              <p className="text-sm font-medium text-gray-700">
-                                                <span style={{ color: entry.color }}>●</span> {kpiName}: {formatValue(entry.value, unit)}
-                                              </p>
-                                              {context && (
-                                                <p className="text-xs text-gray-500 mt-1 ml-4">{context}</p>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                }}
+                                wrapperStyle={{ zIndex: 1000 }}
+                                content={(props: any) => (
+                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                )}
                               />
                               <Legend 
                                 onClick={(e: any) => {
@@ -843,34 +1389,10 @@ export default function KPITestPage() {
                                 tick={{ fontSize: 12 }}
                               />
                               <Tooltip
-                                content={({ active, payload }: any) => {
-                                  if (active && payload && payload.length) {
-                                    const data = payload[0].payload;
-                                    return (
-                                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 max-w-md">
-                                        <p className="font-semibold text-gray-900 mb-2">
-                                          {data.quarter}
-                                        </p>
-                                        {payload.map((entry: any, idx: number) => {
-                                          const kpiName = entry.dataKey.replace(/_/g, ' ');
-                                          const context = data[`${entry.dataKey}_context`];
-                                          const unit = data[`${entry.dataKey}_unit`] || '';
-                                          return (
-                                            <div key={idx} className="mb-2 pb-2 border-b border-gray-100 last:border-0">
-                                              <p className="text-sm font-medium text-gray-700">
-                                                <span style={{ color: entry.color }}>●</span> {kpiName}: {formatValue(entry.value, unit)}
-                                              </p>
-                                              {context && (
-                                                <p className="text-xs text-gray-500 mt-1 ml-4">{context}</p>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                }}
+                                wrapperStyle={{ zIndex: 1000 }}
+                                content={(props: any) => (
+                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                )}
                               />
                               <Legend 
                                 onClick={(e: any) => {
@@ -934,19 +1456,85 @@ export default function KPITestPage() {
                                   }
                                 });
                                 
-                                // Calculate percent change from previous period
+                                // Calculate percent change based on toggle
                                 let percentChange: number | null = null;
-                                if (idx > 0) {
-                                  let prevTotal = 0;
-                                  groupKPIs.forEach(kpi => {
-                                    const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
-                                    if (groupVisibleSeries[key] !== false && combinedData[idx - 1][key] !== undefined) {
-                                      prevTotal += combinedData[idx - 1][key] || 0;
-                                    }
-                                  });
+                                const quarterStr = item.quarter ? String(item.quarter) : '';
+                                
+                                if (changeType === 'qoq') {
+                                  // Quarter-over-quarter: find previous quarter and compare
+                                  const yearMatch = quarterStr.match(/(\d{4})/);
+                                  const quarterMatch = quarterStr.match(/Q(\d)/);
                                   
-                                  if (prevTotal > 0) {
-                                    percentChange = ((total - prevTotal) / prevTotal) * 100;
+                                  if (yearMatch && quarterMatch) {
+                                    const currentYear = parseInt(yearMatch[1], 10);
+                                    const currentQuarterNum = parseInt(quarterMatch[1], 10);
+                                    
+                                    // Calculate previous quarter
+                                    let previousYear = currentYear;
+                                    let previousQuarterNum = currentQuarterNum - 1;
+                                    
+                                    if (previousQuarterNum < 1) {
+                                      previousQuarterNum = 4;
+                                      previousYear = currentYear - 1;
+                                    }
+                                    
+                                    const previousQuarter = `${previousYear}Q${previousQuarterNum}`;
+                                    
+                                    // Find previous quarter's data point
+                                    const prevQuarterItem = combinedData.find(d => 
+                                      d.quarter === previousQuarter || 
+                                      (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${previousQuarterNum}`))
+                                    );
+                                    
+                                    if (prevQuarterItem) {
+                                      let prevTotal = 0;
+                                      groupKPIs.forEach(kpi => {
+                                        const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                        if (groupVisibleSeries[key] !== false && prevQuarterItem[key] !== undefined) {
+                                          prevTotal += prevQuarterItem[key] || 0;
+                                        }
+                                      });
+                                      
+                                      if (prevTotal > 0) {
+                                        percentChange = ((total - prevTotal) / prevTotal) * 100;
+                                      }
+                                    }
+                                  }
+                                } else {
+                                  // Year-over-year: find same quarter previous year
+                                  if (quarterStr) {
+                                    const yearMatch = quarterStr.match(/(\d{4})/);
+                                    if (yearMatch) {
+                                      const currentYear = parseInt(yearMatch[1], 10);
+                                      const previousYear = currentYear - 1;
+                                      
+                                      // Extract quarter number
+                                      const quarterMatch = quarterStr.match(/Q(\d)/);
+                                      if (quarterMatch) {
+                                        const quarterNum = quarterMatch[1];
+                                        const previousYearQuarter = `${previousYear}Q${quarterNum}`;
+                                        
+                                        // Find previous year's same quarter
+                                        const prevYearItem = combinedData.find(d => 
+                                          d.quarter === previousYearQuarter || 
+                                          (d.quarter && String(d.quarter).includes(`${previousYear}`) && String(d.quarter).includes(`Q${quarterNum}`))
+                                        );
+                                        
+                                        if (prevYearItem) {
+                                          let prevYearTotal = 0;
+                                          groupKPIs.forEach(kpi => {
+                                            const key = kpi.name.replace(/[^a-zA-Z0-9]/g, '_');
+                                            if (groupVisibleSeries[key] !== false && prevYearItem[key] !== undefined) {
+                                              prevYearTotal += prevYearItem[key] || 0;
+                                            }
+                                          });
+                                          
+                                          if (prevYearTotal > 0) {
+                                            percentChange = ((total - prevYearTotal) / prevYearTotal) * 100;
+                                          }
+                                        }
+                                      }
+                                    }
                                   }
                                 }
                                 
@@ -969,41 +1557,10 @@ export default function KPITestPage() {
                                 tick={{ fontSize: 12 }}
                               />
                               <Tooltip
-                                content={({ active, payload }: any) => {
-                                  if (active && payload && payload.length) {
-                                    const data = payload[0].payload;
-                                    return (
-                                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 max-w-md">
-                                        <p className="font-semibold text-gray-900 mb-2">
-                                          {data.quarter}
-                                        </p>
-                                        {data._percentChange !== null && (
-                                          <p className={`text-sm font-medium mb-2 ${
-                                            data._percentChange >= 0 ? 'text-green-600' : 'text-red-600'
-                                          }`}>
-                                            Change: {data._percentChange >= 0 ? '+' : ''}{data._percentChange.toFixed(1)}%
-                                          </p>
-                                        )}
-                                        {payload.map((entry: any, idx: number) => {
-                                          const kpiName = entry.dataKey.replace(/_/g, ' ');
-                                          const context = data[`${entry.dataKey}_context`];
-                                          const unit = data[`${entry.dataKey}_unit`] || '';
-                                          return (
-                                            <div key={idx} className="mb-2 pb-2 border-b border-gray-100 last:border-0">
-                                              <p className="text-sm font-medium text-gray-700">
-                                                <span style={{ color: entry.color }}>●</span> {kpiName}: {formatValue(entry.value, unit)}
-                                              </p>
-                                              {context && (
-                                                <p className="text-xs text-gray-500 mt-1 ml-4">{context}</p>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                }}
+                                wrapperStyle={{ zIndex: 1000 }}
+                                content={(props: any) => (
+                                  <KPITooltip {...props} changeType={changeType} formatValue={formatValue} formatChange={formatChange} />
+                                )}
                               />
                               <Legend 
                                 onClick={(e: any) => {
@@ -1061,6 +1618,7 @@ export default function KPITestPage() {
                                           const change = parseFloat(value);
                                           const sign = change >= 0 ? '+' : '';
                                           const color = change >= 0 ? '#10b981' : '#ef4444';
+                                          const changeLabel = changeType === 'qoq' ? 'QoQ' : 'YoY';
                                           
                                           // Calculate center x position of the bar
                                           const centerX = x + (width / 2);
@@ -1074,7 +1632,7 @@ export default function KPITestPage() {
                                               fontWeight={600}
                                               textAnchor="middle"
                                             >
-                                              {sign}{change.toFixed(1)}%
+                                              {sign}{change.toFixed(1)}% {changeLabel}
                                             </text>
                                           );
                                         }}

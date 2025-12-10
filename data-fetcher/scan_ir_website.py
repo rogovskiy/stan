@@ -28,10 +28,15 @@ import google.generativeai as genai  # Only needed for HTML parsing with LLM
 load_dotenv('.env.local')
 
 # Load IR URLs configuration
+# The ir_urls.json file uses arrays of URLs per ticker:
+#   "AAPL": ["https://investor.apple.com/...", "https://another-url.com/..."]
 IR_URLS_FILE = os.path.join(os.path.dirname(__file__), 'ir_urls.json')
 
-def load_ir_urls() -> Dict[str, str]:
-    """Load IR URLs from configuration file"""
+def load_ir_urls() -> Dict[str, List[str]]:
+    """Load IR URLs from configuration file.
+    
+    Returns a dictionary where each ticker maps to a list of URL strings.
+    """
     try:
         with open(IR_URLS_FILE, 'r') as f:
             return json.load(f)
@@ -41,6 +46,27 @@ def load_ir_urls() -> Dict[str, str]:
     except json.JSONDecodeError as e:
         print(f'Error parsing {IR_URLS_FILE}: {e}')
         return {}
+
+def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]]) -> List[str]:
+    """Get list of IR URLs for a ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        ir_urls: Dictionary of ticker -> list of URLs mapping
+        
+    Returns:
+        List of URLs for the ticker, or empty list if not found
+    """
+    ticker_upper = ticker.upper()
+    if ticker_upper not in ir_urls:
+        return []
+    
+    urls = ir_urls[ticker_upper]
+    if isinstance(urls, list):
+        return urls
+    else:
+        print(f'Warning: Invalid URL format for {ticker_upper}, expected list. Got: {type(urls).__name__}')
+        return []
 
 def get_fiscal_year_end_month(ticker: str) -> int:
     """Get fiscal year-end month for a ticker"""
@@ -737,13 +763,20 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     ir_urls = load_ir_urls()
     
-    if ticker.upper() not in ir_urls:
+    # Get all URLs for this ticker (supports both single URL and list of URLs)
+    ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls)
+    
+    if not ticker_urls:
         print(f'Error: No IR URL configured for {ticker}')
         print(f'Add it to {IR_URLS_FILE}')
         return
     
-    ir_url = ir_urls[ticker.upper()]
-    print(f'Scanning IR website for {ticker}: {ir_url}')
+    if len(ticker_urls) == 1:
+        print(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
+    else:
+        print(f'Scanning {len(ticker_urls)} IR websites for {ticker}:')
+        for i, url in enumerate(ticker_urls, 1):
+            print(f'  {i}. {url}')
     
     # Initialize Gemini API for HTML parsing
     gemini_api_key = os.getenv('GEMINI_API_KEY')
@@ -752,21 +785,46 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     else:
         print('Warning: GEMINI_API_KEY not set. HTML page parsing will be limited.')
     
-    # Determine if URL is RSS feed or HTML page
-    if 'rss' in ir_url.lower() or ir_url.endswith('.xml') or ir_url.endswith('.rss'):
-        releases = parse_rss_feed(ir_url)
-    else:
-        if gemini_api_key:
-            releases = parse_html_page(ir_url, ticker, verbose)
+    # Collect releases from all URLs
+    all_releases = []
+    for ir_url in ticker_urls:
+        if verbose:
+            print(f'\nProcessing URL: {ir_url}')
+        
+        # Determine if URL is RSS feed or HTML page
+        if 'rss' in ir_url.lower() or ir_url.endswith('.xml') or ir_url.endswith('.rss'):
+            releases = parse_rss_feed(ir_url)
         else:
-            print('Error: Cannot parse HTML page without GEMINI_API_KEY')
-            return
+            if gemini_api_key:
+                releases = parse_html_page(ir_url, ticker, verbose)
+            else:
+                print(f'Error: Cannot parse HTML page {ir_url} without GEMINI_API_KEY')
+                continue
+        
+        if releases:
+            if verbose:
+                print(f'Found {len(releases)} releases from {ir_url}')
+            all_releases.extend(releases)
+        elif verbose:
+            print(f'No releases found from {ir_url}')
     
-    if not releases:
-        print(f'No releases found for {ticker}')
+    if not all_releases:
+        print(f'No releases found for {ticker} from any configured URLs')
         return
     
-    print(f'Found {len(releases)} potential releases')
+    # Remove duplicates based on URL (same document might appear on multiple pages)
+    seen_urls = set()
+    releases = []
+    for release in all_releases:
+        url = release.get('url', '')
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            releases.append(release)
+    
+    if len(all_releases) > len(releases):
+        print(f'Removed {len(all_releases) - len(releases)} duplicate release(s)')
+    
+    print(f'Found {len(releases)} unique potential releases')
     
     # Initialize Firebase
     firebase = FirebaseCache()
@@ -961,6 +1019,9 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             print(f'No documents found for {ticker_upper} {quarter_key}')
             return
         
+        # Sort by release_date in reverse order (most recent first)
+        documents = sorted(documents, key=lambda x: x.get('release_date') or '', reverse=True)
+        
         print(f'\nDocuments for {ticker_upper} {quarter_key}:')
         print('=' * 80)
         for doc in documents:
@@ -989,7 +1050,8 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         
         print(f'\nDocuments for {ticker_upper} year {year}:')
         print('=' * 80)
-        for doc in sorted(all_docs, key=lambda x: (x.get('quarter_key', ''), x.get('release_date') or '')):
+        # Sort by release_date in reverse order (most recent first), then by quarter_key
+        for doc in sorted(all_docs, key=lambda x: (x.get('release_date') or '', x.get('quarter_key', '')), reverse=True):
             qk = doc.get('quarter_key', 'N/A')
             print(f"  [{qk}] {doc.get('title', 'N/A')}")
             print(f"      Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
@@ -1026,10 +1088,13 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             
             print(f'\nAll documents for {ticker_upper}:')
             print('=' * 80)
-            for qk in sorted(by_quarter.keys()):
+            # Sort quarters in reverse order (most recent first)
+            for qk in sorted(by_quarter.keys(), reverse=True):
                 docs = by_quarter[qk]
+                # Sort documents within quarter by release_date in reverse order (most recent first)
+                docs = sorted(docs, key=lambda x: x.get('release_date') or '', reverse=True)
                 print(f'\n{qk} ({len(docs)} document(s)):')
-                for doc in sorted(docs, key=lambda x: x.get('release_date') or ''):
+                for doc in docs:
                     print(f"  - {doc.get('title', 'N/A')}")
                     print(f"    Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
                     if verbose:

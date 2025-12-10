@@ -1,9 +1,21 @@
 {
-  "AAPL": "https://investor.apple.com/investor-relations/default.aspx",
-  "MSFT": "https://www.microsoft.com/investor/rss/",
-  "GOOG": "https://abc.xyz/investor/",
-  "AMZN": "https://ir.aboutamazon.com/news-releases",
-  "META": "https://investor.fb.com/news/"
+  "AAPL": [
+    "https://investor.apple.com/investor-relations/default.aspx"
+  ],
+  "MSFT": [
+    "https://www.microsoft.com/investor/rss/"
+  ],
+  "GOOG": [
+    "https://abc.xyz/investor/"
+  ],
+  "AMZN": [
+    "https://ir.aboutamazon.com/news-releases"
+  ],
+  "META": [
+    "https://investor.fb.com/news/"
+  ],
+  "ARMN": [
+    "https://aris-mining.com/investors/events-presentations/",
+    "https://aris-mining.com/investors/financial-reports/"
+  ]
 }
-
-

@@ -989,7 +989,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         
         print(f'\nDocuments for {ticker_upper} year {year}:')
         print('=' * 80)
-        for doc in sorted(all_docs, key=lambda x: (x.get('quarter_key', ''), x.get('release_date', ''))):
+        for doc in sorted(all_docs, key=lambda x: (x.get('quarter_key', ''), x.get('release_date') or '')):
             qk = doc.get('quarter_key', 'N/A')
             print(f"  [{qk}] {doc.get('title', 'N/A')}")
             print(f"      Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
@@ -1029,7 +1029,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             for qk in sorted(by_quarter.keys()):
                 docs = by_quarter[qk]
                 print(f'\n{qk} ({len(docs)} document(s)):')
-                for doc in sorted(docs, key=lambda x: x.get('release_date', '')):
+                for doc in sorted(docs, key=lambda x: x.get('release_date') or ''):
                     print(f"  - {doc.get('title', 'N/A')}")
                     print(f"    Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
                     if verbose:

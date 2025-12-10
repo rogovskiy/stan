@@ -271,6 +271,40 @@ def get_previous_quarter_kpis(ticker: str, quarter_key: str) -> Optional[List[Di
         return None
 
 
+def detect_unit_type_mismatch(unit1: str, unit2: str) -> bool:
+    """Detect if two units represent different types (e.g., percentage vs dollar)
+    
+    Args:
+        unit1: First unit string
+        unit2: Second unit string
+        
+    Returns:
+        True if units represent different types (percentage vs dollar), False otherwise
+    """
+    if not unit1 or not unit2:
+        return False
+    
+    unit1_lower = unit1.lower().strip()
+    unit2_lower = unit2.lower().strip()
+    
+    # Percentage units
+    percentage_units = ['%', 'percent', 'percentage', 'pct']
+    # Dollar/monetary units
+    dollar_units = ['$', '$b', '$m', '$k', 'billion', 'billions', 'million', 'millions', 
+                    'thousand', 'thousands', 'dollar', 'dollars', 'usd']
+    
+    unit1_is_percentage = any(p in unit1_lower for p in percentage_units)
+    unit2_is_percentage = any(p in unit2_lower for p in percentage_units)
+    unit1_is_dollar = any(d in unit1_lower for d in dollar_units)
+    unit2_is_dollar = any(d in unit2_lower for d in dollar_units)
+    
+    # Check for type mismatch
+    if (unit1_is_percentage and unit2_is_dollar) or (unit1_is_dollar and unit2_is_percentage):
+        return True
+    
+    return False
+
+
 def normalize_kpi_name(kpi_name: str, previous_quarter_kpis: Optional[List[Dict[str, Any]]]) -> tuple[str, Optional[Dict[str, Any]], bool]:
     """Check if a KPI name matches a previous quarter KPI by name or other_names
     
@@ -366,6 +400,28 @@ def normalize_kpi_names(
             
             # Update KPI with canonical name
             kpi['name'] = canonical_name
+            
+            # CRITICAL: Normalize unit to match previous quarter exactly
+            prev_unit = matched_prev_kpi.get('unit', '')
+            current_unit = kpi.get('unit', '')
+            if prev_unit and prev_unit != current_unit:
+                # Unit mismatch detected
+                # Check if this is a critical type mismatch (percentage vs dollar)
+                is_critical_mismatch = detect_unit_type_mismatch(prev_unit, current_unit)
+                # Always use previous quarter's unit for consistency (FIX APPLIED FIRST)
+                kpi['unit'] = prev_unit
+                
+                # Then report the issue (after fix is applied)
+                if is_critical_mismatch:
+                    print(f'  🚨 CRITICAL UNIT TYPE MISMATCH for "{canonical_name}" (RESOLVED):')
+                    print(f'     Previous quarter unit: "{prev_unit}"')
+                    print(f'     Current quarter unit was: "{current_unit}"')
+                    print(f'     ✅ Corrected to: "{prev_unit}" to maintain consistency')
+                elif verbose:
+                    print(f'  ⚠️  Unit mismatch for "{canonical_name}" (RESOLVED): current="{current_unit}" → corrected to "{prev_unit}"')
+            elif prev_unit:
+                # Units match or current unit is empty - use previous unit
+                kpi['unit'] = prev_unit
         else:
             # No match - this is potentially a new KPI or variant
             # Keep the name as-is for now, but we'll check again in frequency update
@@ -453,6 +509,445 @@ def update_kpi_frequencies_from_previous_quarter(
     return updated_kpis
 
 
+def validate_kpi_units(
+    kpis: List[Dict[str, Any]],
+    previous_quarter_kpis: Optional[List[Dict[str, Any]]],
+    verbose: bool = False
+) -> List[Dict[str, Any]]:
+    """Validate and report unit consistency issues with previous quarter KPIs
+    
+    Args:
+        kpis: List of extracted KPIs (should already be normalized)
+        previous_quarter_kpis: List of KPIs from previous quarter, or None
+        verbose: Enable verbose output
+        
+    Returns:
+        List of KPIs (unchanged, but warnings printed if issues found)
+    """
+    if not kpis or not previous_quarter_kpis:
+        return kpis
+    
+    if verbose:
+        print(f'\n🔍 Validating unit consistency with previous quarter...')
+    
+    # Create lookup map
+    previous_kpi_map = {}
+    for prev_kpi in previous_quarter_kpis:
+        kpi_name = prev_kpi.get('name', '')
+        if kpi_name:
+            previous_kpi_map[kpi_name] = prev_kpi
+    
+    issues_found = 0
+    for kpi in kpis:
+        kpi_name = kpi.get('name', '')
+        if not kpi_name or kpi_name not in previous_kpi_map:
+            continue
+        
+        prev_kpi = previous_kpi_map[kpi_name]
+        prev_unit = prev_kpi.get('unit', '')
+        current_unit = kpi.get('unit', '')
+        
+        if not prev_unit or not current_unit:
+            continue
+        
+        # Check for exact match
+        if prev_unit != current_unit:
+            # Check if it's a critical type mismatch
+            if detect_unit_type_mismatch(prev_unit, current_unit):
+                print(f'\n🚨 CRITICAL: Unit type mismatch detected for "{kpi_name}":')
+                print(f'   Previous quarter: "{prev_unit}"')
+                print(f'   Current quarter:  "{current_unit}"')
+                print(f'   This is a CRITICAL ERROR - percentage and dollar units cannot be mixed!')
+                issues_found += 1
+            elif verbose:
+                print(f'  ⚠️  Unit difference for "{kpi_name}": previous="{prev_unit}" vs current="{current_unit}"')
+    
+    if verbose:
+        if issues_found == 0:
+            print(f'   ✅ All units consistent with previous quarter')
+        else:
+            print(f'   ⚠️  Found {issues_found} unit consistency issue(s)')
+    
+    return kpis
+
+
+def print_kpi_comparison(
+    extracted_kpis: List[Dict[str, Any]],
+    previous_quarter_kpis: Optional[List[Dict[str, Any]]],
+    quarter_key: str,
+    prev_quarter_key: Optional[str] = None
+) -> None:
+    """Print a comparison of extracted KPIs with previous quarter KPIs
+    
+    Args:
+        extracted_kpis: List of KPIs extracted for current quarter
+        previous_quarter_kpis: List of KPIs from previous quarter, or None
+        quarter_key: Current quarter key
+        prev_quarter_key: Previous quarter key (for display purposes), or None
+    """
+    print('\n' + '='*80)
+    print(f'KPI EXTRACTION RESULTS: {quarter_key}')
+    print('='*80)
+    
+    if not extracted_kpis:
+        print('⚠️  No KPIs extracted')
+        print('='*80 + '\n')
+        return
+    
+    # Create lookup map for previous quarter KPIs
+    prev_kpi_map = {}
+    if previous_quarter_kpis:
+        for prev_kpi in previous_quarter_kpis:
+            name = prev_kpi.get('name', '')
+            if name:
+                prev_kpi_map[name] = prev_kpi
+    
+    # Categorize KPIs
+    matched_kpis = []
+    new_kpis = []
+    
+    for kpi in extracted_kpis:
+        kpi_name = kpi.get('name', '')
+        if kpi_name in prev_kpi_map:
+            matched_kpis.append((kpi, prev_kpi_map[kpi_name]))
+        else:
+            new_kpis.append(kpi)
+    
+    # Print matched KPIs (comparing current vs previous)
+    if matched_kpis:
+        print(f'\n📊 MATCHED KPIs ({len(matched_kpis)} KPIs from previous quarter):')
+        print('-'*80)
+        for current_kpi, prev_kpi in matched_kpis:
+            name = current_kpi.get('name', 'Unknown')
+            current_value = current_kpi.get('value', 'N/A')
+            current_unit = current_kpi.get('unit', '')
+            prev_value = prev_kpi.get('value', 'N/A')
+            prev_unit = prev_kpi.get('unit', '')
+            
+            # Check for unit consistency
+            unit_match = current_unit == prev_unit
+            unit_status = '✅' if unit_match else '⚠️'
+            
+            print(f'  {unit_status} {name}')
+            print(f'     Current ({quarter_key}): {current_value} {current_unit}')
+            prev_q_label = prev_quarter_key if prev_quarter_key else 'Previous'
+            print(f'     Previous ({prev_q_label}): {prev_value} {prev_unit}')
+            
+            if not unit_match:
+                print(f'     ⚠️  UNIT MISMATCH: previous="{prev_unit}" vs current="{current_unit}"')
+            
+            # Show change if available
+            change = current_kpi.get('change')
+            change_type = current_kpi.get('change_type')
+            if change:
+                print(f'     Change: {change} ({change_type})')
+            print()
+    
+    # Print new KPIs
+    if new_kpis:
+        print(f'\n🆕 NEW KPIs ({len(new_kpis)} KPIs not in previous quarter):')
+        print('-'*80)
+        for kpi in new_kpis:
+            name = kpi.get('name', 'Unknown')
+            value = kpi.get('value', 'N/A')
+            unit = kpi.get('unit', '')
+            group = kpi.get('group', 'N/A')
+            print(f'  • {name}: {value} {unit} ({group})')
+        print()
+    
+    # Print missing KPIs (in previous but not in current)
+    missing_kpis = []
+    if previous_quarter_kpis:
+        current_kpi_names = {kpi.get('name', '') for kpi in extracted_kpis}
+        missing_kpis = [
+            prev_kpi for prev_kpi in previous_quarter_kpis
+            if prev_kpi.get('name', '') not in current_kpi_names
+        ]
+        
+        if missing_kpis:
+            print(f'\n⚠️  MISSING KPIs ({len(missing_kpis)} KPIs from previous quarter not found):')
+            print('-'*80)
+            for prev_kpi in missing_kpis:
+                name = prev_kpi.get('name', 'Unknown')
+                prev_value = prev_kpi.get('value', 'N/A')
+                prev_unit = prev_kpi.get('unit', '')
+                frequency = prev_kpi.get('frequency', 1)
+                summary = prev_kpi.get('summary', 'No summary available')
+                print(f'  • {name}: {prev_value} {prev_unit} (frequency: {frequency})')
+                print(f'    Summary: {summary}')
+            print()
+    
+    # Summary
+    print('-'*80)
+    print(f'Summary: {len(matched_kpis)} matched, {len(new_kpis)} new, {len(missing_kpis)} missing')
+    print('='*80 + '\n')
+
+
+def extract_missing_kpi(
+    ticker: str,
+    quarter_key: str,
+    missing_kpi: Dict[str, Any],
+    pdf_files: List[tuple[bytes, Dict]],
+    html_texts: List[tuple[str, Dict]],
+    verbose: bool = False
+) -> Optional[Dict[str, Any]]:
+    """Extract a single missing KPI using a targeted prompt
+    
+    Args:
+        ticker: Stock ticker symbol
+        quarter_key: Quarter key in format YYYYQN
+        missing_kpi: The missing KPI from previous quarter to search for
+        pdf_files: List of (content_bytes, doc_meta) tuples
+        html_texts: List of (text, doc_meta) tuples
+        verbose: Enable verbose output
+        
+    Returns:
+        KPI dictionary if found, None otherwise
+    """
+    try:
+        kpi_name = missing_kpi.get('name', '')
+        prev_value = missing_kpi.get('value', 'N/A')
+        prev_unit = missing_kpi.get('unit', '')
+        prev_group = missing_kpi.get('group', 'N/A')
+        prev_context = missing_kpi.get('context', '')
+        prev_summary = missing_kpi.get('summary', '')
+        prev_source = missing_kpi.get('source', '')
+        prev_other_names = missing_kpi.get('other_names', [])
+        prev_frequency = missing_kpi.get('frequency', 1)
+        
+        if not kpi_name:
+            return None
+        
+        # Load missing KPI response schema (includes explanation field)
+        response_schema_raw = load_json_schema('missing_kpi_response_schema.json')
+        # Clean schema for Gemini compatibility
+        response_schema = clean_schema_for_gemini(response_schema_raw)
+        
+        # Load targeted prompt template
+        targeted_prompt = load_prompt_template(
+            'missing_kpi_extraction_prompt.txt',
+            ticker=ticker,
+            quarter_key=quarter_key,
+            kpi_name=kpi_name,
+            prev_value=prev_value,
+            prev_unit=prev_unit,
+            prev_group=prev_group,
+            prev_context=prev_context,
+            prev_summary=prev_summary
+        )
+
+        # Add document context
+        if html_texts:
+            html_context_parts = []
+            for i, (text, doc_meta) in enumerate(html_texts, 1):
+                text_preview = text[:2000] + ('...' if len(text) > 2000 else '')
+                html_context_parts.append(
+                    f"Document {i}: {doc_meta.get('title', 'Unknown')} ({doc_meta.get('document_type', 'unknown')})\n"
+                    f"Text content:\n{text_preview}"
+                )
+            html_context = '\n\n'.join(html_context_parts)
+            targeted_prompt += f"\n\nBelow are text documents to search:\n{html_context}"
+        
+        # Verbose output is now handled in extract_missing_kpis function
+        
+        # Initialize Gemini
+        gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
+        if not gemini_api_key:
+            return None
+        
+        genai.configure(api_key=gemini_api_key)
+        model_name = get_gemini_model()
+        model = genai.GenerativeModel(model_name)
+        
+        # Prepare content parts
+        content_parts = [targeted_prompt]
+        
+        # Add PDF files
+        for pdf_content, doc_meta in pdf_files:
+            pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
+            content_parts.append({
+                'mime_type': 'application/pdf',
+                'data': pdf_base64
+            })
+        
+        # Generate with structured output
+        response = model.generate_content(
+            content_parts,
+            generation_config={
+                'temperature': 0.2,  # Lower temperature for more focused search
+                'max_output_tokens': 2000,  # Reasonable limit to prevent overly verbose responses
+                'response_mime_type': 'application/json',
+                'response_schema': response_schema
+            }
+        )
+        
+        # Parse JSON response
+        try:
+            # Get response text - handle both string and response object
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif isinstance(response, str):
+                response_text = response
+            else:
+                # Try to get text from parts
+                response_text = str(response)
+            
+            # Extract JSON if wrapped in markdown code blocks
+            response_text = extract_json_from_llm_response(response_text)
+            
+            # Parse JSON
+            result = json.loads(response_text)
+        except json.JSONDecodeError as e:
+            if verbose:
+                error_msg = str(e)
+                print(f'     ⚠️  JSON parsing error for "{kpi_name}": {error_msg}')
+                response_preview = response_text[:1000] if 'response_text' in locals() else str(response)[:1000]
+                print(f'     Response preview (first 1000 chars): {response_preview}')
+                if 'response_text' in locals() and len(response_text) > 1000:
+                    print(f'     Response preview (last 500 chars): ...{response_text[-500:]}')
+            return None
+        except AttributeError as e:
+            # Response might not have expected attributes
+            if verbose:
+                print(f'     ⚠️  Invalid response format for "{kpi_name}": {e}')
+                print(f'     Response type: {type(response)}')
+            return None
+        except Exception as e:
+            if verbose:
+                print(f'     ⚠️  Error parsing response for "{kpi_name}": {e}')
+                import traceback
+                traceback.print_exc()
+            return None
+        
+        if result.get('found') and result.get('kpi'):
+            found_kpi = result['kpi']
+            # Ensure unit matches previous quarter exactly
+            found_kpi['unit'] = prev_unit
+            # Ensure name matches exactly
+            found_kpi['name'] = kpi_name
+            # Ensure group matches
+            found_kpi['group'] = prev_group
+            # Preserve summary if not provided
+            if not found_kpi.get('summary') and prev_summary:
+                found_kpi['summary'] = prev_summary
+            # Preserve context if not provided
+            if not found_kpi.get('context') and prev_context:
+                found_kpi['context'] = prev_context
+            # Merge other_names
+            if prev_other_names:
+                current_other_names = set(found_kpi.get('other_names', []))
+                current_other_names.update(prev_other_names)
+                found_kpi['other_names'] = sorted(list(current_other_names))
+            # Set frequency (will be updated later, but set initial value)
+            found_kpi['frequency'] = prev_frequency + 1
+            if verbose:
+                print(f'     ✅ Found: "{kpi_name}" = {found_kpi.get("value", "N/A")} {prev_unit}')
+            return found_kpi
+        else:
+            # KPI not found - display explanation
+            explanation = result.get('explanation', 'No explanation provided')
+            similar_kpis = result.get('similar_kpis', [])
+            
+            if verbose:
+                print(f'     ❌ Not found in documents')
+                print(f'     📝 Explanation: {explanation}')
+                
+                if similar_kpis:
+                    print(f'     🔍 Similar KPIs found ({len(similar_kpis)}):')
+                    for similar in similar_kpis:
+                        similar_name = similar.get('name', 'Unknown')
+                        similar_value = similar.get('value', 'N/A')
+                        reason = similar.get('reason_not_matched', 'No reason provided')
+                        print(f'       • "{similar_name}": {similar_value}')
+                        print(f'         Reason not matched: {reason}')
+            
+            return None
+        
+    except Exception as e:
+        if verbose:
+            print(f'     ⚠️  Error searching for "{kpi_name}": {e}')
+        return None
+
+
+def extract_missing_kpis(
+    ticker: str,
+    quarter_key: str,
+    extracted_kpis: List[Dict[str, Any]],
+    previous_quarter_kpis: Optional[List[Dict[str, Any]]],
+    pdf_files: List[tuple[bytes, Dict]],
+    html_texts: List[tuple[str, Dict]],
+    verbose: bool = False
+) -> List[Dict[str, Any]]:
+    """Extract missing KPIs individually using targeted prompts
+    
+    Args:
+        ticker: Stock ticker symbol
+        quarter_key: Quarter key in format YYYYQN
+        extracted_kpis: Already extracted KPIs
+        previous_quarter_kpis: KPIs from previous quarter
+        pdf_files: List of (content_bytes, doc_meta) tuples
+        html_texts: List of (text, doc_meta) tuples
+        verbose: Enable verbose output
+        
+    Returns:
+        Updated list of KPIs including any found missing KPIs
+    """
+    if not previous_quarter_kpis:
+        return extracted_kpis
+    
+    # Find missing KPIs
+    current_kpi_names = {kpi.get('name', '') for kpi in extracted_kpis}
+    missing_kpis = [
+        prev_kpi for prev_kpi in previous_quarter_kpis
+        if prev_kpi.get('name', '') not in current_kpi_names
+    ]
+    
+    if not missing_kpis:
+        return extracted_kpis
+    
+    if verbose:
+        print(f'\n🔍 Searching for {len(missing_kpis)} missing KPI(s) using targeted extraction...')
+        print('-'*80)
+    
+    found_kpis = []
+    for missing_kpi in missing_kpis:
+        kpi_name = missing_kpi.get('name', '')
+        frequency = missing_kpi.get('frequency', 1)
+        summary = missing_kpi.get('summary', 'No summary available')
+        
+        # Only search for KPIs with frequency > 1 (repeated metrics, not one-off)
+        # This avoids searching for metrics that might have been intentionally dropped
+        if frequency > 1:
+            if verbose:
+                print(f'     📊 Missing KPI: "{kpi_name}"')
+                print(f'        Summary: {summary}')
+                print(f'     🔍 Searching for missing KPI: "{kpi_name}"...')
+            
+            found_kpi = extract_missing_kpi(
+                ticker,
+                quarter_key,
+                missing_kpi,
+                pdf_files,
+                html_texts,
+                verbose
+            )
+            if found_kpi:
+                found_kpis.append(found_kpi)
+        elif verbose:
+            print(f'     ⏭️  Skipping "{kpi_name}" (frequency={frequency}, likely one-off metric)')
+            print(f'        Summary: {summary}')
+    
+    if found_kpis:
+        if verbose:
+            print(f'   ✅ Found {len(found_kpis)} missing KPI(s)')
+        # Merge found KPIs into extracted KPIs
+        extracted_kpis.extend(found_kpis)
+    elif verbose:
+        print(f'   ⚠️  No missing KPIs found in documents')
+    
+    return extracted_kpis
+
+
 def calculate_kpi_frequency(kpi_name: str, previous_kpis: Optional[List[Dict[str, Any]]]) -> int:
     """Calculate frequency for a KPI based on previous quarter data (legacy function)
     
@@ -516,11 +1011,24 @@ def extract_kpis(
                 group = kpi.get('group', 'Other')
                 if group not in kpis_by_group:
                     kpis_by_group[group] = []
-                kpis_by_group[group].append(kpi.get('name', 'Unknown'))
+                name = kpi.get('name', 'Unknown')
+                unit = kpi.get('unit', '')
+                summary = kpi.get('summary', '')
+                # Format: "Name (unit)" if unit exists, or just "Name"
+                if unit:
+                    name_with_unit = f"{name} ({unit})"
+                else:
+                    name_with_unit = name
+                # Add summary if available
+                if summary:
+                    name_with_unit += f" - {summary}"
+                kpis_by_group[group].append(name_with_unit)
             
             prev_kpi_summary = "\nPrevious quarter KPIs by group:\n"
-            for group, names in kpis_by_group.items():
-                prev_kpi_summary += f"  - {group}: {', '.join(names)}\n"
+            for group, items in kpis_by_group.items():
+                prev_kpi_summary += f"  - {group}:\n"
+                for item in items:
+                    prev_kpi_summary += f"    • {item}\n"
         
         previous_context = ""
         if previous_quarter_data:
@@ -560,13 +1068,6 @@ Use this previous quarter context to:
         
         if html_context:
             prompt += f"\n\nBelow are additional text documents:\n{html_context}"
-        
-        if verbose:
-            print('\n' + '='*80)
-            print('KPI EXTRACTION PROMPT:')
-            print('='*80)
-            print(prompt[:2000] + '...' if len(prompt) > 2000 else prompt)
-            print('='*80 + '\n')
         
         # Initialize Gemini
         gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
@@ -613,6 +1114,9 @@ Use this previous quarter context to:
         
         if verbose:
             print(f'✅ Extracted {len(kpis)} KPIs')
+            # Print comparison with previous quarter
+            prev_quarter_key = previous_quarter_data.get('quarter_key', 'previous quarter') if previous_quarter_data else None
+            print_kpi_comparison(kpis, previous_kpis, quarter_key, prev_quarter_key)
         
         return kpis
         
@@ -1152,8 +1656,18 @@ Examples:
                 )
                 
                 if kpis:
-                    # Normalize names and calculate frequencies from previous quarter before saving
+                    # Extract missing KPIs using targeted prompts
                     previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
+                    kpis = extract_missing_kpis(
+                        args.ticker.upper(),
+                        quarter_key,
+                        kpis,
+                        previous_quarter_kpis,
+                        pdf_files,
+                        html_texts,
+                        args.verbose
+                    )
+                    # Normalize names and calculate frequencies from previous quarter before saving
                     
                     # First normalize names
                     kpis = normalize_kpi_names(
@@ -1164,6 +1678,13 @@ Examples:
                     
                     # Then update frequencies
                     kpis = update_kpi_frequencies_from_previous_quarter(
+                        kpis,
+                        previous_quarter_kpis,
+                        args.verbose
+                    )
+                    
+                    # Finally validate unit consistency
+                    kpis = validate_kpi_units(
                         kpis,
                         previous_quarter_kpis,
                         args.verbose
@@ -1281,6 +1802,19 @@ Examples:
                 previous_quarter_data
             )
             
+            if kpis:
+                # Extract missing KPIs using targeted prompts
+                previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
+                kpis = extract_missing_kpis(
+                    args.ticker.upper(),
+                    args.quarter,
+                    kpis,
+                    previous_quarter_kpis,
+                    pdf_files,
+                    html_texts,
+                    args.verbose
+                )
+            
             if not kpis:
                 print(f'Failed to extract KPIs for {args.ticker} {args.quarter}')
                 sys.exit(1)
@@ -1297,6 +1831,13 @@ Examples:
             
             # Then update frequencies
             kpis = update_kpi_frequencies_from_previous_quarter(
+                kpis,
+                previous_quarter_kpis,
+                args.verbose
+            )
+            
+            # Finally validate unit consistency
+            kpis = validate_kpi_units(
                 kpis,
                 previous_quarter_kpis,
                 args.verbose

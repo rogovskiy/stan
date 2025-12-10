@@ -16,11 +16,7 @@ This document provides instructions for AI agents working with the data-fetcher 
 
 2. **Activate the virtual environment**:
    ```bash
-   # On macOS/Linux:
    source venv/bin/activate
-   
-   # On Windows:
-   venv\Scripts\activate
    ```
 
 3. **Install dependencies**:
@@ -44,12 +40,9 @@ python extract_kpis.py --ticker AAPL
 python generate_quarterly_summary.py --ticker AAPL
 ```
 
-### Important Notes
+### Coding Principals
 
-- **Never run Python scripts without activating venv first**
-- If you see import errors, check that venv is activated and dependencies are installed
-- The `requirements.txt` file contains all necessary dependencies
-- Always use `python` (or `python3`) from within the activated venv, not system Python
+- Don't assume the code should be backward compatible by default. Avoid creating multiple fallbacks unless specified or confirmed by the human.
 
 ## Project Structure
 
@@ -160,3 +153,4 @@ Always follow this pattern:
 - Ensure venv is activated
 - Check Python version compatibility (Python 3.8+)
 - Verify all dependencies are installed
+

@@ -47,26 +47,40 @@ def load_ir_urls() -> Dict[str, List[str]]:
         print(f'Error parsing {IR_URLS_FILE}: {e}')
         return {}
 
-def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]]) -> List[str]:
-    """Get list of IR URLs for a ticker.
+def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]], firebase: Optional[FirebaseCache] = None) -> List[str]:
+    """Get list of IR URLs for a ticker from both JSON config and Firebase.
     
     Args:
         ticker: Stock ticker symbol
-        ir_urls: Dictionary of ticker -> list of URLs mapping
+        ir_urls: Dictionary of ticker -> list of URLs mapping from JSON
+        firebase: Optional FirebaseCache instance to read from Firebase
         
     Returns:
-        List of URLs for the ticker, or empty list if not found
+        List of unique URLs for the ticker (combines JSON and Firebase sources)
     """
     ticker_upper = ticker.upper()
-    if ticker_upper not in ir_urls:
-        return []
+    url_set = set()
     
-    urls = ir_urls[ticker_upper]
-    if isinstance(urls, list):
-        return urls
-    else:
-        print(f'Warning: Invalid URL format for {ticker_upper}, expected list. Got: {type(urls).__name__}')
-        return []
+    # Get URLs from JSON config
+    if ticker_upper in ir_urls:
+        urls = ir_urls[ticker_upper]
+        if isinstance(urls, list):
+            url_set.update(urls)
+        else:
+            print(f'Warning: Invalid URL format for {ticker_upper} in JSON, expected list. Got: {type(urls).__name__}')
+    
+    # Get URLs from Firebase
+    if firebase:
+        try:
+            firebase_urls = firebase.get_ir_urls(ticker)
+            for url_data in firebase_urls:
+                url = url_data.get('url')
+                if url:
+                    url_set.add(url)
+        except Exception as e:
+            print(f'Warning: Could not get IR URLs from Firebase for {ticker}: {e}')
+    
+    return list(url_set)
 
 def get_fiscal_year_end_month(ticker: str) -> int:
     """Get fiscal year-end month for a ticker"""
@@ -763,8 +777,11 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     ir_urls = load_ir_urls()
     
-    # Get all URLs for this ticker (supports both single URL and list of URLs)
-    ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls)
+    # Initialize Firebase
+    firebase = FirebaseCache()
+    
+    # Get all URLs for this ticker (from both JSON and Firebase)
+    ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls, firebase)
     
     if not ticker_urls:
         print(f'Error: No IR URL configured for {ticker}')
@@ -801,6 +818,13 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                 print(f'Error: Cannot parse HTML page {ir_url} without GEMINI_API_KEY')
                 continue
         
+        # Update last_scanned timestamp in Firebase
+        try:
+            firebase.update_ir_url_last_scanned(ticker, ir_url)
+        except Exception as e:
+            if verbose:
+                print(f'Warning: Could not update last_scanned for {ir_url}: {e}')
+        
         if releases:
             if verbose:
                 print(f'Found {len(releases)} releases from {ir_url}')
@@ -825,9 +849,6 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
         print(f'Removed {len(all_releases) - len(releases)} duplicate release(s)')
     
     print(f'Found {len(releases)} unique potential releases')
-    
-    # Initialize Firebase
-    firebase = FirebaseCache()
     
     processed_count = 0
     skipped_count = 0

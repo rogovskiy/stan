@@ -291,6 +291,16 @@ export default function Home() {
               >
                 KPI
               </Link>
+              <Link
+                href={`/${selectedTicker}/documents`}
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === `/${selectedTicker}/documents`
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                Documents
+              </Link>
             </nav>
           </div>
         </div>

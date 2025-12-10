@@ -21,9 +21,21 @@ If previous quarter KPIs are provided above, you MUST maintain EXACT consistency
 
 2. **Group Consistency**: If a KPI was tracked before, you MUST use the EXACT same group assignment. Do NOT change groups between quarters. Consistency in grouping enables proper categorization and trend analysis.
 
-3. **Frequency Field Purpose**: The frequency field indicates how many quarters this KPI has been reported. High frequency (e.g., 8, 12, 16+) indicates this is a regularly reported metric that management tracks consistently. When you see a KPI with high frequency in previous quarters, it's likely to be mentioned again this quarter - search thoroughly for it even if it's mentioned in a slightly different format.
+3. **Unit Consistency - CRITICAL**: If a KPI was tracked in previous quarters, you MUST use the EXACT same unit from previous quarters. Units are case-sensitive and must match character-for-character.
+   - **CRITICAL ERROR TO AVOID**: DO NOT confuse percentage units (%) with dollar units ($, dollars, billions, millions)
+   - **CRITICAL ERROR TO AVOID**: DO NOT confuse "percentage" with "dollars" or "$B" with "%"
+   - If previous quarter KPI has unit "percentage" or "%", the current quarter MUST also use "percentage" or "%" (whichever was used before)
+   - If previous quarter KPI has unit "billions" or "$B" or "dollars", the current quarter MUST also use the same unit
+   - Check the previous quarter's unit BEFORE extracting the current quarter's unit
+   - Unit mismatches (e.g., extracting % when previous quarter had $, or vice versa) create completely invalid data
+   - Examples of unit consistency:
+     * Previous: "Growth Rate" with unit "percentage" → Current must use "percentage" (not "dollars" or "%" if "%" wasn't used before)
+     * Previous: "Revenue" with unit "billions" → Current must use "billions" (not "millions" or "percentage")
+     * Previous: "Margin" with unit "%" → Current must use "%" (not "percentage" or "dollars")
 
-4. **Existing KPI Priority**: When previous quarter KPIs are provided, prioritize finding and extracting those KPIs first. These are the metrics that management consistently tracks. If a previously tracked KPI is not mentioned this quarter, note it but still extract it if possible.
+4. **Frequency Field Purpose**: The frequency field indicates how many quarters this KPI has been reported. High frequency (e.g., 8, 12, 16+) indicates this is a regularly reported metric that management tracks consistently. When you see a KPI with high frequency in previous quarters, it's likely to be mentioned again this quarter - search thoroughly for it even if it's mentioned in a slightly different format.
+
+5. **Existing KPI Priority**: When previous quarter KPIs are provided, prioritize finding and extracting those KPIs first. These are the metrics that management consistently tracks. If a previously tracked KPI is not mentioned this quarter, note it but still extract it if possible.
 
 Based on the provided documents (PDFs and text){previous_quarter_note}, extract ALL custom KPIs that are NOT included in standard financial statements.
 
@@ -38,16 +50,62 @@ CRITICAL: DO NOT include standard financial statement metrics such as:
 
 ONLY extract CUSTOM, company-specific metrics that are unique to this business and not found in standard financial statements. These are metrics that management specifically highlights as key performance indicators for their business model.
 
+**🚨 CRITICAL: ACCURATE METRIC TYPE IDENTIFICATION 🚨**
+
+**GENERAL PRINCIPLE - DON'T CONFUSE DIFFERENT METRIC TYPES:**
+
+Different metric types are fundamentally different and should NEVER be confused. This is like confusing apples and bananas - they're both fruits, but they're completely different things.
+
+**KEY PRINCIPLES:**
+
+1. **EACH METRIC TYPE IS UNIQUE**: 
+   - Revenue ≠ Operating Income ≠ Net Income ≠ Count ≠ Percentage
+   - Each metric type measures something completely different
+   - Confusing metric types creates completely inaccurate and unusable data
+
+2. **EXAMPLES OF DIFFERENT METRIC TYPES**:
+   - **Revenue**: Top-line sales/income before expenses (e.g., "Google Cloud Revenue: $9.2B")
+   - **Operating Income**: Profit after operating expenses (e.g., "Google Cloud Operating Income: $900M")
+   - **Count**: Number of items (e.g., "Number of employees: 187,000")
+   - **Percentage**: Ratio or rate (e.g., "Growth Rate: 15%")
+   - **Dollar amounts** vs **Percentages**: Completely different units (e.g., "$50B" ≠ "50%")
+
+3. **EXTRACTION ACCURACY**:
+   - When extracting a KPI, verify you're extracting the CORRECT metric type
+   - If you're extracting "Google Cloud Revenue", make sure it's actually revenue, not operating income
+   - If you're extracting a growth rate, make sure it's a percentage, not a dollar amount
+   - Use table labels, document context, and value magnitudes as sanity checks
+
+4. **COMMON CONFUSIONS TO AVOID**:
+   - Don't confuse Revenue with Operating Income (Revenue is larger, comes before expenses)
+   - Don't confuse dollar amounts with percentages (different units entirely)
+   - Don't confuse counts with dollar amounts
+   - When in doubt, verify the metric type matches what you're trying to extract
+
+**PRAGMATIC APPROACH**: Be accurate but flexible. Verify metric types using context, labels, and reasonable value checks, but don't be overly pedantic about formatting.
+
 **EXTRACTION PROCESS - Follow these steps systematically:**
 
 {previous_quarter_kpi_step}
 
 **CONSISTENCY CHECK - Before proceeding to extraction:**
-- Review the previous quarter KPIs (if provided) and note their exact names and groups
+- Review the previous quarter KPIs (if provided) and note their exact names, groups, and UNITS
 - Identify which KPIs have high frequency (e.g., 8+ quarters) - these are most likely to appear again
-- Plan to use the EXACT same names and groups for any matching KPIs found in this quarter's documents
+- Plan to use the EXACT same names, groups, and UNITS for any matching KPIs found in this quarter's documents
+- **CRITICAL**: Pay special attention to units - verify whether each previous KPI used percentage (%) or dollar ($) units
 
-Step 1: Scan ALL documents for business segment revenue breakdowns (e.g., iPhone Revenue, Services Revenue, Mac Revenue, iPad Revenue, Wearables Revenue, etc.). Extract each segment as a separate KPI. {previous_quarter_segment_note}
+Step 1: Scan ALL documents for business segment revenue breakdowns (e.g., iPhone Revenue, Services Revenue, Mac Revenue, iPad Revenue, Wearables Revenue, Google Cloud Revenue, YouTube Revenue, etc.). Extract each segment REVENUE as a separate KPI. 
+
+   **CRITICAL FOR STEP 1 - ACCURATE METRIC EXTRACTION:**
+   - Extract the CORRECT metric type - if it's a revenue KPI, extract revenue values (not operating income, not profit, not counts)
+   - Verify you're extracting the right metric type using table headers, labels, or document context
+   - Use value magnitudes as a sanity check (e.g., revenue values are typically larger than profit values)
+   - If a table shows multiple metric types (Revenue, Operating Income, etc.), extract the correct one for your target KPI
+   - Segment Revenue KPIs are valid custom metrics - extract them when found
+   - BE FLEXIBLE: If context clearly indicates the metric type (even if not perfectly labeled), extract it
+   - Don't reject metrics just because formatting isn't perfect - focus on accurately identifying and extracting the correct metric type
+   
+   {previous_quarter_segment_note}
 
 Step 2: Scan ALL documents for product-level metrics (units sold, ASP, per-product revenue, etc.). Extract each product metric as a separate KPI.
 
@@ -80,14 +138,27 @@ For each KPI found in the documents, extract the following fields with their exa
 
 3. **unit** (required, string):
    - The unit of measurement for this KPI
+   - **CRITICAL - UNIT CONSISTENCY**: If this KPI matches one from previous quarters, you MUST use the EXACT same unit from the previous quarter (case-sensitive, character-for-character)
+   - **CRITICAL ERROR TO AVOID**: DO NOT confuse percentage units with dollar units
+     * Percentage units: "%", "percentage", "percent"
+     * Dollar units: "$B", "$M", "$K", "billions", "millions", "thousands", "dollars"
+     * These are COMPLETELY DIFFERENT and mixing them creates invalid data
+   - **UNIT EXTRACTION - BE FLEXIBLE**: 
+     * Units can be explicitly stated OR inferred from context (table headers, document context, surrounding text)
+     * If a table header says "in millions" or values are clearly in millions based on context, use "millions"
+     * Don't reject a metric just because the unit isn't written next to every value - use context clues
+   - Before extracting a unit, check if this KPI exists in previous quarters:
+     * If yes: Use the EXACT unit from previous quarter (e.g., if previous had "percentage", use "percentage"; if previous had "billions", use "billions")
+     * If no: Extract the unit from how the value is presented - can be explicit OR inferred from context
    - Examples: "millions", "billions", "thousands", "percentage", "dollars", "count", "%", "$B", "units"
-   - Extract the unit from how the value is presented (e.g., if value is "50.6B", unit could be "billions" or "$B")
+   - Extract the unit from how the value is presented OR from document context (e.g., if value is "50.6B", unit could be "billions" or "$B"; if table header says "in millions", use "millions")
+   - **VERIFICATION**: After extraction, verify that if this KPI existed in previous quarters, the unit matches exactly (character-for-character)
 
 4. **change** (optional, string):
-   - The change from previous quarter or year if mentioned in the documents
+   - The change from previous quarter or year if mentioned or can be inferred from the documents
    - Can be a percentage like "+15%", "14.5% growth", "increased 5%", or an absolute value
-   - Only include if explicitly stated in the documents
-   - If not mentioned, you can omit this field
+   - Include if mentioned, implied, or can be calculated from context
+   - If not available, you can omit this field
 
 5. **change_type** (optional, string):
    - Type of change comparison: "qoq" (quarter-over-quarter), "yoy" (year-over-year), or "sequential"
@@ -99,16 +170,36 @@ For each KPI found in the documents, extract the following fields with their exa
    - 1-2 sentences explaining the metric's significance
    - Examples: "Revenue from iPhone sales, including all iPhone models", "Revenue from services including App Store, Apple Music, iCloud, and advertising", "Total active paid subscriptions across all Apple services"
 
-7. **source** (required, string):
+7. **summary** (required, string):
+   - A clear, unambiguous definition that explicitly states what type of metric this is and distinguishes it from similar metrics
+   - **CRITICAL PURPOSE**: This field prevents confusion and ensures the true meaning of the KPI is understood
+   - Must explicitly state the metric type (e.g., "revenue", "operating income", "count", "percentage", "profit margin")
+   - Must clarify what the metric represents (e.g., "top-line sales before expenses" vs "profit after expenses")
+   - Should distinguish from easily confused metrics (e.g., clarify what type of metric it is and what it's not)
+   - Format: One concise sentence that unambiguously defines the metric
+   - Examples:
+     * "Top-line revenue from Google Cloud services before deducting costs and expenses"
+     * "Operating profit from Google Cloud segment after deducting cost of revenue and operating expenses"
+     * "Total number of active paid subscribers across all service offerings"
+     * "Revenue from iPhone hardware sales including all iPhone models and accessories"
+     * "Year-over-year growth rate expressed as a percentage"
+   - The summary should clearly identify what type of metric this is and distinguish it from easily confused similar metrics
+   - Examples:
+     * Revenue KPIs: "Top-line revenue from [segment] before deducting costs and expenses"
+     * Operating Income KPIs: "Operating profit from [segment] after deducting expenses"
+     * Count KPIs: "Total number of [items]"
+     * Percentage KPIs: "Growth rate or ratio expressed as a percentage"
+
+8. **source** (required, string):
    - The document or section where this KPI was found
    - Examples: "Q1 2022 Earnings Release", "Quarterly Financial Results Table", "Management Commentary", "Segment Revenue Table", "10-Q Filing"
 
-8. **group** (required, string):
+9. **group** (required, string):
    - Group name to categorize related KPIs together
    - Must be one of these exact values: "Business Segments", "Product Sales", "Regional Revenue", "RSU/Compensation", "User Metrics", "Operational Metrics", "Geographic Breakdown", or "Other"
    - **CRITICAL**: If this KPI was tracked in previous quarters, use the EXACT same group from the previous quarter. Do not change groups between quarters to maintain consistency.
 
-9. **frequency** (required, integer):
+10. **frequency** (required, integer):
    - Number of quarters this KPI has been reported (starting from 1)
    - This field helps identify regularly reported KPIs that appear consistently every quarter
    - Calculation rules:
@@ -117,7 +208,7 @@ For each KPI found in the documents, extract the following fields with their exa
      * High frequency (e.g., 8, 12, 16+) indicates this is a core metric that management tracks every quarter
    - Search thoroughly for high-frequency KPIs from previous quarters as they are most likely to appear again
 
-10. **other_names** (optional, array of strings):
+11. **other_names** (optional, array of strings):
    - List of alternative names or variations you encountered for this KPI in the documents
    - Use this field to capture name variants that refer to the same metric
    - Examples: If canonical name is "iPad Revenue" but document says "iPad Sales", include "iPad Sales" in other_names
@@ -132,6 +223,26 @@ For each KPI found in the documents, extract the following fields with their exa
 - [ ] All operational metrics (engagement, retention, churn, etc.)
 - [ ] All RSU/compensation metrics
 - [ ] Any other custom metrics mentioned
+
+**🚨 CRITICAL VERIFICATION - METRIC TYPE ACCURACY:**
+- [ ] **MANDATORY**: Verify that each KPI uses the CORRECT metric type (revenue vs operating income vs count vs percentage, etc.)
+- [ ] **MANDATORY**: Verify you didn't confuse different metric types (e.g., didn't extract operating income when extracting revenue KPIs)
+- [ ] **MANDATORY**: Use value magnitudes and context as sanity checks (e.g., revenue values are typically larger than profit values)
+- [ ] **MANDATORY**: Cross-check extracted values make sense for the metric type being extracted
+- [ ] If you extracted segment metrics, verify you extracted the correct type (e.g., revenue if it's a revenue KPI, not operating income)
+
+**🚨 CRITICAL VERIFICATION - SUMMARY FIELD:**
+- [ ] **MANDATORY**: Verify that EVERY KPI has a summary field that clearly states the metric type (revenue, operating income, count, percentage, etc.)
+- [ ] **MANDATORY**: The summary should clearly identify the metric type and distinguish it from similar but different metric types
+- [ ] **MANDATORY**: Verify the summary field unambiguously distinguishes the metric from easily confused similar metrics
+- [ ] The summary should clearly define what the metric represents to prevent any ambiguity or confusion
+
+**🚨 CRITICAL VERIFICATION - UNIT CONSISTENCY:**
+- [ ] **MANDATORY**: If previous quarter KPIs were provided, verify that ALL matching KPIs use the EXACT same unit as previous quarters (character-for-character match)
+- [ ] **MANDATORY**: Check that NO KPI has a unit mismatch (e.g., previous quarter had "percentage" but current has "billions", or previous had "$B" but current has "%")
+- [ ] **MANDATORY**: Verify that percentage-based KPIs (growth rates, margins, etc.) use percentage units (%, percentage, percent) consistently
+- [ ] **MANDATORY**: Verify that dollar-based KPIs (revenue, profit, etc.) use dollar units ($B, billions, millions, dollars) consistently
+- [ ] **MANDATORY**: If you see a unit mismatch, STOP and verify the source document - this is a critical error that must be corrected
 
 **Grouping Guidelines**:
 - Business segment revenues → Group: "Business Segments"
@@ -158,21 +269,42 @@ For each KPI found in the documents, extract the following fields with their exa
 
 3. **No Skipping**: Do not skip metrics because you think you have "enough". Extract EVERY custom metric you find, regardless of how many there are.
 
-4. **Format Variations**: Extract metrics even if they appear in different formats:
-   - "$50.6 billion" or "50.6B" or "$50,600 million"
+4. **Format Variations - BE FLEXIBLE**: Extract metrics even if they appear in different formats or contexts:
+   - "$50.6 billion" or "50.6B" or "$50,600 million" or "50,600" (in a table clearly labeled "in millions")
    - "increased 5%" or "+5%" or "5% growth"
    - "1.2 billion units" or "1.2B units"
+   - Annual values (can be converted later) - prioritize quarterly but don't skip annual if that's all that's available
+   - Values in tables with implied units from headers or context
+   - Don't reject metrics just because formatting isn't perfect - extract what you find
 
-5. **Exclusion Reminder**: Only extract CUSTOM metrics. Exclude all standard financial statement metrics (Revenue, Net Income, Cash Flow, Assets, Liabilities, EPS, Margins, etc.).
+5. **Exclusion Reminder**: Only extract CUSTOM metrics. Exclude all standard financial statement metrics (Total Revenue, Net Income, Cash Flow, Assets, Liabilities, EPS, Margins, etc.). However, SEGMENT revenue breakdowns (e.g., "Google Cloud Revenue", "YouTube Revenue") ARE custom metrics and should be extracted.
 
-6. **Target**: Aim to extract 15-30+ custom KPIs if they are present in the documents. Do not stop at 10-12 KPIs - continue extracting until you have captured everything.
+6. **🚨 METRIC TYPE ACCURACY - FINAL CHECK**: Before finalizing ANY KPI:
+   - Verify you extracted the CORRECT metric type (revenue, operating income, count, percentage, etc.)
+   - Don't confuse different metric types - each type measures something different
+   - Use context, labels, and value magnitudes to verify you have the right metric type
+   - Confusing different metric types is a CRITICAL ERROR that produces completely inaccurate data
+   - When in doubt, use document context to determine the correct metric type
 
-7. **Consistency Verification**: After extraction, verify:
+7. **🚨 SUMMARY FIELD - CRITICAL FOR ACCURACY**: For EVERY KPI you extract:
+   - The summary field should clearly state what type of metric this is (revenue, operating income, count, percentage, etc.)
+   - The summary should clearly identify what type of metric this is and distinguish it from similar but different metrics
+   - The summary serves as the definitive source of truth to prevent confusion
+   - Use the summary to unambiguously distinguish the metric from similar or easily confused metrics
+   - This field is REQUIRED and critical for maintaining data accuracy and preventing errors
+   - Be clear but don't be overly pedantic - focus on clarity over perfection
+
+8. **Target**: Aim to extract 15-30+ custom KPIs if they are present in the documents. Do not stop at 10-12 KPIs - continue extracting until you have captured everything.
+
+9. **Consistency Verification**: After extraction, verify:
    - If previous quarter KPIs were provided, check that any matching KPIs use the EXACT same name (character-for-character match)
    - Check that any matching KPIs use the EXACT same group as in previous quarters
+   - **CRITICAL**: Verify that any matching KPIs use the EXACT same unit as in previous quarters (character-for-character match)
+   - **CRITICAL**: Check for unit mismatches - if a KPI previously used "%" or "percentage", verify current quarter also uses "%" or "percentage" (not dollars)
+   - **CRITICAL**: Check for unit mismatches - if a KPI previously used "$B" or "billions", verify current quarter also uses "$B" or "billions" (not percentage)
    - High-frequency KPIs (8+ quarters) should almost always appear - if they're missing, double-check the documents
 
-8. **Frequency Tracking**: 
+10. **Frequency Tracking**: 
    - The frequency field is critical for identifying regularly reported KPIs
    - KPIs with high frequency (8, 12, 16+ quarters) are core metrics that appear every quarter - prioritize finding these
    - When calculating frequency: if this KPI exists in previous quarters, increment from the previous frequency value
@@ -181,11 +313,13 @@ For each KPI found in the documents, extract the following fields with their exa
 **FINAL REMINDER - CONSISTENCY IS PARAMOUNT**:
 - Use EXACT names from previous quarters - no variations, no synonyms, no abbreviations
 - Use EXACT groups from previous quarters - do not reassign groups
+- Use EXACT units from previous quarters - character-for-character match required
+- **CRITICAL**: Units must match exactly - do NOT mix percentage units (%) with dollar units ($, billions, millions)
 - High-frequency KPIs are most likely to appear - search for them first
 - Consistency enables accurate trend analysis and tracking over time
 
 **OUTPUT FORMAT**:
-Return a JSON array of KPI objects. Each KPI object must include all required fields (name, value, unit, context, source, group, frequency) and may include optional fields (change, change_type) if available.
+Return a JSON array of KPI objects. Each KPI object must include all required fields (name, value, unit, context, summary, source, group, frequency) and may include optional fields (change, change_type, other_names) if available.
 
 Example output structure:
 [
@@ -196,6 +330,7 @@ Example output structure:
     "change": "+9%",
     "change_type": "yoy",
     "context": "Revenue from iPhone sales including all iPhone models",
+    "summary": "Top-line revenue from iPhone hardware sales including all iPhone models before deducting costs and expenses",
     "source": "Q1 2022 Earnings Release",
     "group": "Business Segments",
     "frequency": 1
@@ -205,7 +340,18 @@ Example output structure:
     "value": "19.516 billions",
     "unit": "dollars",
     "context": "Revenue from services including App Store, Apple Music, iCloud, and advertising",
+    "summary": "Top-line revenue from services segment including App Store, Apple Music, iCloud, and advertising before deducting costs and expenses",
     "source": "Q1 2022 Earnings Release",
+    "group": "Business Segments",
+    "frequency": 1
+  }},
+  {{
+    "name": "Google Cloud Revenue",
+    "value": "9.19 billions",
+    "unit": "dollars",
+    "context": "Revenue from Google Cloud infrastructure and platform services",
+    "summary": "Top-line revenue from Google Cloud infrastructure and platform services before deducting cost of revenue and operating expenses",
+    "source": "Q1 2024 Earnings Release",
     "group": "Business Segments",
     "frequency": 1
   }}

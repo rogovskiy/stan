@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../../../../lib/firebaseService';
+import { firebaseService } from '../../../../lib/firebaseService';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ ticker: string }> }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const { ticker } = await params;
+    const { searchParams } = new URL(request.url);
+    const ticker = searchParams.get('ticker');
 
     if (!ticker) {
       return NextResponse.json(

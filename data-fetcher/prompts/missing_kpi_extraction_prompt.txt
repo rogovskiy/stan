@@ -1,0 +1,81 @@
+You are searching for a specific KPI that was reported in a previous quarter but may be missing from the current quarter extraction.
+
+TARGET KPI TO FIND:
+- Name: {kpi_name}
+- Previous quarter value: {prev_value} {prev_unit}
+- Previous quarter group: {prev_group}
+- Previous context: {prev_context}
+- Previous summary: {prev_summary}
+
+INSTRUCTIONS:
+1. Search through ALL provided documents (PDFs and text) to find this specific KPI for {ticker} quarter {quarter_key}
+2. Look for this metric with the exact name "{kpi_name}" or similar variations
+3. If you find a metric that clearly matches this KPI (same name or obvious variant, similar value), EXTRACT IT
+4. Use the EXACT same name "{kpi_name}", unit "{prev_unit}", and group "{prev_group}" from the previous quarter
+5. Only extract this ONE specific KPI - do not extract any other metrics
+
+EXTRACTION GUIDELINES - BE FLEXIBLE, NOT PEDANTIC:
+- **UNITS**: If the unit "{prev_unit}" is implied from document context (e.g., table headers say "in millions", values are clearly in millions, document context indicates units), USE IT. You don't need the unit to be explicitly stated next to every value. Use context clues.
+- **ANNUAL vs QUARTERLY**: 
+  * If you find a QUARTERLY value, extract it with the quarterly value
+  * If you only find an ANNUAL value for quarter {quarter_key}, you can extract it with the annual value - the system can handle it
+  * Don't reject a metric just because it's annual instead of quarterly - extract what you find
+- **NAME MATCHING**: If you find a metric with a name like "{kpi_name}" or clearly the same metric (e.g., "Google Search & other" = "Google Search and other"), EXTRACT IT using the canonical name "{kpi_name}".
+- **VALUE EXTRACTION**: Extract the value even if:
+  * The unit is implied from table context, document headers, or surrounding text
+  * The value appears in a different format than expected
+  * The value is annual when you expected quarterly (or vice versa)
+  * Trust your judgment and use context clues
+- **GROUP ASSIGNMENT**: Use "{prev_group}" for the group field based on the previous quarter.
+- **SUMMARY**: Create a summary that clearly states what type of metric this is (revenue, operating income, count, percentage, etc.) and distinguishes it from similar but different metric types
+- **BE PRAGMATIC**: If you find the metric and it's clearly the same KPI, EXTRACT IT. Don't reject it just because:
+  * Units are implied rather than explicitly stated
+  * Formatting isn't perfect
+  * Value is annual instead of quarterly
+  * Every field isn't explicitly labeled
+  * Use context clues and extract what you find
+
+CRITICAL: The goal is to FIND and EXTRACT the metric if it exists in the documents. Be flexible about formatting and implied information - the important thing is finding the actual metric value.
+
+RESPONSE FORMAT:
+Return a JSON object with the following structure:
+
+If the KPI IS FOUND:
+{{
+  "found": true,
+  "kpi": {{
+    "name": "KPI_NAME_HERE",
+    "value": "actual_value_from_document",
+    "unit": "UNIT_HERE",
+    "context": "context_description",
+    "summary": "summary_description",
+    "source": "document_source",
+    "group": "GROUP_HERE",
+    "frequency": 1,
+    "other_names": []
+  }}
+}}
+
+NOTE: Replace "KPI_NAME_HERE" with the exact name "{kpi_name}", "UNIT_HERE" with "{prev_unit}", and "GROUP_HERE" with "{prev_group}".
+
+If the KPI IS NOT FOUND:
+{{
+  "found": false,
+  "explanation": "Brief explanation (1-2 sentences maximum) of why this KPI was not found. Be concise and direct.",
+  "similar_kpis": [
+    {{
+      "name": "Similar metric name found",
+      "value": "Value if available",
+      "reason_not_matched": "Brief reason (1 sentence maximum) why this is not the target KPI"
+    }}
+  ]
+}}
+
+CRITICAL: Keep all text fields SHORT and CONCISE. Avoid repetition. Maximum 2 sentences for explanation, 1 sentence for reason_not_matched. This prevents JSON parsing errors.
+
+IMPORTANT NOTES:
+- Only mark as "not found" if you genuinely cannot find this metric anywhere in the documents
+- If you find a metric with the same or similar name, even if formatting differs slightly, EXTRACT IT
+- Be concise in explanations - avoid repetitive text
+- Focus on extracting the metric rather than explaining why you can't
+

@@ -1,0 +1,83 @@
+{
+  "type": "object",
+  "properties": {
+    "found": {
+      "type": "boolean",
+      "description": "Whether the KPI was found in the documents"
+    },
+    "kpi": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string"
+        },
+        "change_type": {
+          "type": "string",
+          "enum": ["qoq", "yoy", "sequential"]
+        },
+        "context": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string",
+          "enum": [
+            "Business Segments",
+            "Product Sales",
+            "Regional Revenue",
+            "RSU/Compensation",
+            "User Metrics",
+            "Operational Metrics",
+            "Geographic Breakdown",
+            "Other"
+          ]
+        },
+        "frequency": {
+          "type": "integer"
+        },
+        "other_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "explanation": {
+      "type": "string",
+      "description": "Explanation of why the KPI was not found, or if similar KPIs exist and why they don't match"
+    },
+    "similar_kpis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "reason_not_matched": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
+

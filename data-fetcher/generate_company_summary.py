@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 from dotenv import load_dotenv
 import google.generativeai as genai
+import yfinance as yf
 
 from firebase_cache import FirebaseCache
 
@@ -35,6 +36,38 @@ def extract_json_from_llm_response(response_text: str) -> str:
     return response_text.strip()
 
 
+def get_company_name(ticker: str, verbose: bool = False) -> str:
+    """Get company name from ticker using yfinance
+    
+    Args:
+        ticker: Stock ticker symbol
+        verbose: Enable verbose output
+        
+    Returns:
+        Company name, or ticker if lookup fails
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Try multiple possible fields for company name
+        company_name = (
+            info.get('longName') or 
+            info.get('shortName') or 
+            info.get('name') or
+            ticker
+        )
+        
+        if verbose and company_name != ticker:
+            print(f'Found company name: {company_name}')
+        
+        return company_name
+    except Exception as e:
+        if verbose:
+            print(f'Warning: Could not fetch company name from yfinance: {e}')
+        return ticker
+
+
 def generate_company_summary(ticker: str, verbose: bool = False) -> Optional[Dict[str, Any]]:
     """Generate company summary using LLM's public knowledge
     
@@ -46,6 +79,9 @@ def generate_company_summary(ticker: str, verbose: bool = False) -> Optional[Dic
         Dictionary with summary, business_model, and competitive_moat
     """
     try:
+        # Get actual company name to avoid confusion
+        company_name = get_company_name(ticker, verbose)
+        
         # Initialize Gemini API
         gemini_api_key = os.getenv('GEMINI_API_KEY')
         if not gemini_api_key:
@@ -56,11 +92,11 @@ def generate_company_summary(ticker: str, verbose: bool = False) -> Optional[Dic
         model_name = get_gemini_model()
         
         if verbose:
-            print(f'Generating company summary for {ticker} using {model_name}...')
+            print(f'Generating company summary for {ticker} ({company_name}) using {model_name}...')
         
-        # Prepare prompt for Gemini
+        # Prepare prompt for Gemini - include both ticker and company name for clarity
         system_instruction = "You are a financial analyst providing structured company analysis. Return only valid JSON."
-        prompt = f"""You are a financial analyst providing a comprehensive overview of {ticker}.
+        prompt = f"""You are a financial analyst providing a comprehensive overview of {ticker} ({company_name}).
 
 Based on your knowledge of this company, provide a structured analysis in JSON format with the following fields:
 

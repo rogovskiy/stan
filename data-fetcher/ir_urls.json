@@ -1,12 +1,6 @@
 {
-  "AAPL": [
-    "https://investor.apple.com/investor-relations/default.aspx"
-  ],
   "MSFT": [
     "https://www.microsoft.com/investor/rss/"
-  ],
-  "GOOG": [
-    "https://abc.xyz/investor/"
   ],
   "AMZN": [
     "https://ir.aboutamazon.com/news-releases"

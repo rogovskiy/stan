@@ -2,7 +2,34 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+### Firebase Authentication Setup
+
+This application uses Firebase Authentication with Google SSO. To set it up:
+
+1. **Get your Firebase configuration:**
+   - Go to the [Firebase Console](https://console.firebase.google.com/)
+   - Select your project (or create a new one)
+   - Go to Project Settings → General
+   - Scroll down to "Your apps" and find your web app configuration
+
+2. **Enable Google Sign-In:**
+   - In Firebase Console, go to Authentication → Sign-in method
+   - Enable "Google" as a sign-in provider
+   - Add your authorized domains if needed
+
+3. **Set up environment variables:**
+   - Create a `.env.local` file in the `stocks-web` directory (if it doesn't exist)
+   - Add your Firebase configuration:
+   ```env
+   NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
+   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+   NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+   ```
+
+4. **Run the development server:**
 
 ```bash
 npm run dev

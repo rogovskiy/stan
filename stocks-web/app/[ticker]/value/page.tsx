@@ -1,14 +1,13 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import Link from 'next/link';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint, calculateAnnualEps, getTrailing4QuartersEps, calculateFairValue, QuarterlyDataPoint as CalcQuarterlyDataPoint, calculateMaxAvailableYears } from '../../lib/calculations';
 import { DailyPriceResponse, QuarterlyDataResponse, DailyDataPoint, QuarterlyDataPoint as ApiQuarterlyDataPoint } from '../../types/api';
 import StockAnalysisChart from '../../components/StockAnalysisChart';
 import PeriodSelector from '../../components/PeriodSelector';
 import StockSidebar from '../../components/StockSidebar';
-import TickerSearch from '../../components/TickerSearch';
+import AppNavigation from '../../components/AppNavigation';
 
 interface AnalystPriceTargets {
   targetHigh?: number;
@@ -254,57 +253,10 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
-      {/* Top Navigation Bar */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="w-full max-w-none px-6 py-3">
-          <div className="flex items-center gap-6">
-            {/* Logo/Brand */}
-            <div className="flex-shrink-0">
-              <div className="text-lg font-bold text-blue-600 tracking-tight">StockAnalysis</div>
-            </div>
-            {/* Ticker Search Bar */}
-            <div className="flex-1 max-w-md">
-              <TickerSearch 
-                selectedTicker={selectedTicker}
-                onTickerChange={handleTickerChange}
-              />
-            </div>
-            {/* Navigation Items */}
-            <nav className="flex items-center gap-6 flex-shrink-0">
-              <Link
-                href={`/${selectedTicker}/value`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${selectedTicker}/value`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                Value
-              </Link>
-              <Link
-                href={`/${selectedTicker}/kpi`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${selectedTicker}/kpi`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                KPI
-              </Link>
-              <Link
-                href={`/${selectedTicker}/documents`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${selectedTicker}/documents`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                Documents
-              </Link>
-            </nav>
-          </div>
-        </div>
-      </div>
+      <AppNavigation 
+        selectedTicker={selectedTicker}
+        onTickerChange={handleTickerChange}
+      />
 
       {/* Loading/Error States */}
       {loading && (

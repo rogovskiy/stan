@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area, Legend, LabelList } from 'recharts';
-import Link from 'next/link';
 import { usePathname, useParams, useRouter } from 'next/navigation';
-import TickerSearch from '../../components/TickerSearch';
+import AppNavigation from '../../components/AppNavigation';
 import CompanyInfoCard from '../../components/CompanyInfoCard';
 
 interface KPITimeseriesValue {
@@ -936,59 +935,12 @@ export default function KPITestPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
-      {/* Top Navigation Bar */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="w-full max-w-none px-6 py-3">
-          <div className="flex items-center gap-6">
-            {/* Logo/Brand */}
-            <div className="flex-shrink-0">
-              <div className="text-lg font-bold text-blue-600 tracking-tight">StockAnalysis</div>
-            </div>
-            {/* Ticker Search Bar */}
-            <div className="flex-1 max-w-md">
-              <TickerSearch 
-                selectedTicker={ticker}
-                onTickerChange={(newTicker) => {
-                  router.push(`/${newTicker}/kpi`);
-                }}
-              />
-            </div>
-            {/* Navigation Items */}
-            <nav className="flex items-center gap-6 flex-shrink-0">
-              <Link
-                href={`/${ticker}/value`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${ticker}/value`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                Value
-              </Link>
-              <Link
-                href={`/${ticker}/kpi`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${ticker}/kpi`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                KPI
-              </Link>
-              <Link
-                href={`/${ticker}/documents`}
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === `/${ticker}/documents`
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                Documents
-              </Link>
-            </nav>
-          </div>
-        </div>
-      </div>
+      <AppNavigation 
+        selectedTicker={ticker}
+        onTickerChange={(newTicker) => {
+          router.push(`/${newTicker}/kpi`);
+        }}
+      />
 
       {/* Main Content */}
       <div className="w-full max-w-none px-6 py-6">

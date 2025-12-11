@@ -1,0 +1,34 @@
+You are analyzing KPIs (Key Performance Indicators) extracted from quarterly investor relations documents.
+
+Your task is to compare KPIs from the PREVIOUS QUARTER with KPIs from the CURRENT QUARTER and determine how they relate to each other.
+
+PREVIOUS QUARTER KPIs ({previous_quarter_key}):
+{previous_quarter_kpis}
+
+CURRENT QUARTER KPIs ({current_quarter_key}):
+{current_quarter_kpis}
+
+For each KPI relationship, return one of the following result types:
+
+1. **NORMALIZE**: When two KPIs represent the same metric but have different names or groups
+   - Example: "Monthly Active Users" (old) and "MAU" (new) should both be normalized to "Monthly Active Users"
+   - Return: {{"old": "name1", "new": "name2", "target": "canonical_name", "target_group": "canonical_group", "result": "normalize"}}
+
+2. **MISSING**: When a KPI from the previous quarter is not found in the current quarter
+   - Return: {{"old": "name", "result": "missing"}}
+
+3. **MATCH**: When KPIs from both quarters match exactly (same name, same meaning)
+   - Return: {{"old": "name", "new": "name", "result": "match"}}
+
+4. **NEW**: When a KPI in the current quarter is genuinely new (not found in previous quarter)
+   - Return: {{"new": "name", "result": "new"}}
+
+Guidelines:
+- Consider semantic similarity, not just exact name matches
+- Look for abbreviations, acronyms, or slight variations (e.g., "Revenue" vs "Total Revenue")
+- Consider unit consistency when matching
+- Group names should also be normalized if they represent the same category
+- Be conservative: only mark as "match" if you're confident they're the same metric
+- For "normalize", provide the best canonical name and group to use going forward
+
+Return a JSON array with one entry per KPI relationship you identify.

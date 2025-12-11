@@ -5,20 +5,23 @@
       "type": "string"
     },
     "value": {
-      "type": "string"
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "multiplier": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["number", "unit"]
     },
-    "unit": {
-      "type": "string"
-    },
-    "change": {
-      "type": "string"
-    },
-    "change_type": {
+    "value_type": {
       "type": "string",
-      "enum": ["qoq", "yoy", "sequential"]
-    },
-    "context": {
-      "type": "string"
+      "enum": ["quarterly", "point_in_time", "ttm", "ytd", "change_yoy", "change_mom", "change_qoq"]
     },
     "summary": {
       "type": "string"
@@ -27,17 +30,7 @@
       "type": "string"
     },
     "group": {
-      "type": "string",
-      "enum": [
-        "Business Segments",
-        "Product Sales",
-        "Regional Revenue",
-        "RSU/Compensation",
-        "User Metrics",
-        "Operational Metrics",
-        "Geographic Breakdown",
-        "Other"
-      ]
+      "type": "string"
     },
     "frequency": {
       "type": "integer"
@@ -49,5 +42,5 @@
       }
     }
   },
-  "required": ["name", "value", "unit", "context", "summary", "source", "group", "frequency"]
+  "required": ["name", "value", "value_type", "summary", "source", "group", "frequency"]
 }

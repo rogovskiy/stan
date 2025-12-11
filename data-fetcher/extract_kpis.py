@@ -17,6 +17,7 @@ import json
 import argparse
 import sys
 import base64
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
@@ -26,6 +27,15 @@ from firebase_cache import FirebaseCache
 from document_text_extractor import get_document_text, extract_text_from_html
 from io import BytesIO
 from pathlib import Path
+from extraction_utils import (
+    get_gemini_model,
+    extract_json_from_llm_response,
+    load_prompt_template,
+    load_json_schema,
+    clean_schema_for_gemini,
+    load_example_document,
+    get_previous_quarter_key
+)
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
@@ -36,116 +46,7 @@ PROMPTS_DIR = SCRIPT_DIR / 'prompts'
 SCHEMAS_DIR = SCRIPT_DIR
 
 
-def get_gemini_model() -> str:
-    """Get Gemini model from env var or return default"""
-    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
-
-
-def extract_json_from_llm_response(response_text: str) -> str:
-    """Extract JSON from LLM response (handles markdown code blocks)"""
-    if '```json' in response_text:
-        return response_text.split('```json')[1].split('```')[0].strip()
-    elif '```' in response_text:
-        return response_text.split('```')[1].split('```')[0].strip()
-    return response_text.strip()
-
-
-def load_prompt_template(template_name: str, **kwargs) -> str:
-    """Load and render a prompt template file
-    
-    Args:
-        template_name: Name of template file (e.g., 'kpi_extraction_prompt.txt')
-        **kwargs: Variables to substitute in the template
-        
-    Returns:
-        Rendered prompt string
-    """
-    template_path = PROMPTS_DIR / template_name
-    if not template_path.exists():
-        raise FileNotFoundError(f"Prompt template not found: {template_path}")
-    
-    with open(template_path, 'r', encoding='utf-8') as f:
-        template = f.read()
-    
-    # Simple template substitution using .format()
-    # Escape braces that should remain literal
-    template = template.replace('{{', '<<<').replace('}}', '>>>')
-    try:
-        rendered = template.format(**kwargs)
-        rendered = rendered.replace('<<<', '{').replace('>>>', '}')
-        return rendered
-    except KeyError as e:
-        raise ValueError(f"Missing template variable: {e}")
-
-
-def load_json_schema(schema_name: str) -> Dict[str, Any]:
-    """Load a JSON schema file
-    
-    Args:
-        schema_name: Name of schema file (e.g., 'kpi_schema.json')
-        
-    Returns:
-        Schema as dictionary
-    """
-    schema_path = SCHEMAS_DIR / schema_name
-    if not schema_path.exists():
-        raise FileNotFoundError(f"Schema file not found: {schema_path}")
-    
-    with open(schema_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Clean JSON schema to only include fields supported by Gemini structured output
-    
-    Gemini supports: type, properties, items, enum, required, description
-    Gemini does NOT support: $schema, title, minLength, maxLength, examples, minimum, maximum, oneOf, etc.
-    
-    Args:
-        schema: JSON schema dictionary
-        
-    Returns:
-        Cleaned schema dictionary compatible with Gemini
-    """
-    if not isinstance(schema, dict):
-        return schema
-    
-    cleaned = {}
-    
-    # Handle oneOf - convert to string type (most flexible)
-    if 'oneOf' in schema:
-        cleaned['type'] = 'string'
-        if 'description' in schema:
-            cleaned['description'] = schema['description']
-        return cleaned
-    
-    # Fields Gemini supports
-    supported_fields = ['type', 'properties', 'items', 'enum', 'required', 'description']
-    
-    for key, value in schema.items():
-        if key in ['$schema', 'title', 'additionalProperties', 'oneOf', 'minLength', 'maxLength', 'minimum', 'maximum', 'examples']:
-            continue  # Skip unsupported fields
-        
-        if key in supported_fields:
-            if key == 'properties' and isinstance(value, dict):
-                # Recursively clean properties
-                cleaned[key] = {k: clean_schema_for_gemini(v) for k, v in value.items()}
-            elif key == 'items' and isinstance(value, dict):
-                # Recursively clean items
-                cleaned[key] = clean_schema_for_gemini(value)
-            elif key in ['enum', 'required']:
-                # Keep these as-is
-                cleaned[key] = value
-            elif key == 'description':
-                # Keep description as-is
-                cleaned[key] = value
-            elif key == 'type':
-                cleaned[key] = value
-    
-    return cleaned
-
-
-def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = False) -> tuple[List[tuple[bytes, Dict]], List[tuple[str, Dict]], List[Dict]]:
+def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = False, document_type_filter: Optional[str] = None) -> tuple[List[tuple[bytes, Dict]], List[tuple[str, Dict]], List[Dict]]:
     """Prepare documents for LLM processing
     
     Args:
@@ -178,9 +79,20 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
         )
     ]
     
+    # Filter by document type if specified
+    before_type_filter = len(documents)
+    if document_type_filter:
+        documents = [
+            doc for doc in documents
+            if doc.get('document_type', '').lower() == document_type_filter.lower()
+        ]
+        if verbose and before_type_filter > len(documents):
+            print(f'Filtered to {len(documents)} document(s) of type "{document_type_filter}" (from {before_type_filter} total)')
+    
     if verbose:
-        if original_count > len(documents):
-            print(f'Found {original_count} documents, excluded {original_count - len(documents)} Consolidated Financial Statement(s)')
+        excluded_consolidated = original_count - before_type_filter
+        if excluded_consolidated > 0:
+            print(f'Found {original_count} documents, excluded {excluded_consolidated} Consolidated Financial Statement(s)')
         print(f'Processing {len(documents)} documents for {ticker} {quarter_key}')
         for doc in documents:
             print(f"  - {doc.get('title', 'N/A')} ({doc.get('document_type', 'N/A')})")
@@ -210,19 +122,8 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
         
         if is_pdf:
             if verbose:
-                print(f'  📄 Preparing PDF: {doc.get("title", "Unknown")}')
-            
-            if len(doc_content) > 50 * 1024 * 1024:
-                if verbose:
-                    print(f'     ⚠️  PDF too large ({len(doc_content) / 1024 / 1024:.1f}MB), extracting text instead')
-                from document_text_extractor import extract_text_from_pdf
-                text = extract_text_from_pdf(doc_content)
-                if text:
-                    html_texts.append((text[:50000], doc))
-            else:
-                pdf_files.append((doc_content, doc))
-                if verbose:
-                    print(f'     ✅ Ready ({len(doc_content) / 1024:.1f}KB)')
+                print(f'  📄 Preparing PDF: {doc.get("title", "Unknown")} ({len(doc_content) / 1024:.1f}KB)')
+            pdf_files.append((doc_content, doc))
         else:
             if verbose:
                 print(f'  📝 Extracting text from HTML: {doc.get("title", "Unknown")}')
@@ -231,44 +132,6 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
                 html_texts.append((text[:50000], doc))
     
     return pdf_files, html_texts, documents
-
-
-def get_previous_quarter_kpis(ticker: str, quarter_key: str) -> Optional[List[Dict[str, Any]]]:
-    """Get KPIs from previous quarter to calculate frequency
-    
-    Args:
-        ticker: Stock ticker symbol
-        quarter_key: Current quarter key
-        
-    Returns:
-        List of KPI dictionaries from previous quarter, or None
-    """
-    try:
-        firebase = FirebaseCache()
-        
-        # Parse current quarter to find previous
-        year_str, q_str = quarter_key.split('Q')
-        year = int(year_str)
-        quarter = int(q_str)
-        
-        # Calculate previous quarter
-        if quarter == 1:
-            prev_year = year - 1
-            prev_quarter = 4
-        else:
-            prev_year = year
-            prev_quarter = quarter - 1
-        
-        prev_quarter_key = f"{prev_year}Q{prev_quarter}"
-        
-        # Get previous quarter analysis
-        prev_analysis = firebase.get_quarterly_analysis(ticker.upper(), prev_quarter_key)
-        if prev_analysis and prev_analysis.get('custom_kpis'):
-            return prev_analysis.get('custom_kpis')
-        
-        return None
-    except Exception as e:
-        return None
 
 
 def detect_unit_type_mismatch(unit1: str, unit2: str) -> bool:
@@ -441,6 +304,40 @@ def normalize_kpi_names(
     return normalized_kpis
 
 
+def process_kpis_with_previous_quarter(
+    kpis: List[Dict[str, Any]],
+    previous_quarter_kpis: Optional[List[Dict[str, Any]]],
+    verbose: bool = False
+) -> List[Dict[str, Any]]:
+    """Process KPIs: normalize names, update frequencies, and ensure unit consistency
+    
+    This is a convenience function that combines normalization and frequency updates.
+    Unit mismatches are automatically fixed during normalization.
+    
+    Args:
+        kpis: List of extracted KPIs
+        previous_quarter_kpis: List of KPIs from previous quarter, or None
+        verbose: Enable verbose output
+        
+    Returns:
+        Processed list of KPIs with normalized names and updated frequencies
+    """
+    if not kpis:
+        return kpis
+    
+    # First normalize names (this also fixes unit mismatches)
+    kpis = normalize_kpi_names(kpis, previous_quarter_kpis, verbose)
+    
+    # Then update frequencies
+    kpis = update_kpi_frequencies_from_previous_quarter(
+        kpis,
+        previous_quarter_kpis,
+        verbose
+    )
+    
+    return kpis
+
+
 def update_kpi_frequencies_from_previous_quarter(
     kpis: List[Dict[str, Any]],
     previous_quarter_kpis: Optional[List[Dict[str, Any]]],
@@ -507,68 +404,6 @@ def update_kpi_frequencies_from_previous_quarter(
         print(f'   ✅ Updated frequencies: {new_kpi_count} new KPIs, {existing_count} existing KPIs')
     
     return updated_kpis
-
-
-def validate_kpi_units(
-    kpis: List[Dict[str, Any]],
-    previous_quarter_kpis: Optional[List[Dict[str, Any]]],
-    verbose: bool = False
-) -> List[Dict[str, Any]]:
-    """Validate and report unit consistency issues with previous quarter KPIs
-    
-    Args:
-        kpis: List of extracted KPIs (should already be normalized)
-        previous_quarter_kpis: List of KPIs from previous quarter, or None
-        verbose: Enable verbose output
-        
-    Returns:
-        List of KPIs (unchanged, but warnings printed if issues found)
-    """
-    if not kpis or not previous_quarter_kpis:
-        return kpis
-    
-    if verbose:
-        print(f'\n🔍 Validating unit consistency with previous quarter...')
-    
-    # Create lookup map
-    previous_kpi_map = {}
-    for prev_kpi in previous_quarter_kpis:
-        kpi_name = prev_kpi.get('name', '')
-        if kpi_name:
-            previous_kpi_map[kpi_name] = prev_kpi
-    
-    issues_found = 0
-    for kpi in kpis:
-        kpi_name = kpi.get('name', '')
-        if not kpi_name or kpi_name not in previous_kpi_map:
-            continue
-        
-        prev_kpi = previous_kpi_map[kpi_name]
-        prev_unit = prev_kpi.get('unit', '')
-        current_unit = kpi.get('unit', '')
-        
-        if not prev_unit or not current_unit:
-            continue
-        
-        # Check for exact match
-        if prev_unit != current_unit:
-            # Check if it's a critical type mismatch
-            if detect_unit_type_mismatch(prev_unit, current_unit):
-                print(f'\n🚨 CRITICAL: Unit type mismatch detected for "{kpi_name}":')
-                print(f'   Previous quarter: "{prev_unit}"')
-                print(f'   Current quarter:  "{current_unit}"')
-                print(f'   This is a CRITICAL ERROR - percentage and dollar units cannot be mixed!')
-                issues_found += 1
-            elif verbose:
-                print(f'  ⚠️  Unit difference for "{kpi_name}": previous="{prev_unit}" vs current="{current_unit}"')
-    
-    if verbose:
-        if issues_found == 0:
-            print(f'   ✅ All units consistent with previous quarter')
-        else:
-            print(f'   ⚠️  Found {issues_found} unit consistency issue(s)')
-    
-    return kpis
 
 
 def print_kpi_comparison(
@@ -719,13 +554,14 @@ def extract_missing_kpi(
             return None
         
         # Load missing KPI response schema (includes explanation field)
-        response_schema_raw = load_json_schema('missing_kpi_response_schema.json')
+        response_schema_raw = load_json_schema('missing_kpi_response_schema.json', SCHEMAS_DIR)
         # Clean schema for Gemini compatibility
         response_schema = clean_schema_for_gemini(response_schema_raw)
         
         # Load targeted prompt template
         targeted_prompt = load_prompt_template(
             'missing_kpi_extraction_prompt.txt',
+            prompts_dir=PROMPTS_DIR,
             ticker=ticker,
             quarter_key=quarter_key,
             kpi_name=kpi_name,
@@ -948,28 +784,6 @@ def extract_missing_kpis(
     return extracted_kpis
 
 
-def calculate_kpi_frequency(kpi_name: str, previous_kpis: Optional[List[Dict[str, Any]]]) -> int:
-    """Calculate frequency for a KPI based on previous quarter data (legacy function)
-    
-    Args:
-        kpi_name: Name of the KPI
-        previous_kpis: List of KPIs from previous quarter
-        
-    Returns:
-        Frequency (number of quarters this KPI has been reported)
-    """
-    if not previous_kpis:
-        return 1  # First time reported
-    
-    # Find this KPI in previous quarter
-    for prev_kpi in previous_kpis:
-        if prev_kpi.get('name') == kpi_name:
-            prev_freq = prev_kpi.get('frequency', 1)
-            return prev_freq + 1
-    
-    return 1  # Not found in previous quarter, so it's new
-
-
 def extract_kpis(
     ticker: str,
     quarter_key: str,
@@ -992,8 +806,9 @@ def extract_kpis(
         List of KPI dictionaries or None if extraction failed
     """
     try:
-        # Load KPI schema - already simplified for Gemini compatibility
-        kpi_schema = load_json_schema('kpi_schema.json')
+        # Load KPI schema and clean it for Gemini compatibility
+        kpi_schema_raw = load_json_schema('kpi_schema.json', SCHEMAS_DIR)
+        kpi_schema = clean_schema_for_gemini(kpi_schema_raw)
         
         # Create array schema for response (array of KPIs)
         array_schema = {
@@ -1054,11 +869,16 @@ Use this previous quarter context to:
                 )
             html_context = '\n\n'.join(html_context_parts)
         
+        # Load KPI example document
+        kpi_example_document = load_example_document('kpi_example.md', SCRIPT_DIR)
+        
         # Load and render prompt template
         prompt = load_prompt_template(
             'kpi_extraction_prompt.txt',
+            prompts_dir=PROMPTS_DIR,
             ticker=ticker,
             quarter_key=quarter_key,
+            kpi_example_document=kpi_example_document,
             previous_quarter_context=previous_context,
             previous_quarter_note=' and the previous quarter context provided above' if previous_quarter_data else '',
             previous_quarter_kpi_step='Step 0: Review previous quarter KPIs (if provided above) to understand what metrics were tracked. Maintain consistency - if a KPI was tracked in the previous quarter, look for it in this quarter as well. This ensures continuity and allows for trend analysis.\n\n' if previous_quarter_data else '',
@@ -1096,18 +916,62 @@ Use this previous quarter context to:
             print(f'\nCalling Gemini API for KPI extraction with {len(pdf_files)} PDF(s) and {len(html_texts)} text document(s)...')
         
         # Generate with structured output
+        # Use higher token limit to handle large KPI lists
+        # Gemini 2.5 Flash supports up to 8192 output tokens
         response = model.generate_content(
             content_parts,
             generation_config={
                 'temperature': 0.3,
-                'max_output_tokens': 8000,
+                'max_output_tokens': 65536,  # Maximum for Gemini 2.5 PRO
                 'response_mime_type': 'application/json',
                 'response_schema': array_schema
             }
         )
         
+        # Check if response was truncated
+        truncated = False
+        # print(f'Response: {response}')
+        if hasattr(response, 'candidates') and response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+            if finish_reason == 'MAX_TOKENS':
+                truncated = True
+                print(f'\n⚠️  WARNING: Response was truncated due to token limit (MAX_TOKENS finish reason)')
+                print(f'Response length: {len(response.text)} characters')
+                print('Consider splitting documents or reducing the number of KPIs extracted per call.')
+        
+        # Also check if JSON appears incomplete (ends abruptly without closing brackets)
+        if response.text and not response.text.rstrip().endswith(']'):
+            # Check if it looks like truncated JSON
+            last_char = response.text.rstrip()[-1] if response.text.rstrip() else ''
+            if last_char not in [']', '}', '"'] and not truncated:
+                print(f'\n⚠️  WARNING: Response appears to be truncated (does not end with valid JSON closing)')
+                print(f'Last 100 characters: {response.text[-100:]}')
+                truncated = True
+        
         # Parse JSON response
-        kpis = json.loads(response.text)
+        try:
+            # Extract JSON from response (handles markdown code blocks if present)
+            json_text = extract_json_from_llm_response(response.text)
+            kpis = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            # Always print full response for debugging
+            print(f'\n❌ JSON parsing error: {e}')
+            print(f'\n{"="*80}')
+            print('FULL RESPONSE TEXT:')
+            print(f'{"="*80}')
+            print(response.text)
+            print(f'{"="*80}')
+            print(f'Total length: {len(response.text)} characters')
+            print(f'{"="*80}\n')
+            
+            # Try to fix common JSON issues
+            try:
+                # Remove trailing commas before closing brackets/braces
+                fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_text)
+                kpis = json.loads(fixed_json)
+                print('✅ Fixed JSON by removing trailing commas')
+            except Exception as fix_error:
+                raise ValueError(f"Failed to parse JSON response: {e}\nFix attempt also failed: {fix_error}")
         
         # Note: Frequencies will be calculated programmatically before saving
         # We don't calculate them here since we need all previous quarters
@@ -1518,6 +1382,98 @@ def create_kpi_timeseries(
     }
 
 
+def extract_and_process_kpis_for_quarter(
+    ticker: str,
+    quarter_key: str,
+    pdf_files: List[tuple[bytes, Dict]],
+    html_texts: List[tuple[str, Dict]],
+    documents: List[Dict],
+    previous_quarter_data: Optional[Dict[str, Any]],
+    firebase: FirebaseCache,
+    skip_missing_kpis: bool = False,
+    verbose: bool = False,
+    no_store: bool = False
+) -> Optional[List[Dict[str, Any]]]:
+    """Extract and process KPIs for a single quarter
+    
+    This function handles the complete pipeline:
+    1. Extract KPIs from documents
+    2. Extract missing KPIs (if not skipped)
+    3. Normalize names and update frequencies
+    4. Store to Firebase (unless no_store)
+    
+    Args:
+        ticker: Stock ticker symbol
+        quarter_key: Quarter key in format YYYYQN
+        pdf_files: List of (content_bytes, doc_meta) tuples
+        html_texts: List of (text, doc_meta) tuples
+        documents: List of document metadata dictionaries
+        previous_quarter_data: Optional data from previous quarter
+        firebase: FirebaseCache instance
+        skip_missing_kpis: Skip searching for missing KPIs
+        verbose: Enable verbose output
+        no_store: Don't store to Firebase
+        
+    Returns:
+        List of processed KPIs, or None if extraction failed
+    """
+    # Extract KPIs
+    kpis = extract_kpis(
+        ticker,
+        quarter_key,
+        pdf_files,
+        html_texts,
+        verbose,
+        previous_quarter_data
+    )
+    
+    if not kpis:
+        return None
+    
+    # Extract missing KPIs using targeted prompts (unless skipped)
+    if not skip_missing_kpis:
+        previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
+        kpis = extract_missing_kpis(
+            ticker,
+            quarter_key,
+            kpis,
+            previous_quarter_kpis,
+            pdf_files,
+            html_texts,
+            verbose
+        )
+    
+    # Normalize names, update frequencies, and ensure unit consistency
+    previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
+    kpis = process_kpis_with_previous_quarter(
+        kpis,
+        previous_quarter_kpis,
+        verbose
+    )
+    
+    # Store KPIs to Firebase unless --no-store
+    if not no_store:
+        try:
+            firebase.store_quarterly_analysis(ticker, quarter_key, {
+                'ticker': ticker,
+                'quarter_key': quarter_key,
+                'custom_kpis': kpis,
+                'created_at': datetime.now().isoformat(),
+                'source_documents': [doc.get('document_id') for doc in documents if doc.get('document_id')],
+                'num_documents': len(documents),
+                'num_pdfs': len(pdf_files),
+                'num_html': len(html_texts)
+            }, verbose)
+            if verbose:
+                print(f'\n✅ Extracted and stored {len(kpis)} KPIs for {quarter_key}')
+        except Exception as e:
+            print(f'⚠️  Error storing KPIs for {quarter_key}: {e}')
+    elif verbose:
+        print(f'\n✅ Extracted {len(kpis)} KPIs (not stored)')
+    
+    return kpis
+
+
 def get_all_quarters_with_documents(ticker: str) -> List[str]:
     """Get all quarters that have IR documents, sorted chronologically
     
@@ -1565,23 +1521,40 @@ Examples:
   # Extract KPIs for a specific quarter
   python extract_kpis.py AAPL 2025Q1
   
+  # Extract using --start-quarter for a single quarter
+  python extract_kpis.py AAPL --start-quarter 2025Q1
+  
   # Extract with verbose output
   python extract_kpis.py AAPL 2025Q1 --verbose
+  
+  # Extract only from earnings releases
+  python extract_kpis.py AAPL 2025Q1 --document-type earnings_release
+  
+  # Extract only from presentations
+  python extract_kpis.py AAPL 2025Q1 --document-type presentation
   
   # Extract without storing (for testing)
   python extract_kpis.py AAPL 2025Q1 --no-store
   
+  # Skip searching for missing KPIs (faster extraction)
+  python extract_kpis.py AAPL 2025Q1 --skip-missing-kpis
+  
   # Extract KPIs for all quarters starting from 2022Q1
   python extract_kpis.py AAPL --all-quarters --start-quarter 2022Q1
+  
+  # Extract from all quarters but only earnings releases
+  python extract_kpis.py AAPL --all-quarters --start-quarter 2022Q1 --document-type earnings_release
         '''
     )
     
     parser.add_argument('ticker', help='Stock ticker symbol (e.g., AAPL, MSFT)')
-    parser.add_argument('quarter', nargs='?', help='Quarter in format YYYYQN (e.g., 2025Q1). Required unless --all-quarters is used.')
+    parser.add_argument('quarter', nargs='?', help='Quarter in format YYYYQN (e.g., 2025Q1). Can be omitted if using --start-quarter for single quarter.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--no-store', action='store_true', help='Extract KPIs without storing to Firebase')
     parser.add_argument('--all-quarters', action='store_true', help='Process all quarters iteratively (earliest to latest)')
-    parser.add_argument('--start-quarter', help='Start processing from this quarter (only used with --all-quarters)')
+    parser.add_argument('--start-quarter', help='Start processing from this quarter. If used without --all-quarters, processes only this single quarter.')
+    parser.add_argument('--document-type', help='Filter documents by type (e.g., earnings_release, presentation, sec_filing_10k, sec_filing_10q, sec_filing_8k, annual_report, proxy_statement, other)')
+    parser.add_argument('--skip-missing-kpis', action='store_true', help='Skip searching for missing KPIs from previous quarter (faster extraction)')
     
     args = parser.parse_args()
     
@@ -1624,7 +1597,8 @@ Examples:
                 pdf_files, html_texts, documents = prepare_documents_for_llm(
                     args.ticker.upper(), 
                     quarter_key, 
-                    args.verbose
+                    args.verbose,
+                    args.document_type
                 )
                 
                 if not pdf_files and not html_texts:
@@ -1645,71 +1619,22 @@ Examples:
                 if previous_quarter_data and args.verbose:
                     print(f'   Using previous quarter ({previous_quarter_data.get("quarter_key")}) context')
                 
-                # Extract KPIs
-                kpis = extract_kpis(
+                # Extract and process KPIs
+                kpis = extract_and_process_kpis_for_quarter(
                     args.ticker.upper(),
                     quarter_key,
                     pdf_files,
                     html_texts,
+                    documents,
+                    previous_quarter_data,
+                    firebase,
+                    args.skip_missing_kpis,
                     args.verbose,
-                    previous_quarter_data
+                    args.no_store
                 )
                 
                 if kpis:
-                    # Extract missing KPIs using targeted prompts
-                    previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
-                    kpis = extract_missing_kpis(
-                        args.ticker.upper(),
-                        quarter_key,
-                        kpis,
-                        previous_quarter_kpis,
-                        pdf_files,
-                        html_texts,
-                        args.verbose
-                    )
-                    # Normalize names and calculate frequencies from previous quarter before saving
-                    
-                    # First normalize names
-                    kpis = normalize_kpi_names(
-                        kpis,
-                        previous_quarter_kpis,
-                        args.verbose
-                    )
-                    
-                    # Then update frequencies
-                    kpis = update_kpi_frequencies_from_previous_quarter(
-                        kpis,
-                        previous_quarter_kpis,
-                        args.verbose
-                    )
-                    
-                    # Finally validate unit consistency
-                    kpis = validate_kpi_units(
-                        kpis,
-                        previous_quarter_kpis,
-                        args.verbose
-                    )
-                    
                     results[quarter_key] = kpis
-                    # Store KPIs to Firebase unless --no-store
-                    if not args.no_store:
-                        try:
-                            firebase.store_quarterly_analysis(args.ticker.upper(), quarter_key, {
-                                'ticker': args.ticker.upper(),
-                                'quarter_key': quarter_key,
-                                'custom_kpis': kpis,
-                                'created_at': datetime.now().isoformat(),
-                                'source_documents': [doc.get('document_id') for doc in documents if doc.get('document_id')],
-                                'num_documents': len(documents),
-                                'num_pdfs': len(pdf_files),
-                                'num_html': len(html_texts)
-                            }, args.verbose)
-                            print(f'\n✅ Extracted and stored {len(kpis)} KPIs for {quarter_key}')
-                        except Exception as e:
-                            print(f'⚠️  Error storing KPIs for {quarter_key}: {e}')
-                    else:
-                        print(f'\n✅ Extracted {len(kpis)} KPIs (not stored)')
-                    
                     # Use as context for next quarter
                     previous_quarter_data = {
                         'quarter_key': quarter_key,
@@ -1750,23 +1675,32 @@ Examples:
         
         else:
             # Single quarter KPI extraction
-            if not args.quarter:
-                parser.error('Quarter is required (or use --all-quarters)')
+            # Determine which quarter to use: quarter argument, or --start-quarter
+            quarter_to_use = args.quarter or args.start_quarter
+            
+            if not quarter_to_use:
+                parser.error('Quarter is required. Provide as positional argument or use --start-quarter')
             
             # Validate quarter format
             import re
-            if not re.match(r'^\d{4}Q[1-4]$', args.quarter):
+            if not re.match(r'^\d{4}Q[1-4]$', quarter_to_use):
                 print(f'Error: Invalid quarter format. Use YYYYQN (e.g., 2025Q1)')
                 sys.exit(1)
             
+            if args.quarter and args.start_quarter and args.quarter != args.start_quarter:
+                print(f'Warning: Both quarter argument ({args.quarter}) and --start-quarter ({args.start_quarter}) provided. Using {args.quarter}')
+                quarter_to_use = args.quarter
+            
             if args.verbose:
-                print(f'Extracting KPIs for {args.ticker} {args.quarter}...')
+                doc_type_msg = f' (filtered to {args.document_type} documents)' if args.document_type else ''
+                print(f'Extracting KPIs for {args.ticker} {quarter_to_use}{doc_type_msg}...')
             
             # Prepare documents
             pdf_files, html_texts, documents = prepare_documents_for_llm(
                 args.ticker.upper(), 
-                args.quarter, 
-                args.verbose
+                quarter_to_use, 
+                args.verbose,
+                args.document_type
             )
             
             if not pdf_files and not html_texts:
@@ -1775,92 +1709,28 @@ Examples:
             
             # Get previous quarter data if available
             previous_quarter_data = None
-            
-            # Calculate previous quarter
-            year_str, q_str = args.quarter.split('Q')
-            year = int(year_str)
-            quarter = int(q_str)
-            if quarter == 1:
-                prev_year = year - 1
-                prev_quarter = 4
-            else:
-                prev_year = year
-                prev_quarter = quarter - 1
-            prev_quarter_key = f"{prev_year}Q{prev_quarter}"
-            
+            prev_quarter_key = get_previous_quarter_key(quarter_to_use)
             prev_analysis = firebase.get_quarterly_analysis(args.ticker.upper(), prev_quarter_key)
             if prev_analysis:
                 previous_quarter_data = prev_analysis
             
-            # Extract KPIs
-            kpis = extract_kpis(
+            # Extract and process KPIs
+            kpis = extract_and_process_kpis_for_quarter(
                 args.ticker.upper(),
-                args.quarter,
+                quarter_to_use,
                 pdf_files,
                 html_texts,
+                documents,
+                previous_quarter_data,
+                firebase,
+                args.skip_missing_kpis,
                 args.verbose,
-                previous_quarter_data
+                args.no_store
             )
-            
-            if kpis:
-                # Extract missing KPIs using targeted prompts
-                previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
-                kpis = extract_missing_kpis(
-                    args.ticker.upper(),
-                    args.quarter,
-                    kpis,
-                    previous_quarter_kpis,
-                    pdf_files,
-                    html_texts,
-                    args.verbose
-                )
             
             if not kpis:
-                print(f'Failed to extract KPIs for {args.ticker} {args.quarter}')
+                print(f'Failed to extract KPIs for {args.ticker} {quarter_to_use}')
                 sys.exit(1)
-            
-            # Normalize names and calculate frequencies from previous quarter before saving
-            previous_quarter_kpis = previous_quarter_data.get('custom_kpis', []) if previous_quarter_data else None
-            
-            # First normalize names
-            kpis = normalize_kpi_names(
-                kpis,
-                previous_quarter_kpis,
-                args.verbose
-            )
-            
-            # Then update frequencies
-            kpis = update_kpi_frequencies_from_previous_quarter(
-                kpis,
-                previous_quarter_kpis,
-                args.verbose
-            )
-            
-            # Finally validate unit consistency
-            kpis = validate_kpi_units(
-                kpis,
-                previous_quarter_kpis,
-                args.verbose
-            )
-            
-            # Store KPIs to Firebase unless --no-store
-            if not args.no_store:
-                try:
-                    firebase.store_quarterly_analysis(args.ticker.upper(), args.quarter, {
-                        'ticker': args.ticker.upper(),
-                        'quarter_key': args.quarter,
-                        'custom_kpis': kpis,
-                        'created_at': datetime.now().isoformat(),
-                        'source_documents': [doc.get('document_id') for doc in documents if doc.get('document_id')],
-                        'num_documents': len(documents),
-                        'num_pdfs': len(pdf_files),
-                        'num_html': len(html_texts)
-                    }, args.verbose)
-                    print(f'\n✅ Extracted and stored {len(kpis)} KPIs for {args.ticker} {args.quarter}')
-                except Exception as e:
-                    print(f'⚠️  Error storing KPIs: {e}')
-            else:
-                print(f'\n✅ Extracted {len(kpis)} KPIs (not stored)')
             
             # Display results
             print(f'\nExtracted KPIs:')

@@ -515,7 +515,7 @@ export default function QuarterlyAnalysisDemo() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
       <div className="w-full max-w-none px-6 py-6">
-        <QuarterlyAnalysisView analyses={sampleAnalyses} ticker="AAPL" />
+        <QuarterlyAnalysisView analyses={sampleAnalyses} />
       </div>
     </div>
   );

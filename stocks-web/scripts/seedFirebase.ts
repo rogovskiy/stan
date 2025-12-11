@@ -89,7 +89,7 @@ async function seedFirebase() {
     
   } catch (error) {
     console.error('💥 Firebase seeding failed:', error);
-    if (error.message.includes('Missing required Firebase environment variables')) {
+    if (error instanceof Error && error.message.includes('Missing required Firebase environment variables')) {
       console.error('ℹ️  Please create a .env.local file with your Firebase credentials');
       console.error('ℹ️  Copy .env.example to .env.local and fill in your Firebase project details');
     }

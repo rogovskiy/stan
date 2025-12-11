@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "old": {"type": "string", "description": "KPI name from previous quarter"},
+      "new": {"type": "string", "description": "KPI name from current quarter"},
+      "target": {"type": "string", "description": "Unified/canonical KPI name to use (for normalize result)"},
+      "target_group": {"type": "string", "description": "Unified/canonical group name to use (for normalize result)"},
+      "result": {
+        "type": "string",
+        "enum": ["normalize", "missing", "match", "new"],
+        "description": "Type of result: normalize (unify different names), missing (KPI not found), match (exact match), new (new KPI)"
+      }
+    },
+    "required": ["result"]
+  }
+}

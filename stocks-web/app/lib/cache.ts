@@ -58,8 +58,10 @@ export interface ConsolidatedPriceData {
     year: number;
     startDate: string;
     endDate: string;
-    storageRef: string;
-    downloadUrl: string;
+    storageRef?: string;
+    storage_ref?: string;
+    downloadUrl?: string;
+    download_url?: string;
     metadata: {
       totalDays: number;
       firstClose: number;
@@ -68,7 +70,8 @@ export interface ConsolidatedPriceData {
       fileSize: number;
       compressed: boolean;
     };
-    lastUpdated: string;
+    lastUpdated?: string;
+    last_updated?: string;
   }>;
 }
 
@@ -637,7 +640,14 @@ export class FirebaseCache {
               24 * 60 * 60 * 1000 : // 24 hours for current year
               30 * 24 * 60 * 60 * 1000; // 30 days for past years
             
-            const cacheAge = Date.now() - new Date(yearData.lastUpdated).getTime();
+            const lastUpdated = yearData.lastUpdated || yearData.last_updated;
+            if (!lastUpdated) {
+              hasPriceData = false;
+              missingYears.push(year);
+              continue;
+            }
+            
+            const cacheAge = Date.now() - new Date(lastUpdated).getTime();
             
             // For current year, refresh more frequently to ensure we get today's data
             // Refresh if cache is older than 4 hours to get latest prices throughout the day

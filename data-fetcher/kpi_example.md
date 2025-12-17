@@ -19,9 +19,9 @@ Each KPI object represents a custom metric extracted from quarterly investor rel
   - `"change_yoy"`: Year-over-year change
   - `"change_mom"`: Month-over-month change
   - `"change_qoq"`: Quarter-over-quarter change
-- **`summary`** (required): Clear definition of what the metric represents
+- **`summary`** (required): Clear definition of what the metric represents. Should not have specific references to the time. 
 - **`source`** (required): Document or section where the KPI was found
-- **`group`** (required): Category for grouping related KPIs
+- **`group`** (required): Category for grouping related KPIs. The main purpose of the group is to combine the KPIs for the different segments; don't try to artificially reduce number of groups. Group names rarely change.
 - **`frequency`** (required): Number of quarters this KPI has been reported
 - **`other_names`** (optional): Alternative names or variations for this KPI
 

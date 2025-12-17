@@ -44,6 +44,21 @@ When extracting values:
 - Be flexible with formats: "$50.6 billion", "50.6B", "50,600 million" all represent the same value
 - Use table headers and context to infer units if not explicitly stated
 
+## Growth Rate vs Absolute Value Guidelines
+
+**CRITICAL: Prioritize absolute values over growth rates for metrics you are tracking.**
+
+- **Extract absolute values**: For metrics like revenue, units sold, user counts, etc., extract the absolute value (e.g., "iPhone Revenue: $50 billion")
+- **Avoid growth rates for tracked metrics**: Do NOT extract change percentages (YoY, QoQ, MoM) for metrics where you are already tracking the absolute value
+  - Example: If you extract "iPhone Revenue: $50 billion", do NOT also extract "iPhone Revenue Growth YoY: 5%"
+  - Growth rates for absolute-value metrics occur occasionally and don't produce long-term value
+- **Exception**: Only extract growth rates if:
+  - The absolute value is not available in the documents
+  - The growth rate is explicitly called out as a key strategic metric (e.g., "Revenue Growth Rate" as a standalone KPI)
+  - The growth rate represents a different dimension (e.g., "Market Share Growth" when you're tracking "Market Share" as absolute)
+
+**Principle**: For any metric where you can extract an absolute value, extract the absolute value and skip the growth rate. Growth rates can be calculated from absolute values over time, so they don't need to be stored separately.
+
 ## Grouping Guidelines
 
 Group KPIs to correlate similar metrics that are often reported together and should be analyzed together. Use the same group for metrics that represent different aspects or breakdowns of the same category:
@@ -83,6 +98,7 @@ Before submitting, verify:
 - [ ] Extracted all RSU/compensation metrics
 - [ ] Extracted any other custom metrics found
 - [ ] No standard financial statement metrics included
+- [ ] Prioritized absolute values over growth rates (avoided YoY/QoQ/MoM percentages for metrics where absolute values are tracked)
 - [ ] All required fields are present for each KPI
 - [ ] Values are properly structured with number, unit, and multiplier
 

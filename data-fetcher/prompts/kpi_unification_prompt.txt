@@ -8,27 +8,49 @@ PREVIOUS QUARTER KPIs ({previous_quarter_key}):
 CURRENT QUARTER KPIs ({current_quarter_key}):
 {current_quarter_kpis}
 
-For each KPI relationship, return one of the following result types:
+For each KPI relationship, return one of the following result types. **CRITICAL: Use EXACTLY the fields specified for each result type - do not add extra fields or use different field names.**
 
 1. **NORMALIZE**: When two KPIs represent the same metric but have different names or groups
-   - Example: "Monthly Active Users" (old) and "MAU" (new) should both be normalized to "Monthly Active Users"
-   - Return: {{"old": "name1", "new": "name2", "target": "canonical_name", "target_group": "canonical_group", "result": "normalize"}}
+   - Example: "Monthly Active Users" (previous) and "MAU" (current) should both be normalized to "Monthly Active Users"
+   - **REQUIRED FIELDS**: previous, current, target, target_group, result
+   - **EXACT FORMAT**: {{"previous": "name_from_previous_quarter", "current": "name_from_current_quarter", "target": "canonical_name_to_use", "target_group": "canonical_group_to_use", "result": "normalize"}}
+   - **DO NOT USE**: Do not use "target" or "target_group" for other result types
 
 2. **MISSING**: When a KPI from the previous quarter is not found in the current quarter
-   - Return: {{"old": "name", "result": "missing"}}
+   - **REQUIRED FIELDS**: previous, result
+   - **EXACT FORMAT**: {{"previous": "name_from_previous_quarter", "result": "missing"}}
+   - **DO NOT INCLUDE**: Do not include "current", "target", or "target_group" fields
 
 3. **MATCH**: When KPIs from both quarters match exactly (same name, same meaning)
-   - Return: {{"old": "name", "new": "name", "result": "match"}}
+   - **REQUIRED FIELDS**: previous, current, result
+   - **EXACT FORMAT**: {{"previous": "name_from_previous_quarter", "current": "name_from_current_quarter", "result": "match"}}
+   - **DO NOT INCLUDE**: Do not include "target" or "target_group" fields
 
 4. **NEW**: When a KPI in the current quarter is genuinely new (not found in previous quarter)
-   - Return: {{"new": "name", "result": "new"}}
+   - **REQUIRED FIELDS**: target, target_group, result
+   - **EXACT FORMAT**: {{"target": "name_from_current_quarter", "target_group": "group_name", "result": "new"}}
+   - **DO NOT INCLUDE**: Do not include "previous" or "current" fields
+   - **IMPORTANT**: Use "target" field to specify the KPI name and "target_group" to specify the group
 
 Guidelines:
-- Consider semantic similarity, not just exact name matches
-- Look for abbreviations, acronyms, or slight variations (e.g., "Revenue" vs "Total Revenue")
+- **Use "normalize" for name variations**: If KPIs have different names but represent the same metric (e.g., "Net Sales" vs "Revenue", "Growth" vs "Growth YoY", "MAU" vs "Monthly Active Users"), use "normalize"
+- **Use "match" only for identical names**: Only use "match" when names are exactly the same (or differ only by capitalization/whitespace)
+- Consider semantic similarity when deciding between "normalize" vs "match"
+- Look for abbreviations, acronyms, or slight variations - these should be "normalize", not "match"
 - Consider unit consistency when matching
 - Group names should also be normalized if they represent the same category
-- Be conservative: only mark as "match" if you're confident they're the same metric
 - For "normalize", provide the best canonical name and group to use going forward
+- **`group`** (required): Category for grouping related KPIs. The main purpose of the group is to combine the KPIs for the different segments; don't try to artificially reduce number of groups. Group names rarely change.
+
+**FIELD REQUIREMENTS SUMMARY:**
+- **normalize**: MUST include: previous, current, target, target_group, result
+- **missing**: MUST include: previous, result (NO current, target, or target_group)
+- **match**: MUST include: previous, current, result (NO target or target_group)
+- **new**: MUST include: target, target_group, result (NO previous or current)
+
+**CRITICAL REMINDER**: 
+- For "new" results, use "target" and "target_group" fields to specify the KPI name and group
+- Both "normalize" and "new" results use "target" and "target_group" fields
+- Do not mix field names - use exactly what is specified for each result type
 
 Return a JSON array with one entry per KPI relationship you identify.

@@ -4,10 +4,10 @@
   "items": {
     "type": "object",
     "properties": {
-      "old": {"type": "string", "description": "KPI name from previous quarter"},
-      "new": {"type": "string", "description": "KPI name from current quarter"},
-      "target": {"type": "string", "description": "Unified/canonical KPI name to use (for normalize result)"},
-      "target_group": {"type": "string", "description": "Unified/canonical group name to use (for normalize result)"},
+      "previous": {"type": "string", "description": "KPI name from previous quarter"},
+      "current": {"type": "string", "description": "KPI name from current quarter"},
+      "target": {"type": "string", "description": "Unified/canonical KPI name to use (for normalize and new results)"},
+      "target_group": {"type": "string", "description": "Unified/canonical group name to use (for normalize and new results)"},
       "result": {
         "type": "string",
         "enum": ["normalize", "missing", "match", "new"],

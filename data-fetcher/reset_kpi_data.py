@@ -11,8 +11,6 @@ Usage:
     python reset_kpi_data.py <ticker> [--verbose]
 """
 
-import argparse
-import sys
 from dotenv import load_dotenv
 from raw_kpi_service import RawKPIService
 from kpi_definitions_service import KPIDefinitionsService
@@ -136,50 +134,4 @@ def reset_kpi_data(ticker: str, verbose: bool = False) -> dict:
     return results
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Reset all KPI data for a ticker (raw_kpis, quarterly_analysis, kpi_definitions)',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python reset_kpi_data.py AAPL
-  python reset_kpi_data.py AAPL --verbose
-        """
-    )
-    
-    parser.add_argument(
-        'ticker',
-        type=str,
-        help='Stock ticker symbol (e.g., AAPL)'
-    )
-    
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose output'
-    )
-    
-    args = parser.parse_args()
-    
-    try:
-        results = reset_kpi_data(args.ticker, verbose=args.verbose)
-        
-        # Check for errors
-        if any(count == -1 for count in results.values()):
-            print('\n⚠️  Some operations failed. Check errors above.')
-            sys.exit(1)
-        
-        print(f'\n✅ Successfully reset all KPI data for {args.ticker.upper()}')
-        sys.exit(0)
-        
-    except KeyboardInterrupt:
-        print('\n\n⚠️  Operation cancelled by user')
-        sys.exit(1)
-    except Exception as error:
-        print(f'\n❌ Fatal error: {error}')
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
 

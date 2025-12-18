@@ -17,8 +17,6 @@ Stores unified KPIs in quarterly_analysis document.
 """
 
 import os
-import argparse
-import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
@@ -536,70 +534,3 @@ def unify_kpis(ticker: str, quarter_key: str, verbose: bool = False) -> Dict[str
         return {'error': str(error)}
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Unify raw KPIs with definitions using exact semantic invariant matching',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Examples:
-  # Unify KPIs for a quarter
-  python unify_kpis.py AAPL 2024Q1
-  
-  # Unify with verbose output
-  python unify_kpis.py AAPL 2024Q1 --verbose
-
-Unification Rule:
-  Two KPI observations are unified only if all semantic invariants match exactly:
-  - measure_kind
-  - subject
-  - subject_axis
-  - unit_family
-  - qualifiers (if present, must match exactly)
-  
-  If any invariant differs, the KPIs represent different identities and must not be unified.
-  
-  Qualifiers are included in the matching logic, so KPIs with different qualifiers
-  will be treated as separate identities and unified accordingly.
-        '''
-    )
-    
-    parser.add_argument('ticker', help='Stock ticker symbol (e.g., AAPL, MSFT)')
-    parser.add_argument('quarter', help='Quarter in format YYYYQN (e.g., 2024Q1)')
-    parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
-    
-    args = parser.parse_args()
-    
-    # Validate quarter format
-    import re
-    if not re.match(r'^\d{4}Q[1-4]$', args.quarter):
-        print(f'Error: Invalid quarter format. Use YYYYQN (e.g., 2024Q1)')
-        sys.exit(1)
-    
-    try:
-        results = unify_kpis(
-            args.ticker.upper(),
-            args.quarter,
-            args.verbose
-        )
-        
-        if 'error' in results:
-            print(f'\n❌ Unification failed: {results["error"]}')
-            sys.exit(1)
-        
-        print(f'\n✅ Successfully unified {results["total_unified"]} KPIs')
-        print(f'   Matched: {results["matched"]}')
-        print(f'   Created new definitions: {results["created_definitions"]}')
-        
-    except KeyboardInterrupt:
-        print('\n\nInterrupted by user')
-        sys.exit(1)
-    except Exception as e:
-        print(f'Error: {e}')
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()

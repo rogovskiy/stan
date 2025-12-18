@@ -29,18 +29,54 @@
     "source": {
       "type": "string"
     },
-    "group": {
-      "type": "string"
-    },
-    "frequency": {
-      "type": "integer"
-    },
     "other_names": {
       "type": "array",
       "items": {
         "type": "string"
       }
+    },
+    "semantic_interpretation": {
+      "type": "object",
+      "properties": {
+        "measure_kind": {
+          "type": "string",
+          "description": "Conceptual type of measurement (e.g., revenue, operating_income, production_volume, price, cost, margin, headcount)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The core noun entity being measured (e.g., iPhone, Americas, Gold, Segovia). Must be the core noun only - do not include contextual words or qualifiers. Qualifiers should be placed in the qualifiers field."
+        },
+        "subject_axis": {
+          "type": "string",
+          "enum": ["product", "segment", "geography", "operation", "mine", "commodity", "capital_structure", "company"],
+          "description": "The dimension defining the subject"
+        },
+        "unit_family": {
+          "type": "string",
+          "enum": ["money", "count", "mass", "percentage", "money_per_unit"],
+          "description": "Normalized unit category"
+        },
+        "qualifiers": {
+          "type": "array",
+          "description": "Optional qualifying attributes that further specify the metric. Allowed keys and values are specified in the extraction prompt.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Qualifier key (e.g., 'product', 'product_form', 'cost_type')"
+              },
+              "value": {
+                "type": "string",
+                "description": "Qualifier value (allowed values specified in extraction prompt)"
+              }
+            },
+            "required": ["key", "value"]
+          }
+        }
+      },
+      "required": ["measure_kind", "subject", "subject_axis", "unit_family"]
     }
   },
-  "required": ["name", "value", "value_type", "summary", "source", "group", "frequency"]
+  "required": ["name", "value", "value_type", "summary", "source", "semantic_interpretation"]
 }

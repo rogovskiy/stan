@@ -17,13 +17,22 @@ Extract custom, company-specific metrics that are unique to this business and NO
 - Any other standard GAAP financial statement items
 
 **DO extract custom metrics such as:**
-- Business segment revenues (e.g., iPhone Revenue, Google Cloud Revenue, Services Revenue)
-- Product-level metrics (units sold, ASP, per-product revenue)
-- Geographic/regional breakdowns (Americas Revenue, Europe Revenue, Asia-Pacific Revenue)
-- User/subscriber metrics (Active Users, Paid Subscribers, Monthly Active Users)
-- Operational metrics (engagement rates, retention, churn, conversion, production volumes)
-- RSU/compensation metrics (RSU grants, employee headcount)
+- Business segment or division metrics
+- Product or commodity-specific metrics
+- Geographic or regional breakdowns
+- Operational metrics by facility, operation, or location
+- Capital expenditures by type or category
 - Any other custom metrics mentioned in management commentary, presentations, or earnings releases
+
+## CRITICAL: Company specific logic
+
+**This section overwrites the importance of all other examples and guidance.**
+
+{user_defined_prompt}
+
+## KPI JSON Structure
+{kpi_example_document}
+
 
 ## Extraction Process
 
@@ -33,7 +42,7 @@ Systematically scan ALL documents:
 3. Read all charts/graphs and extract every data point
 4. Read management commentary and extract every metric referenced
 
-Extract EVERY metric you find. If you see a table with 5 business segments, extract all 5. If you see 3 geographic regions, extract all 3. Be thorough and systematic.
+Extract EVERY metric you find. If you see a table with metrics by segment, extract all segments. If you see metrics by product type, extract all product types. Be thorough and systematic.
 
 ## Value Extraction Guidelines
 
@@ -48,9 +57,9 @@ When extracting values:
 
 **CRITICAL: Prioritize absolute values over growth rates for metrics you are tracking.**
 
-- **Extract absolute values**: For metrics like revenue, units sold, user counts, etc., extract the absolute value (e.g., "iPhone Revenue: $50 billion")
+- **Extract absolute values**: For metrics like volumes, costs, capital expenditures, revenues, etc., extract the absolute value (e.g., "Revenue: $100 million")
 - **Avoid growth rates for tracked metrics**: Do NOT extract change percentages (YoY, QoQ, MoM) for metrics where you are already tracking the absolute value
-  - Example: If you extract "iPhone Revenue: $50 billion", do NOT also extract "iPhone Revenue Growth YoY: 5%"
+  - Example: If you extract "Revenue: $100 million", do NOT also extract "Revenue Growth YoY: 5%"
   - Growth rates for absolute-value metrics occur occasionally and don't produce long-term value
 - **Exception**: Only extract growth rates if:
   - The absolute value is not available in the documents
@@ -59,29 +68,363 @@ When extracting values:
 
 **Principle**: For any metric where you can extract an absolute value, extract the absolute value and skip the growth rate. Growth rates can be calculated from absolute values over time, so they don't need to be stored separately.
 
-## Grouping Guidelines
+## Semantic Interpretation Extraction Logic
 
-Group KPIs to correlate similar metrics that are often reported together and should be analyzed together. Use the same group for metrics that represent different aspects or breakdowns of the same category:
+The `semantic_interpretation` field is the most critical part of KPI extraction. It provides structured meaning that enables matching KPIs across documents and quarters. Follow this deep extraction logic:
 
-- **Business Segments**: All revenue and metrics for business segments (e.g., iPhone Revenue, Services Revenue, Mac Revenue, iPad Revenue). Group all segment-related metrics together even if they measure different things (revenue, operating income, growth rates).
+**⚠️ CRITICAL PRINCIPLE: Subjects are economic actors from the known subjects list. Products, commodities, and forms are qualifiers, NOT subjects.**
 
-- **Product Sales**: All product-level metrics (units sold, ASP, per-product revenue). Group all metrics related to the same product or product category together.
+### Step 1: Determine `measure_kind`
 
-- **Geographic Breakdown**: All geographic/regional metrics (Americas Revenue, Europe Revenue, Asia-Pacific Revenue). Group all regional breakdowns together regardless of metric type.
+Analyze what TYPE of measurement this is:
 
-- **User Metrics**: All user/subscriber metrics (Active Users, Paid Subscribers, Monthly Active Users). Group metrics that measure user engagement, growth, or behavior together.
+1. **Look at the metric name and context:**
+   - Contains "revenue", "sales", "income" (from operations) → `"revenue"`
+   - Contains "production", "output", "manufactured" → `"production_volume"`
+   - Contains "sales volume", "units sold" → `"sales_volume"`
+   - Contains "price", "ASP", "average selling price" → `"price"`
+   - Contains "cost", "expense" → `"cost"`
+   - Contains "users", "subscribers", "employees", "headcount", "count" → `"count"`
 
-- **Operational Metrics**: All operational metrics (engagement rates, retention, churn, conversion, production volumes). Group metrics that measure operational performance together.
+2. **Consider the unit:**
+   - Dollar amounts → usually `"revenue"` or `"cost"`
+   - Counts → usually `"headcount"`
+   - Percentages → usually `"margin"`
+   - Mass (ounces, tons) → usually `"production_volume"`
 
-- **Other**: Metrics that don't fit into the above categories.
+3. **Examples:**
+   - "Revenue" → `measure_kind: "revenue"`
+   - "Units Sold" → `measure_kind: "sales_volume"`
+   - "Capital Expenditures" → `measure_kind: "capex"`
+   - "Cost" → `measure_kind: "cost"`
+   - "Active Users" → `measure_kind: "count"`
 
-**Key principle**: If metrics are reported together in the same table, chart, or section, they likely belong in the same group. This enables correlation analysis and trend comparison across related metrics.
+### Step 2: Extract `subject` (Economic Actor Only)
 
-## KPI Structure and Examples
+**CRITICAL: Subjects are economic actors, NOT products or commodities. ONLY use the known subjects listed in the CRITICAL section above.**
 
-Refer to the following document for the complete KPI structure, field definitions, value types, matching criteria, and example JSON:
+1. **Identify the economic actor being measured from the known subjects list:**
+   - "Revenue" → subject is `"Company"` (company-wide), product goes in `qualifiers.product` (if mentioned)
+   - "[Operation Name] Revenue" → subject is from known operations list, product goes in `qualifiers.product` (if mentioned)
+   - "[Mine Name] Revenue" → subject is from known mines list, product goes in `qualifiers.product` (if mentioned)
 
-{kpi_example_document}
+2. **ONLY use these known subjects:**
+   - `"Company"` for company-wide metrics
+   - Known operations from the CRITICAL section above
+   - Known mines from the CRITICAL section above
+
+3. **Products/commodities are NOT subjects:**
+   - ❌ Products/commodities are NOT subjects → use `subject: "Company"` or a known operation/mine with `qualifiers: [{{ "key": "product", "value": "..." }}]`
+   - ❌ Product names are NOT subjects → use `subject: "Company"` with `qualifiers: [{{ "key": "product", "value": "..." }}]`
+
+4. **Examples:**
+   - ✅ "Revenue" → `subject: "Company"`, `qualifiers: [{{ "key": "product", "value": "..." }}]` (if product is mentioned, use allowed product values)
+   - ✅ "[Operation Name] Revenue" → `subject: "[Operation Name]"`, `qualifiers: [{{ "key": "product", "value": "..." }}]` (if product is mentioned, use allowed product values, operation must be from known list)
+   - ✅ "[Mine Name] Revenue" → `subject: "[Mine Name]"`, `qualifiers: [{{ "key": "product", "value": "..." }}]` (if product is mentioned, use allowed product values, mine must be from known list)
+   - ❌ "ProductName Revenue" → `subject: "ProductName"` (WRONG - Product is not an economic actor, use Company with qualifiers)
+
+### Step 3: Determine `subject_axis`
+
+Identify what DIMENSION or CATEGORY the economic actor represents. ONLY use these subject_axis values that match the known subjects:
+
+1. **Company-wide metrics:**
+   - No specific segmentation, overall company metrics
+   - → `subject_axis: "company"` (used with `subject: "Company"`)
+
+2. **Operation metrics:**
+   - Specific operations or facilities
+   - → `subject_axis: "operation"` (used with known operation subjects from CRITICAL section)
+
+3. **Mine metrics:**
+   - Mine-specific metrics
+   - → `subject_axis: "mine"` (used with known mine subjects from CRITICAL section)
+
+4. **Examples:**
+   - "Revenue" → `subject: "Company"`, `subject_axis: "company"`
+   - "[Operation Name] Revenue" → `subject: "[Operation Name]"`, `subject_axis: "operation"` (operation must be from known list)
+   - "[Mine Name] Revenue" → `subject: "[Mine Name]"`, `subject_axis: "mine"` (mine must be from known list)
+
+### Step 4: Determine `subject_role` (Optional but Recommended)
+
+Identify the semantic role or reporting lens under which the subject is measured:
+
+1. **Common roles:**
+   - `"consolidated"`: Consolidated reporting basis
+   - `"reportable_segment"`: Reportable segment under accounting standards
+   - `"operations"`: Operations lens
+   - `"joint_venture"`: Joint venture attribution
+   - `"attributable"`: Attributable to the subject
+
+2. **Extract when explicitly mentioned in the document:**
+   - Document says "consolidated revenue" → `subject_role: "consolidated"`
+   - Document says "reportable segment" → `subject_role: "reportable_segment"`
+   - Document says "attributable to" → `subject_role: "attributable"`
+
+### Step 5: Determine `unit_family`
+
+Map the unit to a normalized category:
+
+1. **Money units:**
+   - "dollar", "euro", "USD", "EUR", any currency
+   - → `unit_family: "money"`
+
+2. **Count units:**
+   - "count", "users", "employees", "units", "subscribers"
+   - → `unit_family: "count"`
+
+3. **Mass units:**
+   - "ounce", "ton", "kilogram", "pound"
+   - → `unit_family: "mass"`
+
+4. **Percentage:**
+   - "percentage", "%"
+   - → `unit_family: "percentage"`
+
+5. **Money per unit:**
+   - "dollar per ounce", "revenue per user", "price per unit"
+   - → `unit_family: "money_per_unit"`
+
+### Step 6: Determine `value_semantics`
+
+Describe how the value behaves over time:
+
+1. **Flow:**
+   - Accumulated over a period (quarterly revenue, quarterly sales volume, quarterly costs)
+   - → `value_semantics: "flow"`
+
+2. **Stock:**
+   - Point-in-time snapshot (headcount at quarter end, cash balance, inventory)
+   - → `value_semantics: "stock"`
+
+3. **Rate:**
+   - Ratio or per-unit metric (price per unit, revenue per user, cost per unit)
+   - → `value_semantics: "rate"`
+
+4. **Change:**
+   - Delta or growth metric (YoY growth, QoQ change, percentage change)
+   - → `value_semantics: "change"`
+
+5. **Examples:**
+   - "Revenue" (quarterly) → `value_semantics: "flow"`
+   - "Headcount" (point in time) → `value_semantics: "stock"`
+   - "Price per Unit" → `value_semantics: "rate"`
+   - "Revenue Growth Rate" → `value_semantics: "change"`
+
+### Step 7: Extract `qualifiers` (Products, Commodities, Forms, etc.)
+
+**CRITICAL: Products, commodities, and forms are qualifiers, NOT subjects. Qualifiers do not affect KPI identity.**
+
+**⚠️ CRITICAL RULES FOR QUALIFIERS:**
+
+1. **Only extract qualifiers when EXPLICITLY mentioned in the document** - Do NOT infer, assume, or add default values
+2. **Do NOT add wildcard qualifiers** - Never add qualifiers with values like "all", "finished product", "production", "all grades", etc. unless the document explicitly states them
+3. **Do NOT add qualifiers to indicate absence** - If the document doesn't mention a form, grade, or type, do NOT add qualifiers with "all" or similar values
+4. **Only extract what is explicitly stated** - If document says "Product Sold" without mentioning form, do NOT add `product_form` or other inferred values
+5. **ONLY use the allowed qualifier keys and values** - See the CRITICAL section above for the exact list
+
+1. **Allowed qualifier keys and values:**
+   - `"product"`: `"gold"`, `"silver"`, `"byproduct"` (ONLY these values)
+   - `"product_form"`: `"dore"`, `"raw"`, `"concentrate"` (ONLY these values)
+   - `"cost_type"`: `"sustaining"`, `"non-sustaining"`, `"all_in_sustaining"` (ONLY these values)
+
+2. **When to extract qualifiers:**
+   - Document mentions a product/commodity → extract `qualifiers: [{{ "key": "product", "value": "..." }}]` using allowed values (gold, silver, byproduct)
+   - Document mentions a product form → extract `qualifiers: [{{ "key": "product_form", "value": "..." }}]` using allowed values (dore, raw, concentrate)
+   - Document mentions a cost type → extract `qualifiers: [{{ "key": "cost_type", "value": "..." }}]` using allowed values (sustaining, non-sustaining, all_in_sustaining)
+   - Multiple qualifiers → extract as array: `qualifiers: [{{ "key": "product", "value": "gold" }}, {{ "key": "product_form", "value": "dore" }}]`
+
+3. **When NOT to extract qualifiers:**
+   - Document doesn't mention product/form/cost_type → `qualifiers: null` or omit qualifiers entirely
+   - **Never add qualifiers with "all", "finished product", "production", or other inferred/default values**
+   - **Never use qualifier keys not in the allowed list** (no `origin`, `ownership`, `accounting_basis`, `capex_type`, `exclusions`, `status`, `period`)
+
+4. **Examples:**
+   - Document: "Revenue" (with product mentioned) → `subject: "Company"`, `qualifiers: [{{ "key": "product", "value": "..." }}]` (use allowed product values from CRITICAL section)
+   - Document: "Revenue from Product in Concentrate Form" → `subject: "Company"`, `qualifiers: [{{ "key": "product", "value": "..." }}, {{ "key": "product_form", "value": "concentrate" }}]` (if product is also mentioned, use allowed values)
+   - Document: "[Operation Name] Revenue" → `subject: "[Operation Name]"`, `qualifiers: [{{ "key": "product", "value": "..." }}]` (if product is mentioned, use allowed product values, operation must be from known list)
+   - Document: "Sustaining Capital Expenditures" → `subject: "Company"`, `qualifiers: [{{ "key": "cost_type", "value": "sustaining" }}]`
+
+### Subject vs Qualifiers - Correct vs Incorrect Patterns
+
+**Key Principle: Subjects are economic actors from the known list. Products/commodities/forms are qualifiers.**
+
+**✅ Correct Examples:**
+
+```json
+// Revenue - subject is the economic actor (Company), product is in qualifiers
+{{
+  "subject": "Company",
+  "subject_axis": "company",
+  "qualifiers": [
+    {{ "key": "product", "value": "..." }}
+  ]
+}}
+```
+
+```json
+// [Operation Name] Sales - subject is the operation, product and form are in qualifiers
+{{
+  "subject": "[Operation Name]",
+  "subject_axis": "operation",
+  "qualifiers": [
+    {{ "key": "product", "value": "..." }},
+    {{ "key": "product_form", "value": "..." }}
+  ]
+}}
+```
+
+```json
+// [Mine Name] Revenue - subject is the mine
+{{
+  "subject": "[Mine Name]",
+  "subject_axis": "mine",
+  "qualifiers": [
+    {{ "key": "product", "value": "..." }}
+  ]
+}}
+```
+
+**❌ Incorrect Examples:**
+
+```json
+// ❌ WRONG: Product/commodity is not an economic actor
+{{
+  "subject": "ProductName",
+  "subject_axis": "company"
+}}
+```
+
+```json
+// ❌ WRONG: "Services" is not in the known subjects list
+{{
+  "subject": "Services",
+  "subject_axis": "segment"
+}}
+```
+
+```json
+// ❌ WRONG: "Nigeria" is not in the known subjects list
+{{
+  "subject": "Nigeria",
+  "subject_axis": "operation"
+}}
+```
+
+```json
+// ❌ WRONG: Using qualifier key not in allowed list
+{{
+  "subject": "Company",
+  "qualifiers": [
+    {{ "key": "origin", "value": "[Operation Name]" }}  // "origin" is not an allowed qualifier key
+  ]
+}}
+```
+
+### Semantic Interpretation Extraction Examples
+
+**Example 1: "Monthly Active Users: 2.5 billion"**
+```
+Step 1: measure_kind = "count" (contains "users", count unit)
+Step 2: subject = "Company" (economic actor from known list - company-wide)
+Step 3: subject_axis = "company" (company-wide metric)
+Step 4: subject_role = null (not explicitly mentioned)
+Step 5: unit_family = "count" (count unit)
+Step 6: value_semantics = "stock" (point-in-time snapshot)
+Step 7: qualifiers = null (no product/form/cost_type mentioned)
+
+Result:
+{{
+  "measure_kind": "count",
+  "subject": "Company",
+  "subject_axis": "company",
+  "unit_family": "count",
+  "value_semantics": "stock"
+}}
+```
+
+**Example 2: "[Operation Name] Revenue: $150 million"**
+```
+Step 1: measure_kind = "revenue" (contains "revenue", dollar amount)
+Step 2: subject = "[Operation Name]" (economic actor from known list - operation)
+Step 3: subject_axis = "operation" (operation-specific metric)
+Step 4: subject_role = null (not explicitly mentioned)
+Step 5: unit_family = "money" (dollar unit)
+Step 6: value_semantics = "flow" (quarterly revenue accumulated over period)
+Step 7: qualifiers = null (no product/form/cost_type mentioned in document)
+
+Result:
+{{
+  "measure_kind": "revenue",
+  "subject": "[Operation Name]",
+  "subject_axis": "operation",
+  "unit_family": "money",
+  "value_semantics": "flow"
+}}
+```
+
+**Example 3: "Units Sold: 5.2 million"**
+```
+Step 1: measure_kind = "sales_volume" (contains "units sold", count unit)
+Step 2: subject = "Company" (economic actor from known list - company-wide)
+Step 3: subject_axis = "company" (company-wide metric)
+Step 4: subject_role = null (not explicitly mentioned)
+Step 5: unit_family = "count" (count unit)
+Step 6: value_semantics = "flow" (quarterly sales accumulated over period)
+Step 7: qualifiers = null (no product/form/cost_type mentioned)
+
+Result:
+{{
+  "measure_kind": "sales_volume",
+  "subject": "Company",
+  "subject_axis": "company",
+  "unit_family": "count",
+  "value_semantics": "flow"
+}}
+```
+
+**Example 4: "Sustaining Capital Expenditures: $50 million"**
+```
+Step 1: measure_kind = "capex" (contains "capital expenditure", dollar amount)
+Step 2: subject = "Company" (economic actor from known list - company-wide)
+Step 3: subject_axis = "company" (company-wide metric)
+Step 4: subject_role = null (not explicitly mentioned)
+Step 5: unit_family = "money" (dollar unit)
+Step 6: value_semantics = "flow" (quarterly capex accumulated over period)
+Step 7: qualifiers = [{{ "key": "cost_type", "value": "sustaining" }}] (sustaining is cost type)
+
+Result:
+{{
+  "measure_kind": "capex",
+  "subject": "Company",
+  "subject_axis": "company",
+  "unit_family": "money",
+  "value_semantics": "flow",
+  "qualifiers": [
+    {{ "key": "cost_type", "value": "sustaining" }}
+  ]
+}}
+```
+
+**Example 5: "Average Selling Price: $1,250 per unit"**
+```
+Step 1: measure_kind = "price" (contains "price", dollar per unit)
+Step 2: subject = "Company" (economic actor from known list - company-wide)
+Step 3: subject_axis = "company" (company-wide metric)
+Step 4: subject_role = null (not explicitly mentioned)
+Step 5: unit_family = "money_per_unit" (dollar per unit)
+Step 6: value_semantics = "rate" (ratio or per-unit metric)
+Step 7: qualifiers = null (no product/form/cost_type mentioned)
+
+Result:
+{{
+  "measure_kind": "price",
+  "subject": "Company",
+  "subject_axis": "company",
+  "unit_family": "money_per_unit",
+  "value_semantics": "rate"
+}}
+```
+
 
 ## Output Format
 
@@ -90,16 +433,18 @@ Return a JSON array of KPI objects. Each KPI object must include all required fi
 ## Final Checklist
 
 Before submitting, verify:
-- [ ] Extracted all business segment revenues mentioned
-- [ ] Extracted all product-level metrics
-- [ ] Extracted all geographic/regional breakdowns
-- [ ] Extracted all user/subscriber metrics
+- [ ] Extracted all metrics by product type when mentioned (using allowed product values)
+- [ ] Extracted all metrics by form when mentioned (using allowed product_form values)
+- [ ] Extracted all metrics by operation/mine when mentioned (using known subjects from CRITICAL section)
+- [ ] Extracted all capital expenditures by cost type when mentioned (using allowed cost_type values)
 - [ ] Extracted all operational metrics
-- [ ] Extracted all RSU/compensation metrics
 - [ ] Extracted any other custom metrics found
 - [ ] No standard financial statement metrics included
 - [ ] Prioritized absolute values over growth rates (avoided YoY/QoQ/MoM percentages for metrics where absolute values are tracked)
 - [ ] All required fields are present for each KPI
 - [ ] Values are properly structured with number, unit, and multiplier
+- [ ] All subjects are from the known subjects list (see CRITICAL section above)
+- [ ] All qualifiers use only allowed keys (product, product_form, cost_type) with allowed values
+- [ ] There should be no 2 metrics with the same subject, measure_kind and qualifiers.
 
 Extract as many KPIs as are present in the documents. Aim for completeness over speed.

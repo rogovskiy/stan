@@ -146,8 +146,7 @@ def unify_kpis_with_llm(
                     value_str = str(value)
                     unit = ''
                 
-                group = kpi.get('group', 'N/A')
-                formatted.append(f"- {name}: {value_str} {unit} (Group: {group})")
+                formatted.append(f"- {name}: {value_str} {unit}")
             return '\n'.join(formatted) if formatted else "None"
         
         prev_kpis_str = format_kpis_for_prompt(previous_quarter_kpis)
@@ -782,12 +781,9 @@ def process_unification_results(
 
                 # Update KPI name and group to match target
                 current_kpi['name'] = target_name
-                if target_group:
-                    current_kpi['group'] = target_group
-
                 # Definition will be created when storing, frequency will be set automatically
                 if verbose:
-                    print(f'      ✅ Action: New KPI "{target_name}" (ID: {kpi_id})' + (f' (Group: {target_group})' if target_group else ''))
+                    print(f'      ✅ Action: New KPI "{target_name}" (ID: {kpi_id})')
 
                 processed_kpi_names.add(current_name if current_name else target_name)
             elif verbose:
@@ -1285,7 +1281,6 @@ Examples:
             
             print(f"\n{i}. {kpi_name}")
             print(f"   Value: {kpi.get('value', 'N/A')} {kpi.get('unit', '')}")
-            print(f"   Group: {kpi.get('group', 'N/A')}")
             print(f"   Frequency: {frequency}")
             if kpi.get('change'):
                 print(f"   Change: {kpi.get('change', 'N/A')} ({kpi.get('change_type', 'N/A')})")

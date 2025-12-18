@@ -1738,7 +1738,6 @@ Examples:
             for i, kpi in enumerate(kpis, 1):
                 print(f"\n{i}. {kpi.get('name', 'N/A')}")
                 print(f"   Value: {kpi.get('value', 'N/A')} {kpi.get('unit', '')}")
-                print(f"   Group: {kpi.get('group', 'N/A')}")
                 print(f"   Frequency: {kpi.get('frequency', 'N/A')}")
                 if kpi.get('change'):
                     print(f"   Change: {kpi.get('change', 'N/A')} ({kpi.get('change_type', 'N/A')})")

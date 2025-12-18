@@ -84,6 +84,16 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
                 KPI
               </Link>
               <Link
+                href={`/${selectedTicker}/kpi-match`}
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === `/${selectedTicker}/kpi-match`
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                KPI Match
+              </Link>
+              <Link
                 href={`/${selectedTicker}/documents`}
                 className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
                   pathname === `/${selectedTicker}/documents`
@@ -153,3 +163,5 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
     </div>
   );
 }
+
+

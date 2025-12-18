@@ -6,7 +6,7 @@ Service for managing KPI definitions in Firebase Firestore.
 KPI definitions are stored at: /tickers/{ticker}/kpi_definitions/{kpi_name}
 
 A KPI definition is similar to a KPI but without the numeric value.
-It contains: name, unit, multiplier, value_type, summary, source, group, frequency, other_names
+It contains: name, unit, multiplier, value_type, summary, source, group, other_names
 """
 
 import os
@@ -45,68 +45,106 @@ class KPIDefinitionsService:
                 "token_uri": os.getenv("FIREBASE_TOKEN_URI", "https://oauth2.googleapis.com/token")
             }
             
+            # Use the correct storage bucket from environment or fallback to default
+            storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET") or f"{os.getenv('FIREBASE_PROJECT_ID')}.appspot.com"
+            
             cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': storage_bucket
+            })
     
-    def _generate_kpi_id(self, kpi_name: str) -> str:
-        """Generate an immutable lowercase snake_case ID from a KPI name
+    def _generate_kpi_id(self, semantic_interpretation: Dict[str, Any]) -> str:
+        """Generate an immutable ID from semantic_interpretation fields
         
-        This ID is generated from the first definition and never changes,
-        even if the KPI name changes later.
+        This ID is generated from the semantic invariants including qualifiers
+        and never changes, even if the KPI name changes later. The ID is based on:
+        - measure_kind
+        - subject
+        - subject_axis
+        - unit_family
+        - qualifiers (normalized and sorted)
         
         Args:
-            kpi_name: KPI name
+            semantic_interpretation: Dictionary with semantic_interpretation fields
             
         Returns:
-            Lowercase snake_case ID (e.g., "iPhone Revenue" -> "iphone_revenue")
+            Hash-based ID string (12 characters)
         """
-        import re
-        # Convert to lowercase
-        snake_case = kpi_name.lower()
-        # Replace spaces and special characters with underscores
-        snake_case = re.sub(r'[^a-z0-9]', '_', snake_case)
-        # Collapse multiple underscores
-        snake_case = re.sub(r'_+', '_', snake_case)
-        # Remove leading/trailing underscores
-        snake_case = snake_case.strip('_')
-        return snake_case
-    
-    def _normalize_kpi_name_for_doc_id(self, kpi_name: str) -> str:
-        """Normalize KPI name to be used as a Firestore document ID
+        import hashlib
+        import json
         
-        This is now just an alias for _generate_kpi_id for backward compatibility.
-        We use the immutable ID as the document ID.
+        if not semantic_interpretation:
+            raise ValueError("semantic_interpretation is required to generate KPI ID")
+        
+        # Extract the four semantic invariants
+        measure_kind = semantic_interpretation.get('measure_kind', '')
+        subject = semantic_interpretation.get('subject', '')
+        subject_axis = semantic_interpretation.get('subject_axis', '')
+        unit_family = semantic_interpretation.get('unit_family', '')
+        
+        # Normalize qualifiers for consistent hashing
+        qualifiers = semantic_interpretation.get('qualifiers')
+        qualifiers_dict = {}
+        
+        if qualifiers is not None:
+            if isinstance(qualifiers, list):
+                for q in qualifiers:
+                    if isinstance(q, dict):
+                        key = q.get('key')
+                        value = q.get('value')
+                        if key and value:
+                            qualifiers_dict[key] = value
+            elif isinstance(qualifiers, dict):
+                qualifiers_dict = qualifiers.copy() if qualifiers else {}
+        
+        # Sort qualifiers by key for deterministic hashing
+        sorted_qualifiers = sorted(qualifiers_dict.items())
+        qualifiers_str = json.dumps(sorted_qualifiers, sort_keys=True)
+        
+        # Create a deterministic string from the invariants including qualifiers
+        invariant_string = f"{measure_kind}|{subject}|{subject_axis}|{unit_family}|{qualifiers_str}"
+        
+        # Generate hash-based ID
+        kpi_id = hashlib.md5(invariant_string.encode()).hexdigest()[:12]
+        return kpi_id
+    
+    def _normalize_kpi_name_for_doc_id(self, semantic_interpretation: Dict[str, Any]) -> str:
+        """Generate KPI ID from semantic_interpretation
+        
+        This is now an alias for _generate_kpi_id for backward compatibility.
+        We use the immutable ID based on semantic invariants as the document ID.
         """
-        return self._generate_kpi_id(kpi_name)
+        return self._generate_kpi_id(semantic_interpretation)
     
     def _find_kpi_by_name_or_id(self, ticker: str, identifier: str) -> Optional[tuple[Dict[str, Any], str]]:
         """Find a KPI definition by name or ID
         
         Args:
             ticker: Stock ticker symbol
-            identifier: KPI name or ID
+            identifier: KPI name or ID (12-character hash)
             
         Returns:
             Tuple of (definition_dict, kpi_id) or (None, None) if not found
         """
         upper_ticker = ticker.upper()
         
-        # First try by ID (most common case)
-        kpi_id = self._generate_kpi_id(identifier)
-        doc_ref = (self.db.collection('tickers')
-                  .document(upper_ticker)
-                  .collection('kpi_definitions')
-                  .document(kpi_id))
-        
-        doc = doc_ref.get()
-        if doc.exists:
-            return doc.to_dict(), kpi_id
+        # First try by ID (12-character hash)
+        if len(identifier) == 12 and all(c in '0123456789abcdef' for c in identifier):
+            kpi_id = identifier
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('kpi_definitions')
+                      .document(kpi_id))
+            
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict(), kpi_id
         
         # If not found by ID, search by name
         all_definitions = self.get_all_kpi_definitions(upper_ticker)
         for definition in all_definitions:
             if definition.get('name', '').lower() == identifier.lower():
-                return definition, definition.get('id', kpi_id)
+                return definition, definition.get('id')
         
         return None, None
     
@@ -116,22 +154,26 @@ class KPIDefinitionsService:
         Args:
             ticker: Stock ticker symbol
             kpi_definition: KPI definition dictionary (without numeric value)
-                Expected fields: name, value (with unit and multiplier), value_type, 
-                summary, source, group, frequency, other_names (optional)
+                Required fields: name, semantic_interpretation (with measure_kind, subject, subject_axis, unit_family)
+                Optional fields: value (with unit and multiplier), value_type, summary, source
             verbose: Enable verbose output
             
         Returns:
-            Immutable KPI ID (lowercase snake_case)
+            Immutable KPI ID (12-character hash based on semantic_interpretation)
         """
         try:
             upper_ticker = ticker.upper()
             kpi_name = kpi_definition.get('name', '')
+            semantic_interpretation = kpi_definition.get('semantic_interpretation', {})
             
             if not kpi_name:
                 raise ValueError("KPI definition must have a 'name' field")
             
-            # Generate immutable ID from name (lowercase snake_case)
-            kpi_id = self._generate_kpi_id(kpi_name)
+            if not semantic_interpretation:
+                raise ValueError("KPI definition must have a 'semantic_interpretation' field")
+            
+            # Generate immutable ID from semantic_interpretation
+            kpi_id = self._generate_kpi_id(semantic_interpretation)
             
             # Check if definition already exists
             doc_ref = (self.db.collection('tickers')
@@ -144,7 +186,7 @@ class KPIDefinitionsService:
             
             # Prepare the definition data
             definition_data = {
-                'id': kpi_id,  # Immutable ID
+                'id': kpi_id,  # Immutable ID based on semantic_interpretation
                 'name': kpi_name,  # Current name (can change)
                 'value': {
                     'unit': kpi_definition.get('value', {}).get('unit', ''),
@@ -153,9 +195,7 @@ class KPIDefinitionsService:
                 'value_type': kpi_definition.get('value_type', ''),
                 'summary': kpi_definition.get('summary', ''),
                 'source': kpi_definition.get('source', ''),
-                'group': kpi_definition.get('group', ''),
-                'frequency': kpi_definition.get('frequency', 1),
-                'other_names': kpi_definition.get('other_names', []),
+                'semantic_interpretation': semantic_interpretation,  # Required field
                 'updated_at': datetime.now().isoformat()
             }
             
@@ -263,7 +303,7 @@ class KPIDefinitionsService:
         
         Args:
             ticker: Stock ticker symbol
-            kpi_name: KPI name
+            kpi_name: KPI name (used to find the definition)
             updates: Dictionary of fields to update
             verbose: Enable verbose output
             
@@ -272,7 +312,12 @@ class KPIDefinitionsService:
         """
         try:
             upper_ticker = ticker.upper()
-            doc_id = self._normalize_kpi_name_for_doc_id(kpi_name)
+            # Find by name first
+            definition, doc_id = self._find_kpi_by_name_or_id(upper_ticker, kpi_name)
+            if not definition:
+                if verbose:
+                    print(f'KPI definition "{kpi_name}" not found for {ticker}')
+                return False
             
             doc_ref = (self.db.collection('tickers')
                       .document(upper_ticker)
@@ -327,18 +372,17 @@ class KPIDefinitionsService:
         """
         try:
             upper_ticker = ticker.upper()
-            doc_id = self._normalize_kpi_name_for_doc_id(kpi_name)
+            # Find by name first
+            definition, doc_id = self._find_kpi_by_name_or_id(upper_ticker, kpi_name)
+            if not definition:
+                if verbose:
+                    print(f'KPI definition "{kpi_name}" not found for {ticker}')
+                return False
             
             doc_ref = (self.db.collection('tickers')
                       .document(upper_ticker)
                       .collection('kpi_definitions')
                       .document(doc_id))
-            
-            doc = doc_ref.get()
-            if not doc.exists:
-                if verbose:
-                    print(f'KPI definition "{kpi_name}" not found for {ticker}')
-                return False
             
             doc_ref.delete()
             
@@ -464,27 +508,16 @@ class KPIDefinitionsService:
             
             if not definition:
                 if verbose:
-                    print(f'⚠️  KPI definition "{kpi_name}" not found for {ticker}. Creating definition first...')
-                # Create a minimal definition if it doesn't exist
-                minimal_definition = {
-                    'name': kpi_name,
-                    'value': {
-                        'unit': '',
-                        'multiplier': None
-                    },
-                    'value_type': 'quarterly',
-                    'summary': '',
-                    'source': '',
-                    'group': '',
-                    'frequency': 1,
-                    'other_names': []
-                }
-                kpi_id = self.set_kpi_definition(upper_ticker, minimal_definition, verbose=verbose)
-                definition = self.get_kpi_definition_by_id(upper_ticker, kpi_id)
+                    print(f'⚠️  KPI definition "{kpi_name}" not found for {ticker}. Cannot create definition without semantic_interpretation.')
+                return False
             
             # Use the immutable ID for storage
             if not kpi_id:
-                kpi_id = definition.get('id') if definition else self._generate_kpi_id(kpi_name)
+                kpi_id = definition.get('id')
+                if not kpi_id:
+                    if verbose:
+                        print(f'⚠️  KPI definition "{kpi_name}" has no ID')
+                    return False
             
             # Store the value in the values subcollection using the immutable ID
             value_doc_ref = (self.db.collection('tickers')
@@ -502,21 +535,14 @@ class KPIDefinitionsService:
                 'updated_at': datetime.now().isoformat()
             }
             
-            # Check if value already exists to add created_at and update frequency
+            # Check if value already exists to add created_at
             existing_value = value_doc_ref.get()
             is_new_value = not existing_value.exists
             
             if is_new_value:
                 value_data['created_at'] = datetime.now().isoformat()
-                # Increment frequency for new value
-                current_frequency = definition.get('frequency', 0)
-                new_frequency = current_frequency + 1
-                # Update definition frequency
-                self.update_kpi_definition(upper_ticker, definition.get('name', kpi_name), {
-                    'frequency': new_frequency
-                }, verbose=False)
                 if verbose:
-                    print(f'✅ Stored value {value} for KPI "{kpi_name}" (ID: {kpi_id}) ({quarter_key}) - frequency: {current_frequency} → {new_frequency}')
+                    print(f'✅ Stored value {value} for KPI "{kpi_name}" (ID: {kpi_id}) ({quarter_key})')
             else:
                 if verbose:
                     print(f'✅ Updated value {value} for KPI "{kpi_name}" (ID: {kpi_id}) ({quarter_key})')

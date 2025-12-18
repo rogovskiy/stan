@@ -42,7 +42,9 @@ python generate_quarterly_summary.py --ticker AAPL
 
 ### Coding Principals
 
-- Don't assume the code should be backward compatible by default. Avoid creating multiple fallbacks unless specified or confirmed by the human.
+- **Avoid backward compatibility fallbacks**: This project is in the prototyping phase. Do not write fallback code to support previous versions of data structures or logic. Focus on the current implementation only.
+- **Keep files small and focused**: Maintain files under 600 lines. Each file should do one thing well. If a file grows beyond this limit, refactor by extracting functionality into separate modules.
+- **Split Firebase code by domain**: Organize Firebase/Firestore operations into separate service files by domain, not all in one file. Each service should handle one domain (e.g., KPI definitions, raw KPIs, quarterly data). See `kpi_definitions_service.py` and `raw_kpi_service.py` as examples of this pattern.
 
 ## Project Structure
 

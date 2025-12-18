@@ -88,16 +88,61 @@ Analyze what TYPE of measurement this is:
 
 2. **Consider the unit:**
    - Dollar amounts → usually `"revenue"` or `"cost"`
-   - Counts → usually `"headcount"`
-   - Percentages → usually `"margin"`
+   - Counts → usually `"count"` (users, clicks, impressions, employees, etc.)
+   - Percentages → Check what the percentage represents:
+     * Profit margins (Gross Margin, Operating Margin, Net Margin) → `"margin"` (ratio of profit to revenue)
+     * Growth rates, percentage changes, YoY changes → Use the underlying `measure_kind` of what's changing:
+       - "Year-over-year percentage change in revenue" → `measure_kind: "revenue"` (the underlying metric is revenue)
+       - "Year-over-year percentage change in paid clicks" → `measure_kind: "count"` (the underlying metric is clicks, which is a count)
+       - "Year-over-year percentage change in cost-per-click" → `measure_kind: "price"` or `"cost"` (the underlying metric is price/cost)
+       - "Year-over-year percentage change in impressions" → `measure_kind: "count"` (the underlying metric is impressions, which is a count)
+     * Other percentages → Determine based on what's being measured
    - Mass (ounces, tons) → usually `"production_volume"`
+   
+   **Important**: For percentage changes, `measure_kind` should represent WHAT is changing (the underlying metric), not that it's a change. The change aspect is captured in `value_type` (e.g., `"change_yoy"`) and `unit_family` (e.g., `"percentage"`).
 
 3. **Examples:**
-   - "Revenue" → `measure_kind: "revenue"`
-   - "Units Sold" → `measure_kind: "sales_volume"`
-   - "Capital Expenditures" → `measure_kind: "capex"`
-   - "Cost" → `measure_kind: "cost"`
-   - "Active Users" → `measure_kind: "count"`
+   - "Revenue" → `measure_kind: "revenue"`, `value_type: "quarterly"`
+   - "Gross Margin" → `measure_kind: "margin"` (profit margin ratio), `value_type: "quarterly"`
+   - "Year-over-year revenue growth" → `measure_kind: "revenue"` (underlying metric is revenue), `value_type: "change_yoy"`, `unit_family: "percentage"`
+   - "Year-over-year percentage change in paid clicks" → `measure_kind: "count"` (underlying metric is clicks), `value_type: "change_yoy"`, `unit_family: "percentage"`
+   - "Year-over-year percentage change in impressions" → `measure_kind: "count"` (underlying metric is impressions), `value_type: "change_yoy"`, `unit_family: "percentage"`
+   - "Year-over-year percentage change in cost-per-click" → `measure_kind: "price"` or `"cost"` (underlying metric is price/cost), `value_type: "change_yoy"`, `unit_family: "percentage"`
+   - "Units Sold" → `measure_kind: "sales_volume"`, `value_type: "quarterly"`
+   - "Capital Expenditures" → `measure_kind: "capex"`, `value_type: "quarterly"`
+   - "Cost" → `measure_kind: "cost"`, `value_type: "quarterly"`
+   - "Active Users" → `measure_kind: "count"`, `value_type: "quarterly"`
+
+**Important Example: Modeling Percentage Changes**
+
+For percentage changes and growth rates, `measure_kind` represents WHAT is changing (the underlying metric), not that it's a change. The change aspect is captured separately:
+
+Example: "Year-over-year percentage change in paid clicks, which represent engagement by users on Google search properties"
+
+**Correct modeling:**
+- `measure_kind`: `"count"` (the underlying metric is clicks, which is a count)
+- `value_type`: `"change_yoy"` (year-over-year change)
+- `unit_family`: `"percentage"` (percentage unit)
+- `subject`: `"Company"` (or appropriate subject)
+- `subject_axis`: `"company"` (or appropriate axis)
+
+**Why this approach:**
+- `measure_kind` stays stable across quarters (clicks are always "count")
+- `value_type` indicates whether it's a quarterly value or a change metric
+- This allows the same KPI definition to track both quarterly values and changes over time
+
+**More examples:**
+- "Year-over-year percentage change in impressions" → `measure_kind: "count"`, `value_type: "change_yoy"`, `unit_family: "percentage"` (impressions are a count)
+- "Year-over-year percentage change in revenue" → `measure_kind: "revenue"`, `value_type: "change_yoy"`, `unit_family: "percentage"` (revenue is revenue)
+- "Year-over-year percentage change in cost-per-click" → `measure_kind: "price"` or `"cost"`, `value_type: "change_yoy"`, `unit_family: "percentage"` (cost-per-click is a price/cost metric)
+
+**Note on qualifiers for count and growth rates:**
+- Count and growth rate metrics often have qualifiers that specify what was counted or what grew (e.g., `qualifiers: [{{ "key": "product", "value": "..." }}]` for product-specific counts)
+- Extract qualifiers when explicitly mentioned in the document (see Step 7 for qualifier rules)
+
+**Incorrect approach (DO NOT DO THIS):**
+- ❌ Using `measure_kind: "margin"` for percentage changes (margin is only for profit margin ratios)
+- ❌ Creating a separate `measure_kind` like "growth_rate" (use the underlying metric type instead)
 
 ### Step 2: Extract `subject` (Economic Actor Only)
 

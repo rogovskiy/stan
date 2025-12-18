@@ -69,14 +69,14 @@ This field defines the identity of the metric and must remain stable across quar
 
 #### `measure_kind` (required, string)
 Conceptual type of measurement. Examples for illustration purpose only:
-- `"revenue"`: Income from sales or services
+- `"revenue"`: Income from sales or services (including revenue growth rates and changes)
 - `"operating_income"`: Income from operations
 - `"production_volume"`: Amount of product produced
-- `"sales_volume"`: Volume of sales (units, quantities)
-- `"price"`: Unit price or average price
-- `"cost"`: Cost of goods or services
-- `"margin"`: Profit margin or percentage (including growth rates)
-- `"count"`: Number of employees, users, or subscribers
+- `"sales_volume"`: Volume of sales (units, quantities, including volume changes)
+- `"price"`: Unit price or average price (including price changes)
+- `"cost"`: Cost of goods or services (including cost changes)
+- `"margin"`: Profit margin ratios ONLY (Gross Margin, Operating Margin, Net Margin) - ratio of profit to revenue. NOT for growth rates or percentage changes.
+- `"count"`: Number of employees, users, subscribers, impressions, clicks, etc. (including count changes)
 - `"capex"`: Capital expenditure
 
 #### `subject` (required, string)

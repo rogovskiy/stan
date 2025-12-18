@@ -273,7 +273,8 @@ Examples:
                         print(f'\n⚠️  Quarter {quarter_key}: Extracted {kpis_count} KPIs, but unification failed')
                 else:
                     failed_quarters.append(quarter_key)
-                    print(f'\n❌ Quarter {quarter_key}: Extraction failed')
+                    error_msg = result['extraction'].get('error', 'Unknown error')
+                    print(f'\n❌ Quarter {quarter_key}: Extraction failed - {error_msg}')
                     
             except KeyboardInterrupt:
                 print('\n\n⚠️  Interrupted by user')

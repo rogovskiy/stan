@@ -6,7 +6,7 @@ Reusable service that combines extraction and unification of KPIs for a single q
 """
 
 from typing import Dict, List, Optional, Any
-from extract_kpis3 import process_single_quarter
+from extract_kpis3 import process_single_quarter, prepare_documents_for_llm
 from unify_kpis import unify_kpis
 
 
@@ -45,7 +45,7 @@ def extract_and_unify_kpis(
         }
     """
     result = {
-        'extraction': {'success': False, 'kpis': None},
+        'extraction': {'success': False, 'kpis': None, 'error': None},
         'unification': None
     }
     
@@ -54,6 +54,23 @@ def extract_and_unify_kpis(
         print(f'\n{"="*80}')
         print(f'Extracting KPIs for {ticker.upper()} {quarter_key}')
         print(f'{"="*80}')
+    
+    # Check if documents are available before attempting extraction
+    pdf_files, html_texts, documents = prepare_documents_for_llm(
+        ticker,
+        quarter_key,
+        verbose,
+        document_type
+    )
+    
+    if not pdf_files and not html_texts:
+        error_msg = f'No documents available for {ticker} {quarter_key}'
+        if document_type:
+            error_msg += f' (filtered to {document_type} documents)'
+        result['extraction']['error'] = error_msg
+        if verbose:
+            print(f'⚠️  {error_msg}')
+        return result
     
     raw_kpis = process_single_quarter(
         ticker,
@@ -64,8 +81,10 @@ def extract_and_unify_kpis(
     )
     
     if not raw_kpis:
+        error_msg = f'Failed to extract KPIs from documents for {ticker} {quarter_key}'
+        result['extraction']['error'] = error_msg
         if verbose:
-            print(f'⚠️  Extraction failed for {ticker} {quarter_key}')
+            print(f'⚠️  {error_msg}')
         return result
     
     result['extraction'] = {

@@ -15,7 +15,8 @@ from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-from firebase_cache import FirebaseCache
+from services.ir_document_service import IRDocumentService
+from services.prompt_fragment_service import PromptFragmentService
 from raw_kpi_service import RawKPIService
 from document_text_extractor import extract_text_from_html
 from pathlib import Path
@@ -39,8 +40,8 @@ SCHEMAS_DIR = SCRIPT_DIR
 
 def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = False, document_type_filter: Optional[str] = None) -> tuple[List[tuple[bytes, Dict]], List[tuple[str, Dict]], List[Dict]]:
     """Prepare documents for LLM processing"""
-    firebase = FirebaseCache()
-    documents = firebase.get_ir_documents_for_quarter(ticker, quarter_key)
+    ir_doc_service = IRDocumentService()
+    documents = ir_doc_service.get_ir_documents_for_quarter(ticker, quarter_key)
     
     if not documents:
         if verbose:
@@ -83,7 +84,7 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
         if not doc_id:
             continue
         
-        doc_content = firebase.get_ir_document_content(ticker, doc_id)
+        doc_content = ir_doc_service.get_ir_document_content(ticker, doc_id)
         if not doc_content:
             if verbose:
                 print(f'  ⚠️  Could not retrieve content for: {doc.get("title", "Unknown")}')
@@ -144,8 +145,8 @@ def extract_kpis(
         kpi_example_document = load_example_document('kpi_example.md', SCRIPT_DIR)
         
         # Fetch prompt fragments (user-defined prompt) from Firebase before loading template
-        firebase = FirebaseCache()
-        prompt_fragments = firebase.get_prompt_fragments(ticker)
+        prompt_fragment_service = PromptFragmentService()
+        prompt_fragments = prompt_fragment_service.get_prompt_fragments(ticker)
         user_defined_prompt = ''
         if prompt_fragments:
             if verbose:
@@ -277,11 +278,11 @@ def get_all_quarters_with_documents(ticker: str) -> List[str]:
         List of quarter keys sorted chronologically (earliest first)
     """
     try:
-        firebase = FirebaseCache()
+        ir_doc_service = IRDocumentService()
         upper_ticker = ticker.upper()
         
         # Get all IR documents
-        docs_ref = (firebase.db.collection('tickers')
+        docs_ref = (ir_doc_service.db.collection('tickers')
                    .document(upper_ticker)
                    .collection('ir_documents'))
         

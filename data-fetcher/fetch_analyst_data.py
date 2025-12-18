@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 load_dotenv('.env.local')
 
 from yfinance_service import YFinanceService
-from firebase_cache import FirebaseCache
+from services.analyst_data_service import AnalystDataService
+from services.ticker_metadata_service import TickerMetadataService
 
 
 def validate_firebase_config(verbose: bool = True):
@@ -55,7 +56,8 @@ class AnalystDataFetcher:
     """Fetches and caches analyst predictions/forecasts"""
     
     def __init__(self):
-        self.cache = FirebaseCache()
+        self.analyst_service = AnalystDataService()
+        self.ticker_metadata_service = TickerMetadataService()
         self.yfinance_service = YFinanceService()
     
     def fetch_for_ticker(self, ticker: str, verbose: bool = False) -> dict:
@@ -210,7 +212,7 @@ class AnalystDataFetcher:
         # Cache all analyst data together in one consolidated document
         if all_analyst_data:
             try:
-                self.cache.cache_analyst_data(ticker, all_analyst_data, fetched_at)
+                self.analyst_service.cache_analyst_data(ticker, all_analyst_data, fetched_at)
                 if verbose:
                     print(f'   ✓ Cached consolidated analyst data snapshot')
             except Exception as e:
@@ -273,7 +275,7 @@ class AnalystDataFetcher:
         """
         try:
             # Get all ticker documents
-            tickers_ref = self.cache.db.collection('tickers')
+            tickers_ref = self.ticker_metadata_service.db.collection('tickers')
             docs = tickers_ref.stream()
             
             tickers = [doc.id for doc in docs]

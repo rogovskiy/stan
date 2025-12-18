@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from io import BytesIO
 from bs4 import BeautifulSoup
 
-from firebase_cache import FirebaseCache
+from services.ir_document_service import IRDocumentService
 
 
 def extract_text_from_pdf(content: bytes) -> str:
@@ -69,10 +69,9 @@ def get_document_text(ticker: str, document_id: str) -> Optional[str]:
         Extracted text, or None if document not found or extraction failed
     """
     try:
-        firebase = FirebaseCache()
-        
         # Get document metadata to determine file type
-        doc_ref = (firebase.db.collection('tickers')
+        ir_doc_service = IRDocumentService()
+        doc_ref = (ir_doc_service.db.collection('tickers')
                   .document(ticker.upper())
                   .collection('ir_documents')
                   .document(document_id))
@@ -93,7 +92,7 @@ def get_document_text(ticker: str, document_id: str) -> Optional[str]:
             file_type = None  # Will determine from content
         
         # Get document content
-        content = firebase.get_ir_document_content(ticker, document_id)
+        content = ir_doc_service.get_ir_document_content(ticker, document_id)
         if not content:
             return None
         
@@ -127,8 +126,8 @@ def get_quarter_documents_text(ticker: str, quarter_key: str, max_chars_per_doc:
         Dictionary mapping document_id to extracted text
     """
     try:
-        firebase = FirebaseCache()
-        documents = firebase.get_ir_documents_for_quarter(ticker, quarter_key)
+        ir_doc_service = IRDocumentService()
+        documents = ir_doc_service.get_ir_documents_for_quarter(ticker, quarter_key)
         
         doc_texts = {}
         for doc in documents:

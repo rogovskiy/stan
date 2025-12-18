@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 from raw_kpi_service import RawKPIService
 from kpi_definitions_service import KPIDefinitionsService
-from firebase_cache import FirebaseCache
+from services.quarterly_analysis_service import QuarterlyAnalysisService
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -295,7 +295,7 @@ def unify_kpis(ticker: str, quarter_key: str, verbose: bool = False) -> Dict[str
         # Initialize services
         raw_kpi_service = RawKPIService()
         kpi_defs_service = KPIDefinitionsService()
-        firebase = FirebaseCache()
+        quarterly_analysis_service = QuarterlyAnalysisService()
         
         # Load raw KPIs
         if verbose:
@@ -491,13 +491,14 @@ def unify_kpis(ticker: str, quarter_key: str, verbose: bool = False) -> Dict[str
             print(f'\n💾 Storing unified KPIs in quarterly_analysis...')
         
         # Get existing quarterly_analysis or create new
-        existing_analysis = firebase.get_quarterly_analysis(upper_ticker, quarter_key)
+        quarterly_analysis_service = QuarterlyAnalysisService()
+        existing_analysis = quarterly_analysis_service.get_quarterly_analysis(upper_ticker, quarter_key)
         
         if existing_analysis:
             # Update existing document
             existing_analysis['custom_kpis'] = unified_kpis
             existing_analysis['unified_at'] = datetime.now().isoformat()
-            firebase.store_quarterly_analysis(upper_ticker, quarter_key, existing_analysis, verbose=verbose)
+            quarterly_analysis_service.store_quarterly_analysis(upper_ticker, quarter_key, existing_analysis, verbose=verbose)
         else:
             # Create new document
             analysis_data = {
@@ -507,7 +508,7 @@ def unify_kpis(ticker: str, quarter_key: str, verbose: bool = False) -> Dict[str
                 'unified_at': datetime.now().isoformat(),
                 'created_at': datetime.now().isoformat()
             }
-            firebase.store_quarterly_analysis(upper_ticker, quarter_key, analysis_data, verbose=verbose)
+            quarterly_analysis_service.store_quarterly_analysis(upper_ticker, quarter_key, analysis_data, verbose=verbose)
         
         if verbose:
             print(f'✅ Stored quarterly analysis for {upper_ticker} {quarter_key}')

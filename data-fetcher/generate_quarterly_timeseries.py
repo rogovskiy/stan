@@ -18,7 +18,9 @@ from dotenv import load_dotenv
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
 load_dotenv(env_path)
 
-from firebase_cache import FirebaseCache
+from services.financial_data_service import FinancialDataService
+from services.timeseries_service import TimeseriesService
+from services.price_data_service import PriceDataService
 
 
 def validate_firebase_config():
@@ -51,7 +53,9 @@ class QuarterlyTimeSeriesGenerator:
     """Generates time series data from quarterly financial cache"""
     
     def __init__(self):
-        self.cache = FirebaseCache()
+        self.financial_service = FinancialDataService()
+        self.timeseries_service = TimeseriesService()
+        self.price_service = PriceDataService()
     
     def generate_quarterly_timeseries(self, ticker: str, save_to_cache: bool = True, verbose: bool = False) -> Dict[str, Any]:
         """Generate quarterly time series for EPS, revenue, and dividends"""
@@ -61,7 +65,7 @@ class QuarterlyTimeSeriesGenerator:
         
         try:
             # Get all available quarterly financial data (no date restrictions)
-            quarterly_data = self.cache.get_all_financial_data(ticker)
+            quarterly_data = self.financial_service.get_all_financial_data(ticker)
             
             if not quarterly_data:
                 print(f'❌ No quarterly data found for {ticker}')
@@ -90,7 +94,7 @@ class QuarterlyTimeSeriesGenerator:
             
             # Save to cache if requested
             if save_to_cache:
-                self.cache.cache_quarterly_timeseries(ticker, timeseries)
+                self.timeseries_service.cache_quarterly_timeseries(ticker, timeseries)
                 print(f'✅ Cached quarterly time series in tickers/{ticker.upper()}/timeseries/quarterly')
             
             if verbose:
@@ -107,7 +111,7 @@ class QuarterlyTimeSeriesGenerator:
         """Extract and organize time series data from unified quarterly records"""
         
         # Load split history for split-adjusted EPS calculation
-        splits = self.cache.get_split_history(ticker)
+        splits = self.price_service.get_split_history(ticker)
         sorted_splits = sorted(splits, key=lambda x: x['date']) if splits else []
         
         if verbose and splits:

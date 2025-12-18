@@ -17,7 +17,8 @@ from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-from firebase_cache import FirebaseCache
+from services.ir_document_service import IRDocumentService
+from services.quarterly_analysis_service import QuarterlyAnalysisService
 from document_text_extractor import extract_text_from_html
 from pathlib import Path
 
@@ -137,8 +138,8 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
     Returns:
         Tuple of (pdf_files, html_texts, documents)
     """
-    firebase = FirebaseCache()
-    documents = firebase.get_ir_documents_for_quarter(ticker, quarter_key)
+    ir_doc_service = IRDocumentService()
+    documents = ir_doc_service.get_ir_documents_for_quarter(ticker, quarter_key)
     
     if not documents:
         if verbose:
@@ -177,7 +178,7 @@ def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = Fal
         if not doc_id:
             continue
         
-        doc_content = firebase.get_ir_document_content(ticker, doc_id)
+        doc_content = ir_doc_service.get_ir_document_content(ticker, doc_id)
         if not doc_content:
             if verbose:
                 print(f'  ⚠️  Could not retrieve content for: {doc.get("title", "Unknown")}')
@@ -287,11 +288,11 @@ def get_all_quarters_with_documents(ticker: str) -> List[str]:
         List of quarter keys sorted chronologically (earliest first)
     """
     try:
-        firebase = FirebaseCache()
+        ir_doc_service = IRDocumentService()
         upper_ticker = ticker.upper()
         
         # Get all IR documents
-        docs_ref = (firebase.db.collection('tickers')
+        docs_ref = (ir_doc_service.db.collection('tickers')
                    .document(upper_ticker)
                    .collection('ir_documents'))
         
@@ -509,7 +510,8 @@ Examples:
     args = parser.parse_args()
     
     try:
-        firebase = FirebaseCache()
+        ir_doc_service = IRDocumentService()
+        quarterly_analysis_service = QuarterlyAnalysisService()
         
         if args.all_quarters:
             # Process all quarters iteratively
@@ -548,14 +550,14 @@ Examples:
                     prev_quarter_idx = i - 2
                     if prev_quarter_idx >= 0:
                         prev_quarter_key = all_quarters[prev_quarter_idx]
-                        stored_prev = firebase.get_quarterly_analysis(args.ticker.upper(), prev_quarter_key)
+                        stored_prev = quarterly_analysis_service.get_quarterly_analysis(args.ticker.upper(), prev_quarter_key)
                         if stored_prev:
                             previous_quarter_data = stored_prev
                             if args.verbose:
                                 print(f'   Loaded previous quarter ({prev_quarter_key}) from storage')
                 
                 # Load extracted KPIs for this quarter if available
-                quarter_analysis = firebase.get_quarterly_analysis(args.ticker.upper(), quarter_key)
+                quarter_analysis = quarterly_analysis_service.get_quarterly_analysis(args.ticker.upper(), quarter_key)
                 extracted_kpis = quarter_analysis.get('custom_kpis', []) if quarter_analysis else None
                 
                 # Generate summary
@@ -586,7 +588,7 @@ Examples:
                     # Store to Firebase unless --no-store
                     if not args.no_store:
                         try:
-                            firebase.store_quarterly_analysis(args.ticker.upper(), quarter_key, summary_data, args.verbose)
+                            quarterly_analysis_service.store_quarterly_analysis(args.ticker.upper(), quarter_key, summary_data, args.verbose)
                             print(f'\n✅ Generated and stored summary for {quarter_key}')
                         except Exception as e:
                             print(f'⚠️  Error storing {quarter_key}: {e}')
@@ -620,7 +622,7 @@ Examples:
                 sys.exit(1)
             
             # Load extracted KPIs if available
-            quarter_analysis = firebase.get_quarterly_analysis(args.ticker.upper(), args.quarter)
+            quarter_analysis = quarterly_analysis_service.get_quarterly_analysis(args.ticker.upper(), args.quarter)
             extracted_kpis = quarter_analysis.get('custom_kpis', []) if quarter_analysis else None
             
             # Load previous quarter data
@@ -636,7 +638,7 @@ Examples:
             prev_quarter_key = f"{prev_year}Q{prev_quarter}"
             
             previous_quarter_data = None
-            prev_analysis = firebase.get_quarterly_analysis(args.ticker.upper(), prev_quarter_key)
+            prev_analysis = quarterly_analysis_service.get_quarterly_analysis(args.ticker.upper(), prev_quarter_key)
             if prev_analysis:
                 previous_quarter_data = prev_analysis
             
@@ -667,7 +669,7 @@ Examples:
             
             # Store to Firebase unless --no-store
             if not args.no_store:
-                firebase.store_quarterly_analysis(args.ticker.upper(), args.quarter, summary_data, args.verbose)
+                quarterly_analysis_service.store_quarterly_analysis(args.ticker.upper(), args.quarter, summary_data, args.verbose)
                 print('\n✅ Quarterly summary generated and stored')
                 print('\nSummary preview:')
                 print('='*80)

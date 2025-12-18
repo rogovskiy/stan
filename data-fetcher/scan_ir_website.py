@@ -20,7 +20,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-from firebase_cache import FirebaseCache
+from services.ir_url_service import IRURLService
+from services.ir_document_service import IRDocumentService
 import yfinance as yf
 import google.generativeai as genai  # Only needed for HTML parsing with LLM
 
@@ -47,13 +48,13 @@ def load_ir_urls() -> Dict[str, List[str]]:
         print(f'Error parsing {IR_URLS_FILE}: {e}')
         return {}
 
-def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]], firebase: Optional[FirebaseCache] = None) -> List[str]:
+def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]], firebase: Optional[IRURLService] = None) -> List[str]:
     """Get list of IR URLs for a ticker from both JSON config and Firebase.
     
     Args:
         ticker: Stock ticker symbol
         ir_urls: Dictionary of ticker -> list of URLs mapping from JSON
-        firebase: Optional FirebaseCache instance to read from Firebase
+        firebase: Optional IRURLService instance to read from Firebase
         
     Returns:
         List of unique URLs for the ticker (combines JSON and Firebase sources)
@@ -778,10 +779,11 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     ir_urls = load_ir_urls()
     
     # Initialize Firebase
-    firebase = FirebaseCache()
+    ir_url_service = IRURLService()
+    ir_doc_service = IRDocumentService()
     
     # Get all URLs for this ticker (from both JSON and Firebase)
-    ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls, firebase)
+    ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls, ir_url_service)
     
     if not ticker_urls:
         print(f'Error: No IR URL configured for {ticker}')
@@ -820,7 +822,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
         
         # Update last_scanned timestamp in Firebase
         try:
-            firebase.update_ir_url_last_scanned(ticker, ir_url)
+            ir_url_service.update_ir_url_last_scanned(ticker, ir_url)
         except Exception as e:
             if verbose:
                 print(f'Warning: Could not update last_scanned for {ir_url}: {e}')
@@ -928,7 +930,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
             document_id = create_document_id(quarter_key, doc_type, release_date, release['url'])
             
             # Check if document already exists (by URL, which is the most reliable check)
-            existing_docs = firebase.get_ir_documents_for_quarter(ticker, quarter_key)
+            existing_docs = ir_doc_service.get_ir_documents_for_quarter(ticker, quarter_key)
             existing_urls = {doc.get('url') for doc in existing_docs if doc.get('url')}
             
             if release['url'] in existing_urls:
@@ -952,7 +954,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                 'document_type': doc_type
             }
             
-            firebase.store_ir_document(ticker, document_id, document_data, content, file_ext, verbose)
+            ir_doc_service.store_ir_document(ticker, document_id, document_data, content, file_ext, verbose)
             processed_count += 1
             
             if verbose:
@@ -1024,7 +1026,8 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
 
 def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optional[str] = None, verbose: bool = False) -> None:
     """List IR documents for a ticker, optionally filtered by year or quarter"""
-    firebase = FirebaseCache()
+    ir_url_service = IRURLService()
+    ir_doc_service = IRDocumentService()
     
     ticker_upper = ticker.upper()
     
@@ -1034,7 +1037,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             print(f'Error: Invalid quarter format. Use YYYYQN (e.g., 2024Q3)')
             return
         
-        documents = firebase.get_ir_documents_for_quarter(ticker_upper, quarter_key)
+        documents = ir_doc_service.get_ir_documents_for_quarter(ticker_upper, quarter_key)
         
         if not documents:
             print(f'No documents found for {ticker_upper} {quarter_key}')
@@ -1062,7 +1065,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         all_docs = []
         
         for qk in quarters:
-            docs = firebase.get_ir_documents_for_quarter(ticker_upper, qk)
+            docs = ir_doc_service.get_ir_documents_for_quarter(ticker_upper, qk)
             all_docs.extend(docs)
         
         if not all_docs:
@@ -1085,7 +1088,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         # List all documents for ticker (get all quarters)
         # We need to query Firestore to get all quarters
         try:
-            docs_ref = (firebase.db.collection('tickers')
+            docs_ref = (ir_doc_service.db.collection('tickers')
                        .document(ticker_upper)
                        .collection('ir_documents'))
             

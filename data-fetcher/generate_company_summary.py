@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import yfinance as yf
 
-from firebase_cache import FirebaseCache
+from services.company_summary_service import CompanySummaryService
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
@@ -212,8 +212,8 @@ Examples:
         
         # Store to Firebase unless --no-store is specified
         if not args.no_store:
-            firebase = FirebaseCache()
-            firebase.store_company_summary(args.ticker.upper(), summary_data)
+            company_summary_service = CompanySummaryService()
+            company_summary_service.store_company_summary(args.ticker.upper(), summary_data)
             print(f'\n✅ Company summary stored for {args.ticker}')
         else:
             print('\n✅ Company summary generated (not stored):')

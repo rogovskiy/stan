@@ -113,3 +113,6 @@ class QuarterlyAnalysisService(FirebaseBaseService):
             print(f'Error getting all quarterly analyses for {ticker}: {error}')
             return []
 
+
+
+

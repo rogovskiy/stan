@@ -137,3 +137,6 @@ class IRDocumentService(FirebaseBaseService):
             print(f'Error getting document content for {ticker} {document_id}: {error}')
             return None
 
+
+
+

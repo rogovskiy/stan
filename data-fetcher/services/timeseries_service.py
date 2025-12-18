@@ -68,3 +68,6 @@ class TimeseriesService(FirebaseBaseService):
             print(f'Error caching KPI timeseries for {ticker}: {error}')
             raise error
 
+
+
+

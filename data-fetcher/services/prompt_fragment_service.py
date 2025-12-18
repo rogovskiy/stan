@@ -47,3 +47,6 @@ class PromptFragmentService(FirebaseBaseService):
             print(f'Error getting prompt fragments for {ticker}: {error}')
             return []
 
+
+
+

@@ -63,3 +63,6 @@ class CompanySummaryService(FirebaseBaseService):
             print(f'Error getting company summary for {ticker}: {error}')
             return None
 
+
+
+

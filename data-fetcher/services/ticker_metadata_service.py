@@ -55,3 +55,6 @@ class TickerMetadataService(FirebaseBaseService):
             print(f'Error getting metadata for {ticker}: {error}')
             return None
 
+
+
+

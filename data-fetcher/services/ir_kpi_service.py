@@ -116,3 +116,6 @@ class IRKPIService(FirebaseBaseService):
             print(f'Error getting existing quarter KPIs for {ticker} {quarter_key}: {error}')
             return None
 
+
+
+

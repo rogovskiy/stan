@@ -165,3 +165,6 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
 }
 
 
+
+
+

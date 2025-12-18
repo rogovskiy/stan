@@ -49,39 +49,42 @@ def load_ir_urls() -> Dict[str, List[str]]:
         return {}
 
 def get_ir_urls_for_ticker(ticker: str, ir_urls: Dict[str, List[str]], firebase: Optional[IRURLService] = None) -> List[str]:
-    """Get list of IR URLs for a ticker from both JSON config and Firebase.
+    """Get list of IR URLs for a ticker. Checks Firebase first, then falls back to JSON config.
     
     Args:
         ticker: Stock ticker symbol
-        ir_urls: Dictionary of ticker -> list of URLs mapping from JSON
-        firebase: Optional IRURLService instance to read from Firebase
+        ir_urls: Dictionary of ticker -> list of URLs mapping from JSON (fallback)
+        firebase: Optional IRURLService instance to read from Firebase (priority)
         
     Returns:
-        List of unique URLs for the ticker (combines JSON and Firebase sources)
+        List of URLs for the ticker (from Firebase if available, otherwise from JSON)
     """
     ticker_upper = ticker.upper()
-    url_set = set()
     
-    # Get URLs from JSON config
-    if ticker_upper in ir_urls:
-        urls = ir_urls[ticker_upper]
-        if isinstance(urls, list):
-            url_set.update(urls)
-        else:
-            print(f'Warning: Invalid URL format for {ticker_upper} in JSON, expected list. Got: {type(urls).__name__}')
-    
-    # Get URLs from Firebase
+    # First, try to get URLs from Firebase (priority)
     if firebase:
         try:
             firebase_urls = firebase.get_ir_urls(ticker)
-            for url_data in firebase_urls:
-                url = url_data.get('url')
-                if url:
-                    url_set.add(url)
+            if firebase_urls:
+                urls = []
+                for url_data in firebase_urls:
+                    url = url_data.get('url')
+                    if url:
+                        urls.append(url)
+                if urls:
+                    return urls
         except Exception as e:
             print(f'Warning: Could not get IR URLs from Firebase for {ticker}: {e}')
     
-    return list(url_set)
+    # Fallback to JSON config if Firebase has no URLs
+    if ticker_upper in ir_urls:
+        urls = ir_urls[ticker_upper]
+        if isinstance(urls, list):
+            return urls
+        else:
+            print(f'Warning: Invalid URL format for {ticker_upper} in JSON, expected list. Got: {type(urls).__name__}')
+    
+    return []
 
 def get_fiscal_year_end_month(ticker: str) -> int:
     """Get fiscal year-end month for a ticker"""
@@ -253,7 +256,6 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
             if verbose:
                 print('Using simple HTTP request (page may not be fully rendered)')
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate',
@@ -354,16 +356,36 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
                 print('No financial links found after filtering')
             return []
         
+        # Process links in batches of 30 to avoid token limits
+        batch_size = 30
+        all_releases = []
+        
+        # Split links into batches
+        num_batches = (len(links_data) + batch_size - 1) // batch_size
+        
         if verbose:
-            print(f'Sending {len(links_data)} candidate links to Gemini for analysis...')
+            print(f'Sending {len(links_data)} candidate links to Gemini for analysis in {num_batches} batch(es) of up to {batch_size} links each...')
         
-        # Prepare prompt for Gemini
-        links_summary = '\n'.join([
-            f"{i+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
-            for i, link in enumerate(links_data)
-        ])
+        # Use model from env var or default to gemini-2.0-flash
+        model_name = get_gemini_model()
+        model = genai.GenerativeModel(model_name)
         
-        prompt = f"""You are analyzing the investor relations page for {ticker}. 
+        # Process each batch
+        for batch_num in range(num_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(links_data))
+            batch_links = links_data[start_idx:end_idx]
+            
+            if verbose:
+                print(f'\nProcessing batch {batch_num + 1}/{num_batches} (links {start_idx + 1}-{end_idx})...')
+            
+            # Prepare prompt for this batch
+            links_summary = '\n'.join([
+                f"{i+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
+                for i, link in enumerate(batch_links)
+            ])
+            
+            prompt = f"""You are analyzing the investor relations page for {ticker}. 
 
 Below are links found on the page. Identify which links are relevant financial documents:
 
@@ -416,73 +438,106 @@ IMPORTANT:
 - If no date is found, use null for release_date
 - Return ALL relevant links found, not just a subset
 """
-        
-        # Call Gemini
-        if verbose:
-            print('Calling Gemini to identify relevant filings...')
-            print('\n' + '='*80)
-            print('PROMPT SENT TO GEMINI:')
-            print('='*80)
-            print(prompt)
-            print('='*80 + '\n')
-        
-        # Use model from env var or default to gemini-2.0-flash
-        model_name = get_gemini_model()
-        
-        # Combine system instruction with user prompt for Gemini
-        system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
-        full_prompt = f"{system_instruction}\n\n{prompt}"
-        
-        # Configure and call Gemini
-        generation_config = genai.types.GenerationConfig(
-            temperature=0.2,
-            max_output_tokens=8000,
-        )
-        
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                full_prompt,
-                generation_config=generation_config
+            
+            # Combine system instruction with user prompt for Gemini
+            system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
+            full_prompt = f"{system_instruction}\n\n{prompt}"
+            
+            # Configure Gemini
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=8000,
             )
             
-            # Extract text from response
-            try:
-                result_text = response.text.strip()
-            except (ValueError, AttributeError) as text_error:
-                # Response might be blocked or have no text
-                if verbose:
-                    print(f'Warning: Could not extract text from Gemini response: {text_error}')
-                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                        print(f'Prompt feedback: {response.prompt_feedback}')
-                return []
+            # Retry logic for JSON parsing errors (up to 3 times)
+            max_retries = 3
+            batch_releases = []
             
-            if not result_text:
-                if verbose:
-                    print('Warning: Gemini response was empty')
-                return []
-                
-        except Exception as e:
-            print(f'Error calling Gemini API: {e}')
-            if verbose:
-                import traceback
-                traceback.print_exc()
-            return []
+            for attempt in range(max_retries):
+                try:
+                    if verbose and attempt > 0:
+                        print(f'  Retry attempt {attempt + 1}/{max_retries} for batch {batch_num + 1}...')
+                    
+                    # Call Gemini
+                    if verbose and attempt == 0:
+                        print('  Calling Gemini to identify relevant filings...')
+                    
+                    response = model.generate_content(
+                        full_prompt,
+                        generation_config=generation_config
+                    )
+                    
+                    # Extract text from response
+                    try:
+                        result_text = response.text.strip()
+                    except (ValueError, AttributeError) as text_error:
+                        # Response might be blocked or have no text
+                        if verbose:
+                            print(f'  Warning: Could not extract text from Gemini response: {text_error}')
+                            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                                print(f'  Prompt feedback: {response.prompt_feedback}')
+                        if attempt == max_retries - 1:
+                            break  # Give up after max retries
+                        continue
+                    
+                    if not result_text:
+                        if verbose:
+                            print('  Warning: Gemini response was empty')
+                        if attempt == max_retries - 1:
+                            break
+                        continue
+                    
+                    if verbose and attempt == 0:
+                        print('  Parsing Gemini response...')
+                    
+                    # Extract JSON from response
+                    result_text_cleaned = extract_json_from_llm_response(result_text)
+                    batch_releases = json.loads(result_text_cleaned)
+                    
+                    # Successfully parsed JSON, break out of retry loop
+                    if verbose:
+                        print(f'  ✅ Successfully parsed {len(batch_releases)} documents from batch {batch_num + 1}')
+                    break
+                    
+                except json.JSONDecodeError as json_error:
+                    if verbose:
+                        print(f'  ⚠️  JSON parsing error (attempt {attempt + 1}/{max_retries}): {json_error}')
+                        if attempt < max_retries - 1:
+                            print(f'  Retrying...')
+                        else:
+                            print(f'  Failed to parse JSON after {max_retries} attempts. Skipping batch.')
+                            if verbose:
+                                response_preview = result_text[:500] if 'result_text' in locals() else "N/A"
+                                print(f'  Response preview: {response_preview}')
+                    if attempt == max_retries - 1:
+                        # Last attempt failed, skip this batch
+                        batch_releases = []
+                        break
+                    continue
+                    
+                except Exception as e:
+                    print(f'  Error calling Gemini API for batch {batch_num + 1}: {e}')
+                    if verbose:
+                        import traceback
+                        traceback.print_exc()
+                    if attempt == max_retries - 1:
+                        break
+                    continue
+            
+            # Adjust link_index to match global index (not batch index)
+            for release in batch_releases:
+                link_index = release.get('link_index')
+                if link_index:
+                    # Convert batch-relative index to global index
+                    release['link_index'] = start_idx + link_index
+            
+            all_releases.extend(batch_releases)
         
-        if verbose:
-            print('='*80)
-            print('LLM RESPONSE:')
-            print('='*80)
-            print(result_text)
-            print('='*80 + '\n')
-        
-        # Create mappings for URL preservation
+        # Create mappings for URL preservation (using all links_data)
         url_to_original_link = {link['url']: link for link in links_data}
         index_to_original_link = {i+1: link for i, link in enumerate(links_data)}  # 1-indexed as shown in prompt
         
-        # Extract JSON from response
-        result_text = extract_json_from_llm_response(result_text)
-        releases = json.loads(result_text)
+        releases = all_releases
         
         # Filter out Consolidated Financial Statements
         original_count = len(releases)
@@ -703,7 +758,6 @@ def download_document(url: str) -> Optional[bytes]:
     """Download document from URL"""
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
         response = requests.get(url, timeout=60, allow_redirects=True, headers=headers)
@@ -778,16 +832,15 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     ir_urls = load_ir_urls()
     
-    # Initialize Firebase
+    # Initialize Firebase service to get URLs from Firebase
     ir_url_service = IRURLService()
-    ir_doc_service = IRDocumentService()
     
-    # Get all URLs for this ticker (from both JSON and Firebase)
+    # Get all URLs for this ticker (from Firebase first, then JSON fallback)
     ticker_urls = get_ir_urls_for_ticker(ticker, ir_urls, ir_url_service)
     
     if not ticker_urls:
         print(f'Error: No IR URL configured for {ticker}')
-        print(f'Add it to {IR_URLS_FILE}')
+        print(f'Add it to {IR_URLS_FILE} or Firebase (tickers/{ticker}/ir_urls)')
         return
     
     if len(ticker_urls) == 1:
@@ -852,6 +905,9 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     print(f'Found {len(releases)} unique potential releases')
     
+    # Initialize Firebase services
+    ir_doc_service = IRDocumentService()
+    
     processed_count = 0
     skipped_count = 0
     
@@ -880,18 +936,67 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                 else:
                     file_ext = 'html'
             
-            # Only extract text if needed (for finding PDF links in HTML pages)
-            text = None
+            # Heuristic: If HTML page, check for downloadable PDF links and use them instead
             if file_ext == 'html':
-                text = extract_text_from_html(content)
-                # Look for PDF links to download
                 if verbose:
-                    print(f'  HTML page detected, searching for PDF links...')
-                pdf_links = find_pdf_links_in_html(text, release['url'])
+                    print(f'  HTML page detected, searching for downloadable PDF links...')
+                
+                # Parse HTML to find PDF links
+                soup = BeautifulSoup(content, 'html.parser')
+                pdf_links = []
+                
+                # Look for links that point to PDFs
+                for link in soup.find_all('a', href=True):
+                    href = link.get('href', '')
+                    if not href:
+                        continue
+                    
+                    # Make absolute URL
+                    full_url = urljoin(release['url'], href)
+                    
+                    # Check if it's a PDF link
+                    if full_url.lower().endswith('.pdf') or 'pdf' in href.lower():
+                        link_text = link.get_text(strip=True).lower()
+                        # Look for download-related keywords
+                        download_keywords = ['download', 'pdf', 'view', 'get', 'file']
+                        if any(keyword in link_text for keyword in download_keywords) or full_url.lower().endswith('.pdf'):
+                            if full_url not in pdf_links:
+                                pdf_links.append(full_url)
+                
+                # If we found PDF links, download the first one (or best match) instead of HTML
                 if pdf_links:
                     if verbose:
-                        print(f'  Found {len(pdf_links)} PDF link(s) in the page')
-                    release['pdf_links'] = pdf_links
+                        print(f'  Found {len(pdf_links)} downloadable PDF link(s) on the page')
+                        print(f'  Using PDF link instead of HTML page: {pdf_links[0][:80]}...')
+                    
+                    # Try to download the PDF (prefer the first one, or one with "download" in text)
+                    pdf_url = pdf_links[0]
+                    for link_url in pdf_links:
+                        # Prefer links with "download" in the URL or text
+                        if 'download' in link_url.lower():
+                            pdf_url = link_url
+                            break
+                    
+                    # Download the PDF
+                    pdf_content = download_document(pdf_url)
+                    if pdf_content and pdf_content.startswith(b'%PDF'):
+                        # Successfully downloaded PDF, use it instead of HTML
+                        content = pdf_content
+                        file_ext = 'pdf'
+                        release['url'] = pdf_url  # Update URL to the PDF
+                        if verbose:
+                            print(f'  ✅ Successfully downloaded PDF ({len(pdf_content) / (1024 * 1024):.2f} MB)')
+                    else:
+                        if verbose:
+                            print(f'  ⚠️  Could not download PDF from {pdf_url}, using HTML page instead')
+                        # Fall back to HTML
+                        text = extract_text_from_html(content)
+                        release['pdf_links'] = pdf_links
+                else:
+                    # No PDF links found, extract text for potential later use
+                    text = extract_text_from_html(content)
+                    if verbose:
+                        print(f'  No downloadable PDF links found on HTML page')
             
             # Use fiscal year/quarter and release date directly from LLM response (no date math needed)
             fiscal_year = release.get('fiscal_year')
@@ -1002,7 +1107,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                             'parent_release_url': release['url']  # Link back to main release
                         }
                         
-                        firebase.store_ir_document(ticker, pdf_document_id, pdf_document_data, pdf_content, 'pdf', verbose)
+                        ir_doc_service.store_ir_document(ticker, pdf_document_id, pdf_document_data, pdf_content, 'pdf', verbose)
                         processed_count += 1
                         
                         if verbose:
@@ -1026,7 +1131,6 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
 
 def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optional[str] = None, verbose: bool = False) -> None:
     """List IR documents for a ticker, optionally filtered by year or quarter"""
-    ir_url_service = IRURLService()
     ir_doc_service = IRDocumentService()
     
     ticker_upper = ticker.upper()
@@ -1042,9 +1146,6 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         if not documents:
             print(f'No documents found for {ticker_upper} {quarter_key}')
             return
-        
-        # Sort by release_date in reverse order (most recent first)
-        documents = sorted(documents, key=lambda x: x.get('release_date') or '', reverse=True)
         
         print(f'\nDocuments for {ticker_upper} {quarter_key}:')
         print('=' * 80)
@@ -1074,8 +1175,7 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         
         print(f'\nDocuments for {ticker_upper} year {year}:')
         print('=' * 80)
-        # Sort by release_date in reverse order (most recent first), then by quarter_key
-        for doc in sorted(all_docs, key=lambda x: (x.get('release_date') or '', x.get('quarter_key', '')), reverse=True):
+        for doc in sorted(all_docs, key=lambda x: (x.get('quarter_key', ''), x.get('release_date') or '')):
             qk = doc.get('quarter_key', 'N/A')
             print(f"  [{qk}] {doc.get('title', 'N/A')}")
             print(f"      Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
@@ -1112,13 +1212,10 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             
             print(f'\nAll documents for {ticker_upper}:')
             print('=' * 80)
-            # Sort quarters in reverse order (most recent first)
-            for qk in sorted(by_quarter.keys(), reverse=True):
+            for qk in sorted(by_quarter.keys()):
                 docs = by_quarter[qk]
-                # Sort documents within quarter by release_date in reverse order (most recent first)
-                docs = sorted(docs, key=lambda x: x.get('release_date') or '', reverse=True)
                 print(f'\n{qk} ({len(docs)} document(s)):')
-                for doc in docs:
+                for doc in sorted(docs, key=lambda x: x.get('release_date') or ''):
                     print(f"  - {doc.get('title', 'N/A')}")
                     print(f"    Type: {doc.get('document_type', 'N/A')}, Date: {doc.get('release_date', 'N/A')}")
                     if verbose:

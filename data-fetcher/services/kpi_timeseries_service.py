@@ -189,7 +189,8 @@ class KPITimeseriesService(FirebaseBaseService):
                     'coverage_count': quarters_with_data_count,
                     'total_quarters': total_quarters,
                     'max_frequency': 1,
-                    'values': values
+                    'values': values,
+                    'semantic_interpretation': definition.get('semantic_interpretation')
                 })
             
             # Sort by coverage (highest first), then by name

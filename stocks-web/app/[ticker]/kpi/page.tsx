@@ -17,6 +17,14 @@ interface KPITimeseriesValue {
   source?: string | null;
 }
 
+interface SemanticInterpretation {
+  measure_kind?: string;
+  subject?: string;
+  subject_axis?: string;
+  unit_family?: string;
+  qualifiers?: Array<{ key: string; value: string }>;
+}
+
 interface KPITimeseries {
   name: string;
   group: string;
@@ -26,6 +34,7 @@ interface KPITimeseries {
   total_quarters: number;
   max_frequency: number;
   values: KPITimeseriesValue[];
+  semantic_interpretation?: SemanticInterpretation;
 }
 
 interface KPITimeseriesResponse {
@@ -45,6 +54,65 @@ interface KPITimeseriesResponse {
 
 type DisplayMode = 'separate' | 'combined-bars' | 'stacked-area' | 'stacked-bars';
 type AggregationMode = 'quarterly' | 'annual';
+
+/**
+ * Derive group name from semantic_interpretation.
+ * Only groups KPIs that have the same measure_kind and a subject_axis.
+ * Returns null if grouping should not be applied (fallback to 'Other').
+ */
+function deriveGroupFromSemantic(semantic: SemanticInterpretation | undefined): string | null {
+  console.log('[deriveGroupFromSemantic] Called with:', semantic);
+  
+  if (!semantic) {
+    console.log('[deriveGroupFromSemantic] No semantic provided, returning null');
+    return null;
+  }
+  
+  const measureKind = semantic.measure_kind;
+  const subjectAxis = semantic.subject_axis;
+  
+  console.log('[deriveGroupFromSemantic] Input:', { measureKind, subjectAxis, fullSemantic: semantic });
+  
+  // Only group if we have both measure_kind and subject_axis
+  if (!measureKind || !subjectAxis) {
+    console.log('[deriveGroupFromSemantic] Missing measure_kind or subject_axis, returning null', { measureKind, subjectAxis });
+    return null;
+  }
+  
+  // Don't group company-wide metrics
+  if (subjectAxis === 'company') {
+    console.log('[deriveGroupFromSemantic] subject_axis is company, not grouping');
+    return null;
+  }
+  
+  // Capitalize measure_kind (e.g., "revenue" -> "Revenue")
+  const measureKindTitle = measureKind
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+  
+  // Map subject_axis to readable label
+  const axisLabels: Record<string, string> = {
+    'product': 'Product',
+    'segment': 'Segment',
+    'geography': 'Geography',
+    'operation': 'Operation',
+    'mine': 'Mine',
+    'commodity': 'Commodity',
+    'capital_structure': 'Capital Structure'
+  };
+  
+  const axisLabel = axisLabels[subjectAxis] || 
+    subjectAxis.replace(/_/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  
+  const result = `${measureKindTitle} by ${axisLabel}`;
+  console.log('[deriveGroupFromSemantic] Result:', result);
+  return result;
+}
 
 // Reusable Tooltip Component
 function KPITooltip({ active, payload, changeType, formatValue, formatChange, aggregationMode }: any) {
@@ -276,6 +344,23 @@ export default function KPITestPage() {
       }
       
       const kpiData: KPITimeseriesResponse = await response.json();
+      
+      // Debug: Log raw API response
+      console.log('[fetchKPIData] Raw KPI API Response:', {
+        totalKPIs: kpiData.kpis?.length,
+        firstKPI: kpiData.kpis?.[0] ? {
+          name: kpiData.kpis[0].name,
+          group: kpiData.kpis[0].group,
+          hasSemantic: !!kpiData.kpis[0].semantic_interpretation,
+          semantic: kpiData.kpis[0].semantic_interpretation
+        } : null,
+        allKPIs: kpiData.kpis?.map(k => ({
+          name: k.name,
+          hasSemantic: !!k.semantic_interpretation,
+          semantic: k.semantic_interpretation
+        }))
+      });
+      
       setData(kpiData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch KPI data');
@@ -1069,15 +1154,50 @@ export default function KPITestPage() {
             {/* KPIs List - Grouped by Group */}
             <div className="space-y-8">
               {(() => {
+                console.log('[Grouping] Starting to group KPIs, total:', data.kpis.length);
+                
                 // Group KPIs by their group property
+                // Derive group from semantic_interpretation if available, otherwise use existing group or "Other"
                 const groupedKPIs = data.kpis.reduce((acc, kpi) => {
-                  const group = kpi.group || 'Other';
+                  // Try to derive group from semantic_interpretation first
+                  const semanticGroup = deriveGroupFromSemantic(kpi.semantic_interpretation);
+                  // Fallback to existing group or "Other"
+                  const group = semanticGroup || kpi.group || 'Other';
+                  
+                  // Debug: Log grouping decisions
+                  console.log(`[Grouping] KPI "${kpi.name}":`, {
+                    hasSemantic: !!kpi.semantic_interpretation,
+                    semantic: kpi.semantic_interpretation,
+                    semanticGroup,
+                    existingGroup: kpi.group,
+                    finalGroup: group
+                  });
+                  
+                  if (!semanticGroup && kpi.semantic_interpretation) {
+                    console.warn(`[Grouping] KPI "${kpi.name}": semantic_interpretation exists but no group derived`, kpi.semantic_interpretation);
+                  } else if (!kpi.semantic_interpretation) {
+                    console.log(`[Grouping] KPI "${kpi.name}": no semantic_interpretation, using group: ${kpi.group || 'Other'}`);
+                  }
+                  
                   if (!acc[group]) {
                     acc[group] = [];
                   }
                   acc[group].push(kpi);
                   return acc;
                 }, {} as Record<string, typeof data.kpis>);
+
+                // Debug: Log grouping results
+                const groupCount = Object.keys(groupedKPIs).length;
+                console.log('[Grouping] KPI Grouping Results:', {
+                  totalKPIs: data.kpis.length,
+                  groupCount,
+                  groups: Object.keys(groupedKPIs).map(group => ({
+                    group,
+                    count: groupedKPIs[group].length,
+                    kpiNames: groupedKPIs[group].map(k => k.name),
+                    hasSemantic: groupedKPIs[group].map(k => !!k.semantic_interpretation)
+                  }))
+                });
 
                 // Sort groups by number of KPIs (descending), then alphabetically
                 const sortedGroups = Object.keys(groupedKPIs).sort((a, b) => {

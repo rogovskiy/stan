@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from raw_kpi_service import RawKPIService
 from kpi_definitions_service import KPIDefinitionsService
 from services.quarterly_analysis_service import QuarterlyAnalysisService
+from services.kpi_timeseries_service import KPITimeseriesService
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -512,6 +513,20 @@ def unify_kpis(ticker: str, quarter_key: str, verbose: bool = False) -> Dict[str
         
         if verbose:
             print(f'✅ Stored quarterly analysis for {upper_ticker} {quarter_key}')
+        
+        # Build and store KPI timeseries from raw_kpis
+        if raw_kpi_updates:
+            if verbose:
+                print(f'\n📊 Building KPI timeseries from raw KPIs...')
+            
+            try:
+                kpi_timeseries_service = KPITimeseriesService()
+                kpi_timeseries_service.build_kpi_timeseries_from_raw(upper_ticker, verbose=verbose)
+            except Exception as error:
+                if verbose:
+                    print(f'   ⚠️  Error building KPI timeseries: {error}')
+                else:
+                    print(f'Error building KPI timeseries: {error}')
         
         # Summary
         if verbose:

@@ -158,11 +158,34 @@ export interface KPIMetric {
   description?: string; // Brief description of why this matters
 }
 
+export interface Initiative {
+  title: string;
+  summary: string;
+  status: 'new' | 'on track' | 'at risk';
+  bullet_points: string[];
+}
+
 export interface QuarterlyAnalysis {
   ticker: string;
   quarter_key: string; // e.g., "2025Q1"
-  summary: string; // Paragraph with bullet points
-  growth_theses: GrowthThesis[];
+  summary?: string; // Paragraph with bullet points (from quarterly_highlights)
+  initiatives: Initiative[]; // Primary data from database
+  business_model?: {
+    summary?: string;
+    industry?: string;
+    maturity_level?: string;
+  }; // From database (optional, for future use)
+  changes?: Array<{
+    sentence: string;
+    type: 'good' | 'bad' | 'neutral';
+  }>; // From database (optional, for future use)
+  headline_bullets?: Array<{
+    text: string;
+    indicator: 'up' | 'down';
+  }>; // From database - for quarter highlights display
+  quarterly_highlights?: string; // From database
+  // Preserved for UI compatibility
+  growth_theses?: GrowthThesis[]; // Optional, for backward compatibility
   created_at?: string;
   source_documents?: string[];
   num_documents?: number;

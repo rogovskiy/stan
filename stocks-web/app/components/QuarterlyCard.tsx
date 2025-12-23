@@ -34,10 +34,13 @@ const getTrendIcon = (trend?: 'up' | 'down' | 'neutral') => {
 
 export function QuarterlyCard({ analysis, index, onClick }: QuarterlyCardProps) {
   const highlights = analysis.highlights || [];
-  if (highlights.length === 0) return null;
+  // Show card even if no highlights - display initiatives or summary instead
+  const hasContent = highlights.length > 0 || (analysis.initiatives && analysis.initiatives.length > 0) || analysis.quarterly_highlights;
+  
+  if (!hasContent) return null;
 
-  // Calculate total expected EPS growth from all theses
-  const totalExpectedGrowth = analysis.growth_theses
+  // Calculate total expected EPS growth from all theses (optional)
+  const totalExpectedGrowth = (analysis.growth_theses || [])
     .filter(t => t.expected_eps_growth != null)
     .reduce((sum, t) => sum + (t.expected_eps_growth || 0), 0);
 
@@ -89,23 +92,40 @@ export function QuarterlyCard({ analysis, index, onClick }: QuarterlyCardProps) 
         </div>
       )}
 
-      {/* Highlights */}
+      {/* Highlights or Initiatives */}
       <div className="space-y-2">
-        {highlights.slice(0, 3).map((highlight, hIdx) => (
-          <div key={hIdx} className="flex items-start gap-2 text-xs">
-            {highlight.trend && (
-              <div className="mt-0.5 flex-shrink-0">
-                {getTrendIcon(highlight.trend)}
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-700 font-medium">{highlight.text}</span>
-              {highlight.impact && (
-                <span className="text-gray-600 ml-1">{highlight.impact}</span>
+        {highlights.length > 0 ? (
+          highlights.slice(0, 3).map((highlight, hIdx) => (
+            <div key={hIdx} className="flex items-start gap-2 text-xs">
+              {highlight.trend && (
+                <div className="mt-0.5 flex-shrink-0">
+                  {getTrendIcon(highlight.trend)}
+                </div>
               )}
+              <div className="flex-1 min-w-0">
+                <span className="text-gray-700 font-medium">{highlight.text}</span>
+                {highlight.impact && (
+                  <span className="text-gray-600 ml-1">{highlight.impact}</span>
+                )}
+              </div>
             </div>
+          ))
+        ) : analysis.initiatives && analysis.initiatives.length > 0 ? (
+          analysis.initiatives.slice(0, 3).map((initiative, iIdx) => (
+            <div key={iIdx} className="flex items-start gap-2 text-xs">
+              <div className="flex-1 min-w-0">
+                <span className="text-gray-700 font-medium">{initiative.title}</span>
+                <span className="text-gray-600 ml-1 text-[10px]">
+                  ({initiative.status === 'new' ? 'New' : initiative.status === 'on track' ? 'On Track' : 'At Risk'})
+                </span>
+              </div>
+            </div>
+          ))
+        ) : analysis.quarterly_highlights ? (
+          <div className="text-xs text-gray-600 line-clamp-3">
+            {analysis.quarterly_highlights.substring(0, 150)}...
           </div>
-        ))}
+        ) : null}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { QuarterlyAnalysis, GrowthThesis } from '../types/api';
+import { QuarterlyAnalysis, GrowthThesis, Initiative } from '../types/api';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface QuarterlyDetailsDrawerProps {
@@ -27,7 +27,7 @@ function EPSProgressionChart({
     const hist = analysis.historical_eps;
     if (!hist) return [];
 
-    const totalExpectedGrowth = analysis.growth_theses
+    const totalExpectedGrowth = (analysis.growth_theses || [])
       .filter(t => t.expected_eps_growth != null)
       .reduce((sum, t) => sum + (t.expected_eps_growth || 0), 0);
 
@@ -174,7 +174,90 @@ function EPSProgressionChart({
   );
 }
 
-// Thesis Card Component
+// Initiative Card Component
+function InitiativeCard({ initiative }: { initiative: Initiative }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const getStatusColor = (status: 'new' | 'on track' | 'at risk'): string => {
+    switch (status) {
+      case 'new': return 'bg-green-100 text-green-800 border-green-200';
+      case 'on track': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'at risk': return 'bg-gray-100 text-gray-800 border-gray-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getStatusLabel = (status: 'new' | 'on track' | 'at risk'): string => {
+    switch (status) {
+      case 'new': return 'New';
+      case 'on track': return 'On Track';
+      case 'at risk': return 'At Risk';
+      default: return status;
+    }
+  };
+
+  return (
+    <div className="bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 hover:border-blue-300 transition-all hover:shadow-md">
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <h5 className="text-base font-bold text-gray-900 flex-1 leading-tight">
+            {initiative.title}
+          </h5>
+          <span className={`px-2 py-1 text-xs font-semibold rounded-md border flex-shrink-0 ${getStatusColor(initiative.status)}`}>
+            {getStatusLabel(initiative.status)}
+          </span>
+        </div>
+
+        <p className="text-sm text-gray-700 leading-relaxed mb-3">
+          {initiative.summary}
+        </p>
+
+        {isExpanded && (
+          <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+            {initiative.bullet_points && initiative.bullet_points.length > 0 && (
+              <div>
+                <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                  Key Points
+                </h6>
+                <ul className="space-y-2">
+                  {initiative.bullet_points.map((point, idx) => (
+                    <li key={idx} className="flex items-start gap-2 text-sm text-gray-600">
+                      <span className="text-blue-500 mt-1 flex-shrink-0">▸</span>
+                      <span className="leading-relaxed">{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 transition-colors"
+        >
+          {isExpanded ? (
+            <>
+              <span>Show Less</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            </>
+          ) : (
+            <>
+              <span>Show Details</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Thesis Card Component (for backward compatibility)
 function ThesisCard({ thesis }: { thesis: GrowthThesis }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -269,7 +352,9 @@ export function QuarterlyDetailsDrawer({
   onClose
 }: QuarterlyDetailsDrawerProps) {
   const { paragraph, bullets } = useMemo(() => {
-    const lines = analysis.summary.split('\n').map(line => line.trim()).filter(Boolean);
+    // Use quarterly_highlights if available, otherwise fall back to summary
+    const text = analysis.quarterly_highlights || analysis.summary || '';
+    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
     const paragraph: string[] = [];
     const bullets: string[] = [];
     let foundBullets = false;
@@ -289,11 +374,11 @@ export function QuarterlyDetailsDrawer({
       paragraph: paragraph.join(' '),
       bullets
     };
-  }, [analysis.summary]);
+  }, [analysis.summary, analysis.quarterly_highlights]);
 
-  const totalExpectedGrowth = analysis.growth_theses
-    .filter(t => t.expected_eps_growth != null)
-    .reduce((sum, t) => sum + (t.expected_eps_growth || 0), 0);
+    const totalExpectedGrowth = (analysis.growth_theses || [])
+      .filter(t => t.expected_eps_growth != null)
+      .reduce((sum, t) => sum + (t.expected_eps_growth || 0), 0);
 
   return (
     <>
@@ -310,7 +395,11 @@ export function QuarterlyDetailsDrawer({
                 {formatQuarterLabel(analysis.quarter_key)}
               </h2>
               <div className="flex items-center gap-3 mt-2 text-sm text-gray-500">
-                <span>{analysis.growth_theses.length} growth theses</span>
+                {analysis.initiatives && analysis.initiatives.length > 0 ? (
+                  <span>{analysis.initiatives.length} strategic initiative{analysis.initiatives.length !== 1 ? 's' : ''}</span>
+                ) : analysis.growth_theses && analysis.growth_theses.length > 0 ? (
+                  <span>{analysis.growth_theses.length} growth theses</span>
+                ) : null}
                 {analysis.num_documents && (
                   <span>• {analysis.num_documents} document{analysis.num_documents !== 1 ? 's' : ''}</span>
                 )}
@@ -374,12 +463,18 @@ export function QuarterlyDetailsDrawer({
 
           <div>
             <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">
-              Growth Theses
+              {analysis.initiatives && analysis.initiatives.length > 0 ? 'Strategic Initiatives' : 'Growth Theses'}
             </h4>
             <div className="grid grid-cols-1 gap-4">
-              {analysis.growth_theses.map((thesis, thesisIdx) => (
-                <ThesisCard key={thesisIdx} thesis={thesis} />
-              ))}
+              {analysis.initiatives && analysis.initiatives.length > 0 ? (
+                analysis.initiatives.map((initiative, idx) => (
+                  <InitiativeCard key={idx} initiative={initiative} />
+                ))
+              ) : analysis.growth_theses && analysis.growth_theses.length > 0 ? (
+                analysis.growth_theses.map((thesis, thesisIdx) => (
+                  <ThesisCard key={thesisIdx} thesis={thesis} />
+                ))
+              ) : null}
             </div>
           </div>
         </div>

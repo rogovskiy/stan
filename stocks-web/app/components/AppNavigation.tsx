@@ -103,6 +103,16 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
               >
                 Documents
               </Link>
+              <Link
+                href={`/${selectedTicker}/quarterly-analysis`}
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === `/${selectedTicker}/quarterly-analysis`
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                Analysis
+              </Link>
             </nav>
           </div>
           {/* Right side: User Menu with Logout */}

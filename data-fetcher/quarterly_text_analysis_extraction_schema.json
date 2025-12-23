@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quarterly Text Analysis Extraction Schema",
+  "description": "Schema for extracted structured data from quarterly text analysis",
+  "type": "object",
+  "required": ["business_model", "initiatives", "changes"],
+  "properties": {
+    "business_model": {
+      "type": "object",
+      "required": ["summary", "industry", "maturity_level"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Summary description of the company's business model"
+        },
+        "industry": {
+          "type": "string",
+          "description": "Industry sector or category"
+        },
+        "maturity_level": {
+          "type": "string",
+          "description": "Maturity level of the business",
+          "enum": ["early", "growth", "mature", "declining"]
+        }
+      }
+    },
+    "initiatives": {
+      "type": "array",
+      "description": "List of strategic initiatives leading to growth",
+      "items": {
+        "type": "object",
+        "required": ["title", "summary", "status"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the initiative"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Summary description of the initiative"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status of the initiative",
+            "enum": ["new", "on track", "at risk"]
+          }
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "description": "List of changes since last quarter",
+      "items": {
+        "type": "object",
+        "required": ["sentence", "type"],
+        "properties": {
+          "sentence": {
+            "type": "string",
+            "description": "One sentence describing what has changed"
+          },
+          "type": {
+            "type": "string",
+            "description": "Type of change",
+            "enum": ["good", "bad", "neutral"]
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

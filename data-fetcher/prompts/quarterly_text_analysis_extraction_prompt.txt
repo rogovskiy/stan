@@ -1,0 +1,28 @@
+You are extracting structured information from a quarterly text analysis for {ticker} for {quarter_key}.
+
+Below is the full text analysis:
+
+{analysis_text}
+
+Extract the following information from the analysis:
+
+1. **Business Model**:
+   - Summary: A concise summary of the company's business model
+   - Industry: The industry sector or category
+   - Maturity Level: One of "early", "growth", "mature", or "declining"
+
+2. **Strategic Initiatives**:
+   - Extract all strategic initiatives mentioned that are leading to growth
+   - For each initiative, provide:
+     - Title: Short title of the initiative
+     - Summary: Brief description of what the initiative is
+     - Status: One of "new" (newly introduced), "on track" (progressing as expected), or "at risk" (facing challenges)
+
+3. **Changes Since Last Quarter**:
+   - Extract key changes mentioned in the analysis (from the "Changes Since Last Quarter" section or equivalent)
+   - For each change, provide:
+     - Sentence: One sentence describing what has changed
+     - Type: One of "good" (positive development), "bad" (negative development), or "neutral" (neutral/informational change)
+
+Return the extracted information in the specified JSON format.
+

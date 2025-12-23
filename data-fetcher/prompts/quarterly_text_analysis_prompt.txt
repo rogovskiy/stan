@@ -1,0 +1,125 @@
+You are a financial analyst providing a detailed quarterly analysis for {ticker} for {quarter_key}. Write this analysis from an INVESTOR'S PERSPECTIVE - someone evaluating the company for investment/growth potential.
+
+{previous_quarter_analysis}
+
+{document_context}
+
+Based on the provided documents and context, provide a comprehensive, detailed analysis structured in the following sections. The output MUST clearly outline each section with section headers.
+
+## 1. Business Model
+
+Describe the company's business model from an INVESTOR'S PERSPECTIVE. Focus on:
+- How the company generates revenue (what are the PRIMARY revenue drivers - e.g., iPhone for Apple, AWS for Amazon)
+- Company maturity (early stage, growth, mature, declining) and what this means for investors
+- Profitability and cash generation (does it make money? does it pay dividends?)
+- Core products/services that drive the business
+- Target customers and value proposition
+
+This section will rarely change quarter to quarter, but should be included for context. If there are any fundamental changes to the business model, highlight them. Frame everything in terms of what an investor needs to know to understand the business.
+
+## 2. Strategic Initiatives Leading to Growth
+
+Identify and describe the strategic initiatives that are driving or expected to drive GROWTH and VALUE CREATION for investors. Prioritize initiatives by their OVERALL COMPANY IMPACT - consider their relative contribution to total revenue, EPS, or strategic positioning. A strong initiative in a small segment is less impactful than a moderate initiative in a core segment.
+
+For each initiative, clearly state:
+- What the initiative is (specific business action)
+- Why it matters for growth/investment (revenue/EPS impact, margin improvement, market expansion, etc.)
+- Quantifiable metrics (revenue targets, growth percentages, cost savings, market share goals, customer numbers, margin improvements, etc.)
+- Relative impact on overall company (e.g., "core revenue driver representing X% of total revenue" or "smaller segment with Y% revenue contribution")
+- Timeline or progress indicators
+- How it contributes to the investment thesis
+
+Structure initiatives by PRIORITY/IMPACT - lead with the most significant growth drivers based on their OVERALL COMPANY IMPACT. Consider:
+- Revenue/EPS contribution relative to company size
+- Strategic importance to the business model
+- Potential for material impact on valuation
+- Scale and scope of the initiative
+
+A strong performance in a small segment should be noted but not overemphasized relative to initiatives affecting larger portions of the business. Conversely, even modest changes in core revenue drivers should be highlighted due to their material impact.
+
+AVOID vague statements like "focusing on innovation" or "improving customer experience" unless they include specific, measurable outcomes. Be concrete and specific with numbers, targets, and measurable progress indicators.
+
+## 3. Changes Since Last Quarter
+
+Compare this quarter's results and developments to the previous quarter analysis provided above. Frame changes through the LENS OF INVESTMENT/GROWTH POTENTIAL. PRIORITIZE changes by their OVERALL COMPANY IMPACT - consider the relative magnitude of each change in the context of the company's total operations.
+
+Specifically address:
+
+- What has changed regarding the strategic initiatives identified in previous quarters? Are they new initiatives, or are existing initiatives progressing? Are initiatives on track or encountering challenges? What does this mean for growth potential?
+- Is the business model evolving? Have there been any shifts in how the company operates or generates value? How does this affect the investment thesis?
+- What new developments, trends, or changes have emerged since the last quarter? What is their impact on growth potential, profitability, or competitive position?
+
+For each change, clearly indicate:
+- Whether it's positive, negative, or neutral for investors and why
+- The OVERALL COMPANY IMPACT (material, moderate, or minor) based on:
+  * Scale relative to total revenue/EPS/operations
+  * Strategic importance to the business
+  * Potential long-term consequences
+- Context about why the impact is material or not (e.g., "strong growth in a segment representing 5% of revenue" vs. "moderate growth in core segment representing 40% of revenue")
+
+Prioritize changes by impact - lead with the most material changes affecting core business operations, followed by moderate impacts, then minor changes. A significant change in a small segment is less impactful than a moderate change in a core business area. Similarly, gauge the impact of regulatory, legal, or macro factors appropriately - not all legal developments are material to the investment case.
+
+If no previous quarter analysis is available, note that this is the first quarter being analyzed.
+
+## 4. Analysis
+
+This section acts as a comprehensive memory bank capturing ALL relevant information for future analysis. Be thorough and detailed - capture everything that might be useful for understanding this quarter and comparing future quarters.
+
+Provide a comprehensive analysis that includes:
+
+**Investment Thesis & Growth Potential:**
+- Clear investment thesis statement (e.g., "Mature company generating cash, growth through Services segment expansion")
+- Primary growth drivers identified
+- Overall growth potential assessment
+- Key value creation mechanisms
+
+**Financial Performance (Detailed):**
+- Revenue breakdown by segment/product/geography with specific numbers and growth rates
+- Profitability metrics (margins, EPS, operating income, net income) with comparisons
+- Cash flow details (operating, investing, financing activities)
+- Balance sheet highlights (debt levels, cash position, capital allocation)
+- Key financial ratios and metrics
+- Year-over-year and quarter-over-quarter comparisons with specific percentages
+- Any financial guidance or outlook provided
+
+**Operational Details:**
+- Unit sales, customer metrics, subscriber numbers (where applicable)
+- Market share information
+- Production capacity, supply chain updates
+- Operational efficiency metrics
+- Cost structure changes
+
+**Management Commentary (Key Quotes):**
+- Important quotes from management about strategy, outlook, or performance
+- Management's assessment of initiatives and their progress
+- Forward-looking statements and guidance
+- Management's view on market conditions, competition, opportunities, and risks
+
+**Competitive Landscape & Industry Context:**
+- Competitive positioning
+- Market trends affecting the company
+- Industry dynamics and how they impact the business
+- Regulatory or macro-economic factors
+
+**Risks & Opportunities:**
+- Detailed risk factors (competitive, regulatory, operational, financial, macroeconomic)
+- Opportunities identified (market expansion, new products, partnerships, etc.)
+- Assessment of risk/opportunity balance
+
+**Notable Developments:**
+- Product launches, partnerships, acquisitions, divestitures
+- Significant announcements or events
+- Legal or regulatory developments
+- Management changes or organizational updates
+
+**Comparison Context:**
+- How this quarter compares to previous quarters (referencing specific metrics)
+- Trends that are emerging or continuing
+- What has changed materially and what has remained stable
+
+Be extremely thorough - include specific numbers, percentages, dates, and quotes. This comprehensive information will be used as context for analyzing future quarters, so capture as much detail as possible even if it seems redundant with earlier sections.
+
+---
+
+Write each section clearly with the section headers as shown above. Be thorough, specific, and analytical. Use concrete numbers, quotes, and evidence from the provided documents. Always frame information in terms of what an investor needs to know to understand the company's growth potential and investment thesis.
+

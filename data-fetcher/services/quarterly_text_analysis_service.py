@@ -94,7 +94,7 @@ class QuarterlyTextAnalysisService(FirebaseBaseService):
         Args:
             ticker: Stock ticker symbol
             quarter_key: Quarter key in format YYYYQN (e.g., "2025Q1")
-            extracted_data: Dictionary containing business_model, initiatives, and changes
+            extracted_data: Dictionary containing business_model, initiatives, changes, and quarterly_highlights
             verbose: Enable verbose output
         """
         try:
@@ -113,10 +113,77 @@ class QuarterlyTextAnalysisService(FirebaseBaseService):
             
             if verbose:
                 print(f'✅ Updated extracted data for {ticker} {quarter_key}')
+            
+            # Update the "current" document to point to this latest quarter
+            # This happens automatically after successful extraction
+            self._update_current_document(ticker, quarter_key, extracted_data, verbose)
                 
         except Exception as error:
             print(f'Error updating extracted data for {ticker} {quarter_key}: {error}')
             raise error
+    
+    def _update_current_document(
+        self,
+        ticker: str,
+        quarter_key: str,
+        extracted_data: Dict[str, Any],
+        verbose: bool = True
+    ) -> None:
+        """Update the "current" document to point to the latest quarter's analysis
+        
+        Args:
+            ticker: Stock ticker symbol
+            quarter_key: Quarter key in format YYYYQN (e.g., "2025Q1")
+            extracted_data: Dictionary containing the extracted structured data
+            verbose: Enable verbose output
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Get the full document to include metadata
+            doc_ref = (self.db.collection('tickers')
+                      .document(upper_ticker)
+                      .collection('quarterly_text_analyses')
+                      .document(quarter_key))
+            
+            doc = doc_ref.get()
+            if not doc.exists:
+                if verbose:
+                    print(f'⚠️  Warning: Document {quarter_key} not found, skipping current update')
+                return
+            
+            doc_data = doc.to_dict()
+            
+            # Create/update the "current" document
+            # Structure: /tickers/{ticker}/quarterly_text_analyses/current
+            current_ref = (self.db.collection('tickers')
+                          .document(upper_ticker)
+                          .collection('quarterly_text_analyses')
+                          .document('current'))
+            
+            current_data = {
+                'ticker': upper_ticker,
+                'quarter_key': quarter_key,
+                'current_quarter': quarter_key,
+                'updated_at': datetime.now().isoformat(),
+                'extracted_data': extracted_data,
+                **{k: v for k, v in doc_data.items() if k not in ['extracted_data']}  # Include other metadata
+            }
+            
+            current_ref.set(current_data)
+            
+            if verbose:
+                print(f'✅ Updated current document to point to {ticker} {quarter_key}')
+            else:
+                # Always print a brief confirmation even in non-verbose mode
+                print(f'✅ Updated current → {quarter_key}')
+                
+        except Exception as error:
+            # Print error but don't raise - this is a convenience feature, shouldn't fail the main operation
+            print(f'⚠️  Warning: Failed to update current document for {ticker}: {error}')
+            if verbose:
+                import traceback
+                traceback.print_exc()
     
     def get_text_analysis(self, ticker: str, quarter_key: str) -> Optional[str]:
         """Retrieve text analysis from Firebase Storage
@@ -141,6 +208,34 @@ class QuarterlyTextAnalysisService(FirebaseBaseService):
             
         except Exception as error:
             print(f'Error getting text analysis for {ticker} {quarter_key}: {error}')
+            return None
+    
+    def get_current_analysis(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get the current (latest) quarterly text analysis
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dictionary containing the current analysis data, or None if not found
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Get the "current" document
+            current_ref = (self.db.collection('tickers')
+                          .document(upper_ticker)
+                          .collection('quarterly_text_analyses')
+                          .document('current'))
+            
+            doc = current_ref.get()
+            if not doc.exists:
+                return None
+            
+            return doc.to_dict()
+            
+        except Exception as error:
+            print(f'Error getting current analysis for {ticker}: {error}')
             return None
     
     @staticmethod

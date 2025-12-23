@@ -3,7 +3,7 @@
   "title": "Quarterly Text Analysis Extraction Schema",
   "description": "Schema for extracted structured data from quarterly text analysis",
   "type": "object",
-  "required": ["business_model", "initiatives", "changes"],
+  "required": ["business_model", "initiatives", "changes", "quarterly_highlights"],
   "properties": {
     "business_model": {
       "type": "object",
@@ -29,7 +29,7 @@
       "description": "List of strategic initiatives leading to growth",
       "items": {
         "type": "object",
-        "required": ["title", "summary", "status"],
+        "required": ["title", "summary", "status", "bullet_points"],
         "properties": {
           "title": {
             "type": "string",
@@ -43,6 +43,16 @@
             "type": "string",
             "description": "Status of the initiative",
             "enum": ["new", "on track", "at risk"]
+          },
+          "bullet_points": {
+            "type": "array",
+            "description": "2-4 bullet points highlighting progress on this initiative for the current quarter",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "description": "A bullet point describing measurable progress on the initiative"
+            }
           }
         }
       }
@@ -65,6 +75,10 @@
           }
         }
       }
+    },
+    "quarterly_highlights": {
+      "type": "string",
+      "description": "Quarterly highlights section containing 1-2 paragraphs and bullet points summarizing the quarter's key developments in accessible language"
     }
   },
   "additionalProperties": false

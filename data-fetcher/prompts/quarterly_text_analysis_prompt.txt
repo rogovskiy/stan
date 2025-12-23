@@ -21,13 +21,26 @@ This section will rarely change quarter to quarter, but should be included for c
 
 Identify and describe the strategic initiatives that are driving or expected to drive GROWTH and VALUE CREATION for investors. Prioritize initiatives by their OVERALL COMPANY IMPACT - consider their relative contribution to total revenue, EPS, or strategic positioning. A strong initiative in a small segment is less impactful than a moderate initiative in a core segment.
 
-For each initiative, clearly state:
-- What the initiative is (specific business action)
-- Why it matters for growth/investment (revenue/EPS impact, margin improvement, market expansion, etc.)
-- Quantifiable metrics (revenue targets, growth percentages, cost savings, market share goals, customer numbers, margin improvements, etc.)
-- Relative impact on overall company (e.g., "core revenue driver representing X% of total revenue" or "smaller segment with Y% revenue contribution")
-- Timeline or progress indicators
-- How it contributes to the investment thesis
+For each initiative, provide:
+
+**Title**: A short, stable title for the initiative. When the same initiative continues across multiple quarters, use the SAME title to maintain consistency. Titles should be less stable than the business model but still relatively stable - they should remain consistent when tracking the same initiative over time.
+
+**Summary**: A brief description of what the initiative is and why it matters. This can evolve slightly each quarter as more context becomes available, but should maintain the core meaning.
+
+**Status**: Indicate the current status as one of:
+- "new" - newly introduced initiative
+- "on track" - progressing as expected
+- "at risk" - facing challenges or not meeting expectations
+
+Note that status can change based on company performance - an initiative may move from "new" to "on track" to "at risk" or vice versa depending on how the company is performing.
+
+**Bullet Points**: Provide 2-4 bullet points that:
+- Are written for a high schooler audience (avoid jargon, use simple, clear language that is relatable)
+- Include measurable metrics (specific numbers, percentages, targets, or clear quantitative indicators)
+- Highlight progress on that initiative for the CURRENT quarter
+- Focus on what has been achieved or what progress has been made in this specific quarter
+
+Each bullet point should be concrete and specific - avoid vague statements. Include actual numbers, percentages, or clear metrics that demonstrate progress. Write in language that a high school student could understand without needing financial expertise.
 
 Structure initiatives by PRIORITY/IMPACT - lead with the most significant growth drivers based on their OVERALL COMPANY IMPACT. Consider:
 - Revenue/EPS contribution relative to company size
@@ -37,7 +50,7 @@ Structure initiatives by PRIORITY/IMPACT - lead with the most significant growth
 
 A strong performance in a small segment should be noted but not overemphasized relative to initiatives affecting larger portions of the business. Conversely, even modest changes in core revenue drivers should be highlighted due to their material impact.
 
-AVOID vague statements like "focusing on innovation" or "improving customer experience" unless they include specific, measurable outcomes. Be concrete and specific with numbers, targets, and measurable progress indicators.
+Remember: Initiative titles should remain consistent across quarters when tracking the same initiative. Only the title should be stable - summary, status, and bullet points will change based on current quarter performance and context.
 
 ## 3. Changes Since Last Quarter
 
@@ -61,7 +74,27 @@ Prioritize changes by impact - lead with the most material changes affecting cor
 
 If no previous quarter analysis is available, note that this is the first quarter being analyzed.
 
-## 4. Analysis
+## 4. Quarterly Highlights
+
+Provide a concise summary of the quarter's key developments written in accessible, less technical language suitable for a high schooler audience. This section should:
+
+- Include 1-2 paragraphs summarizing the most important quarterly progress and achievements
+- Follow the paragraphs with bullet points (using • or -) highlighting key metrics and developments
+- Use simpler language than the detailed analysis sections - avoid excessive financial jargon
+- Focus on the most important numbers, achievements, and progress indicators
+- Make the content relatable and understandable without requiring financial expertise
+
+Example format:
+[1-2 paragraphs describing the quarter's performance and key developments]
+
+• [First key metric or achievement]
+• [Second key metric or achievement]
+• [Third key metric or achievement]
+[Continue with additional bullet points as needed]
+
+This section should serve as an accessible summary that captures the essence of the quarter's performance in language that is clear and relatable.
+
+## 5. Analysis
 
 This section acts as a comprehensive memory bank capturing ALL relevant information for future analysis. Be thorough and detailed - capture everything that might be useful for understanding this quarter and comparing future quarters.
 
@@ -122,4 +155,12 @@ Be extremely thorough - include specific numbers, percentages, dates, and quotes
 ---
 
 Write each section clearly with the section headers as shown above. Be thorough, specific, and analytical. Use concrete numbers, quotes, and evidence from the provided documents. Always frame information in terms of what an investor needs to know to understand the company's growth potential and investment thesis.
+
+For the Strategic Initiatives section, ensure each initiative includes:
+- A short, stable title (consistent across quarters when the same initiative continues)
+- A summary that can evolve with more context
+- A status that reflects current performance
+- 2-4 bullet points that are relatable, measurable, and highlight current quarter progress
+
+For the Quarterly Highlights section, ensure it provides an accessible summary with 1-2 paragraphs and bullet points in less technical language.
 

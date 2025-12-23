@@ -14,9 +14,10 @@ Extract the following information from the analysis:
 2. **Strategic Initiatives**:
    - Extract all strategic initiatives mentioned that are leading to growth
    - For each initiative, provide:
-     - Title: Short title of the initiative
-     - Summary: Brief description of what the initiative is
-     - Status: One of "new" (newly introduced), "on track" (progressing as expected), or "at risk" (facing challenges)
+     - Title: Short title of the initiative (extract exactly as written)
+     - Summary: Brief description of what the initiative is (extract exactly as written)
+     - Status: One of "new" (newly introduced), "on track" (progressing as expected), or "at risk" (facing challenges) - extract the status as indicated in the analysis
+     - Bullet Points: Extract the 2-4 bullet points for this initiative as an array of strings (extract each bullet point exactly as written, removing the bullet symbol if present)
 
 3. **Changes Since Last Quarter**:
    - Extract key changes mentioned in the analysis (from the "Changes Since Last Quarter" section or equivalent)
@@ -24,5 +25,10 @@ Extract the following information from the analysis:
      - Sentence: One sentence describing what has changed
      - Type: One of "good" (positive development), "bad" (negative development), or "neutral" (neutral/informational change)
 
-Return the extracted information in the specified JSON format.
+4. **Quarterly Highlights**:
+   - Extract the "Quarterly Highlights" section (or equivalent summary section)
+   - Provide as a single string field containing the full text including paragraphs and bullet points
+   - Extract exactly as written - preserve the formatting with paragraphs and bullet points
+
+Return the extracted information in the specified JSON format. Extract all information exactly as written in the analysis text - do not interpret, alter, or summarize. This is a mechanical extraction task to format existing information into JSON structure.
 

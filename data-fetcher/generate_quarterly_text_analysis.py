@@ -18,6 +18,7 @@ import google.generativeai as genai
 
 from services.ir_document_service import IRDocumentService
 from services.quarterly_text_analysis_service import QuarterlyTextAnalysisService
+from kpi_definitions_service import KPIDefinitionsService
 from generate_quarterly_summary import (
     prepare_documents_for_llm,
     get_all_quarters_with_documents,
@@ -152,12 +153,46 @@ def extract_structured_data(
         schema = load_json_schema('quarterly_text_analysis_extraction_schema.json')
         cleaned_schema = clean_schema_for_gemini(schema)
         
+        # Fetch KPI definitions and build available metrics list
+        available_metrics = []
+        
+        # Add standard metrics
+        standard_metrics = ["EPS", "FCF", "Revenue"]
+        available_metrics.extend(standard_metrics)
+        
+        # Fetch custom KPIs from database
+        try:
+            kpi_defs_service = KPIDefinitionsService()
+            kpi_definitions = kpi_defs_service.get_all_kpi_definitions(ticker)
+            
+            for kpi_def in kpi_definitions:
+                kpi_name = kpi_def.get('name', '')
+                if kpi_name and kpi_name not in available_metrics:
+                    available_metrics.append(kpi_name)
+            
+            if verbose:
+                print(f'Found {len(kpi_definitions)} custom KPI definitions')
+        except Exception as e:
+            if verbose:
+                print(f'Warning: Could not fetch KPI definitions: {e}')
+            # Continue with just standard metrics
+        
+        # Format available metrics for prompt
+        if available_metrics:
+            available_metrics_text = '\n'.join([f'- {metric}' for metric in available_metrics])
+        else:
+            available_metrics_text = '- EPS\n- FCF\n- Revenue'
+        
+        if verbose:
+            print(f'Available metrics ({len(available_metrics)}): {", ".join(available_metrics)}')
+        
         # Load and render extraction prompt
         prompt = load_prompt_template(
             'quarterly_text_analysis_extraction_prompt.txt',
             ticker=ticker,
             quarter_key=quarter_key,
-            analysis_text=analysis_text
+            analysis_text=analysis_text,
+            available_metrics=available_metrics_text
         )
         
         if verbose:

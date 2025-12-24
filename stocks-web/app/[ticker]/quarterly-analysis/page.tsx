@@ -79,6 +79,9 @@ export default function QuarterlyAnalysisPage() {
 
         const currentData = currentResult.data;
         console.log('Current quarter data:', currentData);
+        console.log('Valuation data:', currentData?.valuation);
+        console.log('Has valuation:', !!currentData?.valuation);
+        console.log('Valuation methods:', currentData?.valuation?.methods);
         
         const currentQuarterKey = currentData.quarter_key || currentData.current_quarter;
         
@@ -87,15 +90,26 @@ export default function QuarterlyAnalysisPage() {
           // If we have data but no valid quarter key, still try to display it
           if (currentData.initiatives && currentData.initiatives.length > 0) {
             // Use a placeholder quarter key and just show the current data
+            // Handle quarterly_highlights - can be string or object
+            let quarterlyHighlights: string | { text: string; charts?: any[] } | undefined;
+            if (typeof currentData.quarterly_highlights === 'string') {
+              quarterlyHighlights = currentData.quarterly_highlights;
+            } else if (currentData.quarterly_highlights && typeof currentData.quarterly_highlights === 'object') {
+              quarterlyHighlights = currentData.quarterly_highlights;
+            } else {
+              quarterlyHighlights = currentData.quarterly_highlights;
+            }
+
             const analysis: QuarterlyAnalysis = {
               ticker: currentData.ticker || ticker.toUpperCase(),
               quarter_key: 'current',
-              summary: currentData.quarterly_highlights || '',
-              quarterly_highlights: currentData.quarterly_highlights,
+              summary: typeof quarterlyHighlights === 'string' ? quarterlyHighlights : quarterlyHighlights?.text || '',
+              quarterly_highlights: quarterlyHighlights,
               initiatives: currentData.initiatives || [],
               business_model: currentData.business_model,
               changes: currentData.changes,
               overall_quarter_strength: currentData.overall_quarter_strength,
+              valuation: currentData.valuation, // Include valuation data
               created_at: currentData.created_at,
               num_documents: currentData.num_documents,
               kpi_metrics: [
@@ -175,16 +189,27 @@ export default function QuarterlyAnalysisPage() {
               }));
             }
 
+            // Handle quarterly_highlights - can be string or object
+            let quarterlyHighlights: string | { text: string; charts?: any[] } | undefined;
+            if (typeof data.quarterly_highlights === 'string') {
+              quarterlyHighlights = data.quarterly_highlights;
+            } else if (data.quarterly_highlights && typeof data.quarterly_highlights === 'object') {
+              quarterlyHighlights = data.quarterly_highlights;
+            } else {
+              quarterlyHighlights = data.quarterly_highlights;
+            }
+
             const analysis: QuarterlyAnalysis = {
               ticker: data.ticker || ticker.toUpperCase(),
               quarter_key: data.quarter_key || quarterKeys[index],
-              summary: data.quarterly_highlights || '',
-              quarterly_highlights: data.quarterly_highlights,
+              summary: typeof quarterlyHighlights === 'string' ? quarterlyHighlights : quarterlyHighlights?.text || '',
+              quarterly_highlights: quarterlyHighlights,
               initiatives: data.initiatives || [],
               business_model: data.business_model,
               changes: data.changes,
               headline_bullets: data.headline_bullets,
               overall_quarter_strength: data.overall_quarter_strength,
+              valuation: data.valuation, // Include valuation data
               created_at: data.created_at,
               num_documents: data.num_documents,
               // Keep mock data for these fields

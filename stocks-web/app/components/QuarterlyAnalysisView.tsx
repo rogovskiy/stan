@@ -30,7 +30,7 @@
  * ```
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { QuarterlyAnalysis, EPSGrowthDriver, KPIMetric, Initiative, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 import { GrowthCardWithKPI } from './GrowthCardWithKPI';
@@ -38,6 +38,8 @@ import { QuarterlyCard } from './QuarterlyCard';
 import { QuarterlyDetailsDrawer } from './QuarterlyDetailsDrawer';
 import { InitiativeDrawer } from './InitiativeDrawer';
 import StockAnalysisChart from './StockAnalysisChart';
+import AnalysisChart from './AnalysisChart';
+import ValuationChartSelector from './ValuationChartSelector';
 
 // Business Model Card Component with Key Growth Factors
 function BusinessModelCard({ 
@@ -45,6 +47,8 @@ function BusinessModelCard({
   initiatives, 
   kpiMetrics,
   analyses,
+  ticker,
+  valuation,
   onQuarterClick,
   onInitiativeClick
 }: { 
@@ -52,6 +56,8 @@ function BusinessModelCard({
   initiatives: Initiative[];
   kpiMetrics: KPIMetric[];
   analyses: QuarterlyAnalysis[];
+  ticker: string;
+  valuation?: import('../types/api').Valuation;
   onQuarterClick: (analysis: QuarterlyAnalysis) => void;
   onInitiativeClick: (initiative: Initiative, kpi?: KPIMetric) => void;
 }) {
@@ -78,14 +84,35 @@ function BusinessModelCard({
 
   const normalizeName = (name: string) => name.toLowerCase().replace(/\b(growth|revenue|sales|margin|expansion|ratio|efficiency)\b/gi, '').trim();
 
-  // Match initiatives with KPIs
-  const initiativesWithKPI = initiatives.map(initiative => {
+  // Get metric from initiative chart, or fallback to KPI matching
+  const initiativesWithMetric = initiatives.map(initiative => {
+    // First, try to get metric from initiative.chart.metrics[0]
+    const chartMetric = initiative.chart?.metrics?.[0];
+    
+    if (chartMetric) {
+      // Use the metric from chart specification
+      return { 
+        initiative, 
+        metricName: chartMetric,
+        metricValue: 12.5, // Hardcoded for now
+        metricUnit: '%' // Default to percentage, could be determined from metric name or chart spec
+      };
+    }
+    
+    // Fallback: Match with KPIs (for backward compatibility)
     const matchingKPI = kpiMetrics.find(kpi => {
       const kpiName = normalizeName(kpi.name);
       const initiativeName = normalizeName(initiative.title || '');
       return kpiName === initiativeName || kpiName.includes(initiativeName) || initiativeName.includes(kpiName);
     });
-    return { initiative, kpi: matchingKPI };
+    
+    return { 
+      initiative, 
+      metricName: matchingKPI?.name,
+      metricValue: matchingKPI?.values?.[0],
+      metricUnit: matchingKPI?.unit,
+      kpi: matchingKPI
+    };
   });
 
   return (
@@ -116,8 +143,8 @@ function BusinessModelCard({
             <div className="flex items-start gap-6">
               {/* Initiatives List */}
               <div className="flex-1 flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-              {initiativesWithKPI.map((item, idx) => {
-                const { initiative, kpi } = item;
+              {initiativesWithMetric.map((item, idx) => {
+                const { initiative, metricName, metricValue, metricUnit, kpi } = item;
                 
                 const handleClick = () => {
                   onInitiativeClick(initiative, kpi);
@@ -142,12 +169,12 @@ function BusinessModelCard({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       </div>
-                      {kpi && kpi.values.length > 0 && (
+                      {metricName && metricValue !== undefined && (
                         <div className="mt-2 pt-2 border-t border-gray-200">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">{kpi.name}</span>
-                            <span className={`text-xs font-semibold ${kpi.trend === 'up' ? 'text-green-600' : kpi.trend === 'down' ? 'text-red-600' : 'text-gray-600'}`}>
-                              {kpi.unit === '%' ? (kpi.values[0] >= 0 ? '+' : '') + kpi.values[0].toFixed(1) + '%' : kpi.values[0].toFixed(1)}
+                            <span className="text-xs text-gray-500">{metricName}</span>
+                            <span className="text-xs font-semibold text-green-600">
+                              {metricUnit === '%' ? (metricValue >= 0 ? '+' : '') + metricValue.toFixed(1) + '%' : metricValue.toFixed(1)}
                             </span>
                           </div>
                         </div>
@@ -435,6 +462,7 @@ export default function QuarterlyAnalysisView({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedQuarter, setSelectedQuarter] = useState<QuarterlyAnalysis | null>(null);
   const [selectedInitiative, setSelectedInitiative] = useState<{ initiative: Initiative; kpi?: KPIMetric } | null>(null);
+  const [selectedValuationMethod, setSelectedValuationMethod] = useState<string | null>(null);
 
   // Sort analyses by quarter (most recent first)
   const sortedAnalyses = useMemo(() => {
@@ -457,6 +485,23 @@ export default function QuarterlyAnalysisView({
   const businessModel = mostRecentAnalysis?.business_model;
   const initiatives = mostRecentAnalysis?.initiatives || [];
   const kpiMetrics = mostRecentAnalysis?.kpi_metrics || [];
+  const ticker = mostRecentAnalysis?.ticker || analyses[0]?.ticker || 'AAPL';
+  const valuation = mostRecentAnalysis?.valuation;
+  
+  // Set default valuation method when valuation data loads
+  useEffect(() => {
+    if (valuation && valuation.methods && valuation.methods.length > 0 && !selectedValuationMethod) {
+      const sortedMethods = [...valuation.methods].sort((a, b) => a.preference_order - b.preference_order);
+      setSelectedValuationMethod(sortedMethods[0].method);
+    }
+  }, [valuation, selectedValuationMethod]);
+  
+  // Debug logging
+  if (process.env.NODE_ENV === 'development') {
+    console.log('QuarterlyAnalysisView - Valuation data:', valuation);
+    console.log('QuarterlyAnalysisView - Has valuation:', !!valuation);
+    console.log('QuarterlyAnalysisView - Valuation methods:', valuation?.methods);
+  }
 
   return (
     <div className="space-y-6">
@@ -466,7 +511,9 @@ export default function QuarterlyAnalysisView({
           businessModel={businessModel}
           initiatives={initiatives}
           kpiMetrics={kpiMetrics}
-          analyses={sortedAnalyses} 
+          analyses={sortedAnalyses}
+          ticker={ticker}
+          valuation={valuation}
           onQuarterClick={(analysis) => {
             setSelectedQuarter(analysis);
             setDrawerOpen(true);
@@ -477,6 +524,7 @@ export default function QuarterlyAnalysisView({
         />
       )}
 
+
       {/* Valuation Section */}
       {dailyData.length > 0 && quarterlyData.length > 0 && (
         <ValuationSection
@@ -486,6 +534,10 @@ export default function QuarterlyAnalysisView({
           growthRate={growthRate}
           fairValueRatio={fairValueRatio}
           quarterlyGrowthRate={quarterlyGrowthRate}
+          valuation={valuation}
+          ticker={ticker}
+          selectedValuationMethod={selectedValuationMethod}
+          onValuationMethodChange={setSelectedValuationMethod}
         />
       )}
 
@@ -510,6 +562,7 @@ export default function QuarterlyAnalysisView({
         <InitiativeDrawer
           initiative={selectedInitiative.initiative}
           kpi={selectedInitiative.kpi}
+          ticker={ticker}
           onClose={() => {
             setSelectedInitiative(null);
           }}
@@ -645,7 +698,11 @@ function ValuationSection({
   normalPERatio,
   growthRate,
   fairValueRatio,
-  quarterlyGrowthRate
+  quarterlyGrowthRate,
+  valuation,
+  ticker,
+  selectedValuationMethod,
+  onValuationMethodChange
 }: {
   dailyData: DailyDataPoint[];
   quarterlyData: QuarterlyDataPoint[];
@@ -653,21 +710,47 @@ function ValuationSection({
   growthRate: number | null;
   fairValueRatio: number;
   quarterlyGrowthRate: number | null;
+  valuation?: import('../types/api').Valuation;
+  ticker: string;
+  selectedValuationMethod: string | null;
+  onValuationMethodChange: (method: string) => void;
 }) {
   return (
     <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-4">Valuation</h3>
-      
-      {/* Valuation Explanation */}
-      <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-        <p className="text-sm text-gray-700 leading-relaxed">
-          We value Apple using an <strong className="text-gray-900">EPS multiple approach</strong> based on the company's 
-          consistent earnings generation and predictable cash flow patterns. Apple's mature business model, 
-          strong balance sheet, and history of returning capital to shareholders make earnings per share 
-          a reliable metric for valuation. The fair value calculation uses a multiple of annual EPS, 
-          reflecting the company's ability to generate sustainable profits from its hardware and services ecosystem.
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-2xl font-bold text-gray-900">Valuation</h3>
+        {valuation && valuation.methods && valuation.methods.length > 1 && (
+          <ValuationChartSelector
+            methods={valuation.methods}
+            selectedMethod={selectedValuationMethod}
+            onMethodChange={onValuationMethodChange}
+          />
+        )}
       </div>
+      
+      {/* Valuation Rationale from Database (constructed from selected method) */}
+      {valuation && valuation.methods && valuation.methods.length > 0 && (() => {
+        // Get the selected method, or default to the most preferred method
+        const selectedMethod = selectedValuationMethod 
+          ? valuation.methods.find(m => m.method === selectedValuationMethod)
+          : null;
+        const methodToShow = selectedMethod || valuation.methods
+          .sort((a, b) => a.preference_order - b.preference_order)[0];
+        
+        return (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <p className="text-base text-gray-700 leading-relaxed">
+              {methodToShow.explanation}
+              {valuation.business_model_chart && valuation.business_model_chart.metrics.length > 0 && (
+                <>
+                  {' '}The fair value calculation uses a multiple of annual{' '}
+                  <strong>{valuation.business_model_chart.metrics[0]}</strong>, reflecting the company's ability to generate sustainable profits from its business operations.
+                </>
+              )}
+            </p>
+          </div>
+        );
+      })()}
 
       <StockAnalysisChart
         dailyData={dailyData}

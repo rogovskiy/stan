@@ -4,6 +4,10 @@ Below is the full text analysis:
 
 {analysis_text}
 
+Available Metrics:
+The following metrics are available for charting. Use these exact metric names when specifying charts:
+{available_metrics}
+
 Extract the following information from the analysis:
 
 1. **Business Model**:
@@ -20,6 +24,7 @@ Extract the following information from the analysis:
      - Last Quarter Progress: Extract the last quarter progress paragraph for this initiative (extract exactly as written)
      - Status: One of "new" (newly introduced), "on track" (progressing as expected), or "at risk" (facing challenges) - extract the status as indicated in the analysis
      - Bullet Points: Extract the 2-4 bullet points for this initiative as an array of strings (extract each bullet point exactly as written, removing the bullet symbol if present)
+     - Chart: Extract charting specification for this initiative. This should be 1 bar chart with quarterly frequency showing the strength/progress of the initiative. Select 1-5 metrics from the available metrics list that best measure the initiative's progress and strength. Choose metrics that are directly related to the initiative's goals and outcomes.
 
 3. **Changes Since Last Quarter**:
    - Extract key changes mentioned in the analysis (from the "Changes Since Last Quarter" section or equivalent)
@@ -37,13 +42,28 @@ Extract the following information from the analysis:
 
 5. **Quarterly Highlights**:
    - Extract the "Quarterly Highlights" section (or equivalent summary section)
-   - Provide as a single string field containing the full text including paragraphs and bullet points
-   - Extract exactly as written - preserve the formatting with paragraphs and bullet points
+   - Text: Provide as a single string field containing the full text including paragraphs and bullet points. Extract exactly as written - preserve the formatting with paragraphs and bullet points.
+   - Charts: Extract 1-2 chart specifications (up to 3 total) that best illustrate the key highlights of the quarter. Each chart should help visualize important trends or comparisons mentioned in the highlights. Select appropriate chart types (bar, stacked_bar, or line) and frequencies (annual or quarterly) based on what best represents the data. Choose 1-5 metrics per chart from the available metrics list that are most relevant to the highlights being discussed.
 
 6. **Overall Quarter Strength**:
    - Extract the "Overall Quarter Strength" assessment from the analysis
    - This should be one of "up" (strong positive performance), "down" (negative performance), or "neutral" (mixed/ambiguous performance)
    - Extract the value exactly as stated in the analysis
 
+7. **Valuation**:
+   - Methods: Extract the valuation methods that are most appropriate for valuing this company based on the analysis. Order them by preference (most preferred first).
+     - For each method, provide:
+       - Method: One of "EPS" (Earnings Per Share multiple approach), "FCF" (Free Cash Flow approach), or "NAV" (Net Asset Value approach)
+       - Explanation: A brief explanation of why this valuation method is appropriate for this company (e.g., "EPS is the primary valuation method because the company has stable, predictable earnings and a history of consistent EPS growth")
+       - Preference Order: Assign a number starting from 1 (most preferred) to indicate the order of preference
+     - Include all applicable methods (can be multiple). For example, a mature cash-generating company might use both EPS (preference 1) and FCF (preference 2) methods.
+   - Business Model Chart: Extract charting specification for the business model. This should be 1 bar chart with annual frequency showing the most important metric that drives value estimation for this business and supports the valuation methods. Select the single most important metric from the available metrics list that best represents the company's value driver (e.g., Revenue for revenue-driven companies, EPS for earnings-driven companies, FCF for cash-generating companies, or a custom KPI if it's the primary value driver). This chart supports the valuation by visualizing the key metric used in the valuation methods.
+
 Return the extracted information in the specified JSON format. Extract all information exactly as written in the analysis text - do not interpret, alter, or summarize. This is a mechanical extraction task to format existing information into JSON structure.
+
+For chart specifications:
+- Use exact metric names from the available metrics list
+- Valuation Business Model chart: Must be bar chart, annual frequency, 1 metric (the most important value driver that supports valuation)
+- Initiative charts: Must be bar chart, quarterly frequency, 1-5 metrics
+- Quarterly Highlights charts: Can be bar, stacked_bar, or line chart, annual or quarterly frequency, 1-5 metrics per chart, up to 3 charts total
 

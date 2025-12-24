@@ -158,6 +158,12 @@ export interface KPIMetric {
   description?: string; // Brief description of why this matters
 }
 
+export interface ChartSpec {
+  type: 'bar' | 'stacked_bar' | 'line';
+  frequency: 'annual' | 'quarterly';
+  metrics: string[]; // up to 5
+}
+
 export interface Initiative {
   title: string;
   summary: string;
@@ -165,6 +171,18 @@ export interface Initiative {
   last_quarter_progress: string;
   status: 'new' | 'on track' | 'at risk';
   bullet_points: string[];
+  chart?: ChartSpec;
+}
+
+export interface ValuationMethod {
+  method: 'EPS' | 'FCF' | 'NAV';
+  explanation: string;
+  preference_order: number;
+}
+
+export interface Valuation {
+  methods: ValuationMethod[];
+  business_model_chart?: ChartSpec;
 }
 
 export interface QuarterlyAnalysis {
@@ -185,8 +203,12 @@ export interface QuarterlyAnalysis {
     text: string;
     indicator: 'up' | 'down' | 'neutral';
   }>; // From database - for quarter highlights display
-  quarterly_highlights?: string; // From database
+  quarterly_highlights?: string | {
+    text: string;
+    charts?: ChartSpec[];
+  }; // From database - can be string (legacy) or object with text and charts
   overall_quarter_strength?: 'up' | 'down' | 'neutral'; // Overall quarter performance strength
+  valuation?: Valuation; // Valuation information including methods, explanations, and business model chart
   // Preserved for UI compatibility
   growth_theses?: GrowthThesis[]; // Optional, for backward compatibility
   created_at?: string;

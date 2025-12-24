@@ -3,10 +3,12 @@
 import { useMemo } from 'react';
 import { Initiative, KPIMetric } from '../types/api';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import AnalysisChart from './AnalysisChart';
 
 interface InitiativeDrawerProps {
   initiative: Initiative;
   kpi?: KPIMetric;
+  ticker: string;
   onClose: () => void;
 }
 
@@ -144,6 +146,7 @@ function KPIChart({ kpi }: { kpi: KPIMetric }) {
 export function InitiativeDrawer({
   initiative,
   kpi,
+  ticker,
   onClose
 }: InitiativeDrawerProps) {
   return (
@@ -237,6 +240,18 @@ export function InitiativeDrawer({
           {kpi && (
             <div className="mb-6">
               <KPIChart kpi={kpi} />
+            </div>
+          )}
+
+          {/* Initiative Chart */}
+          {initiative.chart && (
+            <div className="mb-6">
+              <AnalysisChart
+                chartSpec={initiative.chart}
+                ticker={ticker}
+                title="Initiative Progress"
+                height={300}
+              />
             </div>
           )}
         </div>

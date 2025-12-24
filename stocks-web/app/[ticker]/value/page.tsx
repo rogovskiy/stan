@@ -8,6 +8,9 @@ import StockAnalysisChart from '../../components/StockAnalysisChart';
 import PeriodSelector from '../../components/PeriodSelector';
 import StockSidebar from '../../components/StockSidebar';
 import AppNavigation from '../../components/AppNavigation';
+import AnalysisChart from '../../components/AnalysisChart';
+import ValuationChartSelector from '../../components/ValuationChartSelector';
+import { Valuation } from '../../types/api';
 
 interface AnalystPriceTargets {
   targetHigh?: number;
@@ -26,6 +29,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('8y');
+  const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [selectedValuationMethod, setSelectedValuationMethod] = useState<string | null>(null);
   const forecastYears = 2; // Number of fiscal years to forecast (8 quarters)
 
   // Fetch stock data
@@ -101,11 +106,44 @@ export default function Home() {
     }
   };
 
+  // Fetch valuation data from quarterly text analysis
+  const fetchValuationData = async (ticker: string) => {
+    try {
+      console.log(`Fetching valuation data for ${ticker}...`);
+      const response = await fetch(`/api/quarterly-text-analysis/${ticker}`);
+      const result = await response.json();
+      
+      console.log('Valuation API response:', result);
+      
+      if (result.success && result.data?.valuation) {
+        const valuationData = result.data.valuation;
+        console.log('Valuation data found:', valuationData);
+        setValuation(valuationData);
+        
+        // Set the first (most preferred) method as default selection
+        if (valuationData.methods && valuationData.methods.length > 0) {
+          const sortedMethods = [...valuationData.methods].sort((a, b) => a.preference_order - b.preference_order);
+          setSelectedValuationMethod(sortedMethods[0].method);
+          console.log('Set default valuation method:', sortedMethods[0].method);
+        }
+      } else {
+        console.log('No valuation data found in response');
+        setValuation(null);
+        setSelectedValuationMethod(null);
+      }
+    } catch (err) {
+      console.error('Error fetching valuation data:', err);
+      setValuation(null);
+      setSelectedValuationMethod(null);
+    }
+  };
+
   // Load data when ticker/period changes
   useEffect(() => {
     console.log(`Fetching data for ticker: ${selectedTicker}, period: ${period}`);
     fetchStockData(selectedTicker, period);
     fetchAnalystData(selectedTicker);
+    fetchValuationData(selectedTicker);
   }, [selectedTicker, period]);
 
   // Handle ticker change
@@ -288,17 +326,50 @@ export default function Home() {
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
             {/* Main Chart Area - 3/4 width */}
             <div className="xl:col-span-3 space-y-8">
-              {/* Chart Title and Period Selector Row */}
-              <div className="flex items-center justify-between mb-6">
+              {/* Chart Title, Period Selector, and Valuation Method Selector Row */}
+              <div className="flex items-center justify-between mb-6 gap-4">
                 <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
                   Value Analysis
                 </h2>
-                <PeriodSelector 
-                  currentPeriod={period}
-                  onPeriodChange={handlePeriodChange}
-                  maxYears={maxAvailableYears}
-                />
+                <div className="flex items-center gap-3">
+                  {valuation && valuation.methods && valuation.methods.length > 1 && (
+                    <ValuationChartSelector
+                      methods={valuation.methods}
+                      selectedMethod={selectedValuationMethod}
+                      onMethodChange={setSelectedValuationMethod}
+                    />
+                  )}
+                  <PeriodSelector 
+                    currentPeriod={period}
+                    onPeriodChange={handlePeriodChange}
+                    maxYears={maxAvailableYears}
+                  />
+                </div>
               </div>
+              
+              {/* Valuation Rationale from Database (constructed from selected method) */}
+              {valuation && valuation.methods && valuation.methods.length > 0 && (() => {
+                // Get the selected method, or default to the most preferred method
+                const selectedMethod = selectedValuationMethod 
+                  ? valuation.methods.find(m => m.method === selectedValuationMethod)
+                  : null;
+                const methodToShow = selectedMethod || valuation.methods
+                  .sort((a, b) => a.preference_order - b.preference_order)[0];
+                
+                return (
+                  <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <p className="text-base text-gray-700 leading-relaxed">
+                      {methodToShow.explanation}
+                      {valuation.business_model_chart && valuation.business_model_chart.metrics.length > 0 && (
+                        <>
+                          {' '}The fair value calculation uses a multiple of annual{' '}
+                          <strong>{valuation.business_model_chart.metrics[0]}</strong>, reflecting the company's ability to generate sustainable profits from its business operations.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
               
               {/* Stock Analysis Chart Component */}
               <StockAnalysisChart 
@@ -312,6 +383,36 @@ export default function Home() {
                 forecastYears={forecastYears}
                 analystPriceTargets={analystPriceTargets}
               />
+
+              {/* Valuation Methods Details (if multiple methods) */}
+              {valuation && valuation.methods && valuation.methods.length > 1 && (
+                <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
+                  <details>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700 hover:text-gray-900 mb-4">
+                      View All Valuation Methods ({valuation.methods.length})
+                    </summary>
+                    <div className="space-y-4 pt-4 border-t border-gray-200">
+                      {valuation.methods
+                        .sort((a, b) => a.preference_order - b.preference_order)
+                        .map((method, index) => (
+                          <div key={index} className="border-l-4 border-blue-500 pl-4 py-2">
+                            <div className="flex items-center gap-3 mb-2">
+                              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                                {method.method}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                Preference #{method.preference_order}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-700 leading-relaxed">
+                              {method.explanation}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </details>
+                </div>
+              )}
             </div>
 
             {/* Right Sidebar - 1/4 width */}

@@ -61,6 +61,32 @@
               "type": "string",
               "description": "A bullet point describing measurable progress on the initiative"
             }
+          },
+          "chart": {
+            "type": "object",
+            "description": "Chart specification for initiative strength visualization",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Chart type (should be 'bar' for initiatives)",
+                "enum": ["bar", "stacked_bar", "line"]
+              },
+              "frequency": {
+                "type": "string",
+                "description": "Data frequency (should be 'quarterly' for initiatives)",
+                "enum": ["annual", "quarterly"]
+              },
+              "metrics": {
+                "type": "array",
+                "description": "List of metrics to include in the chart (up to 5)",
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "description": "Metric name from available metrics list"
+                }
+              }
+            },
+            "required": ["type", "frequency", "metrics"]
           }
         }
       }
@@ -105,8 +131,45 @@
       }
     },
     "quarterly_highlights": {
-      "type": "string",
-      "description": "Quarterly highlights section containing 1-2 paragraphs and bullet points summarizing the quarter's key developments in accessible language"
+      "type": "object",
+      "description": "Quarterly highlights section with text and optional charts",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Quarterly highlights section containing 1-2 paragraphs and bullet points summarizing the quarter's key developments in accessible language"
+        },
+        "charts": {
+          "type": "array",
+          "description": "Array of chart specifications to illustrate the highlights (up to 3 charts)",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Chart type",
+                "enum": ["bar", "stacked_bar", "line"]
+              },
+              "frequency": {
+                "type": "string",
+                "description": "Data frequency",
+                "enum": ["annual", "quarterly"]
+              },
+              "metrics": {
+                "type": "array",
+                "description": "List of metrics to include in the chart (up to 5)",
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "description": "Metric name from available metrics list"
+                }
+              }
+            },
+            "required": ["type", "frequency", "metrics"]
+          }
+        }
+      },
+      "required": ["text"]
     },
     "overall_quarter_strength": {
       "type": "string",
@@ -117,6 +180,63 @@
         "down": "Quarter shows negative performance, clear failures or setbacks, and material negative developments",
         "neutral": "Quarter shows mixed performance, ambiguous results, or not strong enough in either direction to be clearly positive or negative"
       }
+    },
+    "valuation": {
+      "type": "object",
+      "description": "Valuation information including methods, explanations, and supporting chart",
+      "properties": {
+        "methods": {
+          "type": "array",
+          "description": "List of valuation methods applicable to this company, ordered by preference (most preferred first)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": ["EPS", "FCF", "NAV"],
+                "description": "Valuation method name"
+              },
+              "explanation": {
+                "type": "string",
+                "description": "Explanation of why this valuation method is appropriate for this company"
+              },
+              "preference_order": {
+                "type": "integer",
+                "description": "Order of preference (1 = most preferred, 2 = second most preferred, etc.)",
+                "minimum": 1
+              }
+            },
+            "required": ["method", "explanation", "preference_order"]
+          }
+        },
+        "business_model_chart": {
+          "type": "object",
+          "description": "Chart specification for business model visualization that supports the valuation",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Chart type",
+              "enum": ["bar", "stacked_bar", "line"]
+            },
+            "frequency": {
+              "type": "string",
+              "description": "Data frequency",
+              "enum": ["annual", "quarterly"]
+            },
+            "metrics": {
+              "type": "array",
+              "description": "List of metrics to include in the chart (up to 5)",
+              "maxItems": 5,
+              "items": {
+                "type": "string",
+                "description": "Metric name from available metrics list"
+              }
+            }
+          },
+          "required": ["type", "frequency", "metrics"]
+        }
+      },
+      "required": ["methods"]
     }
   },
   "additionalProperties": false

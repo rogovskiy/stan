@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { QuarterlyAnalysis, GrowthThesis, Initiative } from '../types/api';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import AnalysisChart from './AnalysisChart';
 
 interface QuarterlyDetailsDrawerProps {
   analysis: QuarterlyAnalysis;
@@ -389,10 +390,22 @@ export function QuarterlyDetailsDrawer({
   sortedAnalyses,
   onClose
 }: QuarterlyDetailsDrawerProps) {
-  const summaryText = useMemo(() => {
-    // Use quarterly_highlights if available, otherwise fall back to summary
-    return analysis.quarterly_highlights || analysis.summary || '';
+  const ticker = analysis.ticker || 'AAPL';
+  
+  // Handle quarterly_highlights - can be string or object with text and charts
+  const quarterlyHighlightsData = useMemo(() => {
+    if (typeof analysis.quarterly_highlights === 'string') {
+      return { text: analysis.quarterly_highlights, charts: undefined };
+    } else if (analysis.quarterly_highlights && typeof analysis.quarterly_highlights === 'object') {
+      return {
+        text: analysis.quarterly_highlights.text || '',
+        charts: analysis.quarterly_highlights.charts
+      };
+    }
+    return { text: analysis.summary || '', charts: undefined };
   }, [analysis.summary, analysis.quarterly_highlights]);
+  
+  const summaryText = quarterlyHighlightsData.text;
 
     const totalExpectedGrowth = (analysis.growth_theses || [])
       .filter(t => t.expected_eps_growth != null)
@@ -440,6 +453,21 @@ export function QuarterlyDetailsDrawer({
                 <ReactMarkdown>
                   {summaryText}
                 </ReactMarkdown>
+              </div>
+            )}
+            
+            {/* Quarterly Highlights Charts */}
+            {quarterlyHighlightsData.charts && quarterlyHighlightsData.charts.length > 0 && (
+              <div className="mt-6 space-y-4">
+                {quarterlyHighlightsData.charts.map((chart, index) => (
+                  <AnalysisChart
+                    key={index}
+                    chartSpec={chart}
+                    ticker={ticker}
+                    title={`Quarter Highlights Chart ${index + 1}`}
+                    height={300}
+                  />
+                ))}
               </div>
             )}
           </div>

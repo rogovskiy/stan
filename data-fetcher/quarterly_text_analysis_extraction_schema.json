@@ -3,7 +3,7 @@
   "title": "Quarterly Text Analysis Extraction Schema",
   "description": "Schema for extracted structured data from quarterly text analysis",
   "type": "object",
-  "required": ["business_model", "initiatives", "changes", "quarterly_highlights"],
+  "required": ["business_model", "initiatives", "changes", "headline_bullets", "quarterly_highlights"],
   "properties": {
     "business_model": {
       "type": "object",
@@ -72,6 +72,26 @@
             "type": "string",
             "description": "Type of change",
             "enum": ["good", "bad", "neutral"]
+          }
+        }
+      }
+    },
+    "headline_bullets": {
+      "type": "array",
+      "description": "Up to 3 bullet points representing the most significant accomplishments or failures for the quarter, to be displayed on the quarter headline tile",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["text", "indicator"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The bullet point text describing the accomplishment or failure"
+          },
+          "indicator": {
+            "type": "string",
+            "description": "Indicator showing whether this is an accomplishment (up) or failure (down)",
+            "enum": ["up", "down"]
           }
         }
       }

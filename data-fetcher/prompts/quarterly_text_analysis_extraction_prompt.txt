@@ -25,7 +25,15 @@ Extract the following information from the analysis:
      - Sentence: One sentence describing what has changed
      - Type: One of "good" (positive development), "bad" (negative development), or "neutral" (neutral/informational change)
 
-4. **Quarterly Highlights**:
+4. **Quarter Headline Bullets**:
+   - Extract the "Quarter Headline Bullets" section (or equivalent section with headline bullets)
+   - Extract each bullet point as a separate item in an array
+   - For each bullet point, determine if it represents an accomplishment (positive) or failure (negative)
+   - Assign an "indicator" value of "up" for accomplishments or "down" for failures
+   - Extract up to 3 bullet points maximum
+   - Extract each bullet point exactly as written (removing the bullet symbol if present)
+
+5. **Quarterly Highlights**:
    - Extract the "Quarterly Highlights" section (or equivalent summary section)
    - Provide as a single string field containing the full text including paragraphs and bullet points
    - Extract exactly as written - preserve the formatting with paragraphs and bullet points

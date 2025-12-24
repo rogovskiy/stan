@@ -208,12 +208,13 @@ function InitiativeCard({ initiative }: { initiative: Initiative }) {
           </span>
         </div>
 
-        <p className="text-sm text-gray-700 leading-relaxed mb-3">
-          {initiative.summary}
-        </p>
-
         {isExpanded && (
           <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+            <div>
+              <p className="text-sm text-gray-700 leading-relaxed">
+                {initiative.summary}
+              </p>
+            </div>
             {initiative.bullet_points && initiative.bullet_points.length > 0 && (
               <div>
                 <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
@@ -395,11 +396,9 @@ export function QuarterlyDetailsDrawer({
                 {formatQuarterLabel(analysis.quarter_key)}
               </h2>
               <div className="flex items-center gap-3 mt-2 text-sm text-gray-500">
-                {analysis.initiatives && analysis.initiatives.length > 0 ? (
-                  <span>{analysis.initiatives.length} strategic initiative{analysis.initiatives.length !== 1 ? 's' : ''}</span>
-                ) : analysis.growth_theses && analysis.growth_theses.length > 0 ? (
+                {analysis.growth_theses && analysis.growth_theses.length > 0 && (
                   <span>{analysis.growth_theses.length} growth theses</span>
-                ) : null}
+                )}
                 {analysis.num_documents && (
                   <span>• {analysis.num_documents} document{analysis.num_documents !== 1 ? 's' : ''}</span>
                 )}
@@ -436,6 +435,47 @@ export function QuarterlyDetailsDrawer({
             )}
           </div>
 
+          {/* Highlights Section */}
+          {analysis.highlights && analysis.highlights.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
+                Highlights
+              </h4>
+              <ul className="space-y-2.5">
+                {analysis.highlights.map((highlight, idx) => (
+                  <li key={idx} className="flex items-start gap-3 text-gray-700">
+                    {/* Trend Icon */}
+                    <div className="mt-0.5 flex-shrink-0">
+                      {highlight.trend === 'up' && (
+                        <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                      )}
+                      {highlight.trend === 'down' && (
+                        <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                        </svg>
+                      )}
+                      {highlight.trend === 'neutral' && (
+                        <div className="w-5 h-5 rounded-full bg-gray-300"></div>
+                      )}
+                      {!highlight.trend && (
+                        <span className="text-blue-600 text-lg font-bold">•</span>
+                      )}
+                    </div>
+                    {/* Highlight Text and Impact */}
+                    <div className="flex-1">
+                      <span className="font-medium">{highlight.text}</span>
+                      {highlight.impact && (
+                        <span className="ml-2 text-gray-600">{highlight.impact}</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {analysis.historical_eps && (
             <div className="mb-6">
               <EPSProgressionChart 
@@ -461,22 +501,18 @@ export function QuarterlyDetailsDrawer({
             </div>
           )}
 
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">
-              {analysis.initiatives && analysis.initiatives.length > 0 ? 'Strategic Initiatives' : 'Growth Theses'}
-            </h4>
-            <div className="grid grid-cols-1 gap-4">
-              {analysis.initiatives && analysis.initiatives.length > 0 ? (
-                analysis.initiatives.map((initiative, idx) => (
-                  <InitiativeCard key={idx} initiative={initiative} />
-                ))
-              ) : analysis.growth_theses && analysis.growth_theses.length > 0 ? (
-                analysis.growth_theses.map((thesis, thesisIdx) => (
+          {analysis.growth_theses && analysis.growth_theses.length > 0 && (
+            <div>
+              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">
+                Growth Theses
+              </h4>
+              <div className="grid grid-cols-1 gap-4">
+                {analysis.growth_theses.map((thesis, thesisIdx) => (
                   <ThesisCard key={thesisIdx} thesis={thesis} />
-                ))
-              ) : null}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </>

@@ -27,6 +27,12 @@ const getTrendIcon = (trend?: 'up' | 'down' | 'neutral') => {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
         </svg>
       );
+    case 'neutral':
+      return (
+        <svg className="w-4 h-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14" />
+        </svg>
+      );
     default:
       return null;
   }

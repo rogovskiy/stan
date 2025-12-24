@@ -7,7 +7,7 @@ Below is the full text analysis:
 Extract the following information from the analysis:
 
 1. **Business Model**:
-   - Summary: A concise summary of the company's business model
+   - Summary: A concise, investor-focused summary of the company's business model that clearly explains the main value drivers (what drives revenue, growth, and profitability for investors)
    - Industry: The industry sector or category
    - Maturity Level: One of "early", "growth", "mature", or "declining"
 
@@ -16,6 +16,8 @@ Extract the following information from the analysis:
    - For each initiative, provide:
      - Title: Short title of the initiative (extract exactly as written)
      - Summary: Brief description of what the initiative is (extract exactly as written)
+     - Cumulative Progress: Extract the cumulative progress paragraph for this initiative (extract exactly as written)
+     - Last Quarter Progress: Extract the last quarter progress paragraph for this initiative (extract exactly as written)
      - Status: One of "new" (newly introduced), "on track" (progressing as expected), or "at risk" (facing challenges) - extract the status as indicated in the analysis
      - Bullet Points: Extract the 2-4 bullet points for this initiative as an array of strings (extract each bullet point exactly as written, removing the bullet symbol if present)
 
@@ -28,8 +30,8 @@ Extract the following information from the analysis:
 4. **Quarter Headline Bullets**:
    - Extract the "Quarter Headline Bullets" section (or equivalent section with headline bullets)
    - Extract each bullet point as a separate item in an array
-   - For each bullet point, determine if it represents an accomplishment (positive) or failure (negative)
-   - Assign an "indicator" value of "up" for accomplishments or "down" for failures
+   - For each bullet point, determine if it represents an accomplishment (positive), failure (negative), or mixed/neutral result (not strong enough in either direction)
+   - Assign an "indicator" value of "up" for accomplishments, "down" for failures, or "neutral" for mixed/neutral results
    - Extract up to 3 bullet points maximum
    - Extract each bullet point exactly as written (removing the bullet symbol if present)
 
@@ -37,6 +39,11 @@ Extract the following information from the analysis:
    - Extract the "Quarterly Highlights" section (or equivalent summary section)
    - Provide as a single string field containing the full text including paragraphs and bullet points
    - Extract exactly as written - preserve the formatting with paragraphs and bullet points
+
+6. **Overall Quarter Strength**:
+   - Extract the "Overall Quarter Strength" assessment from the analysis
+   - This should be one of "up" (strong positive performance), "down" (negative performance), or "neutral" (mixed/ambiguous performance)
+   - Extract the value exactly as stated in the analysis
 
 Return the extracted information in the specified JSON format. Extract all information exactly as written in the analysis text - do not interpret, alter, or summarize. This is a mechanical extraction task to format existing information into JSON structure.
 

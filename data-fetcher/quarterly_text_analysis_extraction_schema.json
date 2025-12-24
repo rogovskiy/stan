@@ -3,7 +3,7 @@
   "title": "Quarterly Text Analysis Extraction Schema",
   "description": "Schema for extracted structured data from quarterly text analysis",
   "type": "object",
-  "required": ["business_model", "initiatives", "changes", "headline_bullets", "quarterly_highlights"],
+  "required": ["business_model", "initiatives", "changes", "headline_bullets", "quarterly_highlights", "overall_quarter_strength"],
   "properties": {
     "business_model": {
       "type": "object",
@@ -29,7 +29,7 @@
       "description": "List of strategic initiatives leading to growth",
       "items": {
         "type": "object",
-        "required": ["title", "summary", "status", "bullet_points"],
+        "required": ["title", "summary", "cumulative_progress", "last_quarter_progress", "status", "bullet_points"],
         "properties": {
           "title": {
             "type": "string",
@@ -38,6 +38,14 @@
           "summary": {
             "type": "string",
             "description": "Summary description of the initiative"
+          },
+          "cumulative_progress": {
+            "type": "string",
+            "description": "Paragraph describing overall progress since the initiative's inception, including key milestones achieved and progress relative to original goals"
+          },
+          "last_quarter_progress": {
+            "type": "string",
+            "description": "Paragraph describing what was achieved or changed specifically in the current quarter"
           },
           "status": {
             "type": "string",
@@ -78,7 +86,7 @@
     },
     "headline_bullets": {
       "type": "array",
-      "description": "Up to 3 bullet points representing the most significant accomplishments or failures for the quarter, to be displayed on the quarter headline tile",
+      "description": "Up to 3 bullet points representing the most significant accomplishments, failures, or mixed/neutral results for the quarter, to be displayed on the quarter headline tile",
       "maxItems": 3,
       "items": {
         "type": "object",
@@ -86,12 +94,12 @@
         "properties": {
           "text": {
             "type": "string",
-            "description": "The bullet point text describing the accomplishment or failure"
+            "description": "The bullet point text describing the accomplishment, failure, or mixed/neutral result"
           },
           "indicator": {
             "type": "string",
-            "description": "Indicator showing whether this is an accomplishment (up) or failure (down)",
-            "enum": ["up", "down"]
+            "description": "Indicator showing whether this is an accomplishment (up), failure (down), or mixed/neutral (neutral - not strong enough in either direction)",
+            "enum": ["up", "down", "neutral"]
           }
         }
       }
@@ -99,6 +107,16 @@
     "quarterly_highlights": {
       "type": "string",
       "description": "Quarterly highlights section containing 1-2 paragraphs and bullet points summarizing the quarter's key developments in accessible language"
+    },
+    "overall_quarter_strength": {
+      "type": "string",
+      "description": "Overall assessment of the quarter's performance strength",
+      "enum": ["up", "down", "neutral"],
+      "enumDescriptions": {
+        "up": "Quarter shows strong positive performance, clear accomplishments, and material positive developments",
+        "down": "Quarter shows negative performance, clear failures or setbacks, and material negative developments",
+        "neutral": "Quarter shows mixed performance, ambiguous results, or not strong enough in either direction to be clearly positive or negative"
+      }
     }
   },
   "additionalProperties": false

@@ -161,6 +161,8 @@ export interface KPIMetric {
 export interface Initiative {
   title: string;
   summary: string;
+  cumulative_progress: string;
+  last_quarter_progress: string;
   status: 'new' | 'on track' | 'at risk';
   bullet_points: string[];
 }
@@ -181,9 +183,10 @@ export interface QuarterlyAnalysis {
   }>; // From database (optional, for future use)
   headline_bullets?: Array<{
     text: string;
-    indicator: 'up' | 'down';
+    indicator: 'up' | 'down' | 'neutral';
   }>; // From database - for quarter highlights display
   quarterly_highlights?: string; // From database
+  overall_quarter_strength?: 'up' | 'down' | 'neutral'; // Overall quarter performance strength
   // Preserved for UI compatibility
   growth_theses?: GrowthThesis[]; // Optional, for backward compatibility
   created_at?: string;

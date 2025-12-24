@@ -27,6 +27,22 @@ For each initiative, provide:
 
 **Summary**: A brief description of what the initiative is and why it matters. This can evolve slightly each quarter as more context becomes available, but should maintain the core meaning.
 
+**Cumulative Progress**: Provide a dedicated paragraph describing overall progress since the initiative's inception. This should include:
+- Key milestones achieved since the initiative began
+- Progress relative to original goals or targets
+- Overall trajectory and how far the initiative has come
+- Major accomplishments or developments over time
+- Use concrete numbers, percentages, or clear quantitative indicators where available
+- Write in accessible language suitable for a high schooler audience
+
+**Last Quarter Progress**: Provide a dedicated paragraph describing what was achieved or changed specifically in the CURRENT quarter. This should include:
+- Specific developments, achievements, or changes in this quarter
+- Quarter-over-quarter progress or changes
+- New milestones reached or targets met this quarter
+- Any setbacks or challenges encountered this quarter
+- Use concrete numbers, percentages, or clear quantitative indicators where available
+- Write in accessible language suitable for a high schooler audience
+
 **Status**: Indicate the current status as one of:
 - "new" - newly introduced initiative
 - "on track" - progressing as expected
@@ -34,13 +50,12 @@ For each initiative, provide:
 
 Note that status can change based on company performance - an initiative may move from "new" to "on track" to "at risk" or vice versa depending on how the company is performing.
 
-**Bullet Points**: Provide 2-4 bullet points that:
-- Are written for a high schooler audience (avoid jargon, use simple, clear language that is relatable)
+**Bullet Points**: Provide 2-4 bullet points that complement the cumulative and last quarter progress sections. These should:
+- Be written for a high schooler audience (avoid jargon, use simple, clear language that is relatable)
 - Include measurable metrics (specific numbers, percentages, targets, or clear quantitative indicators) and why it is important for the company valuation
-- Highlight cumulative progress on the initiative since its inception, showing how far it has come relative to its original goals or milestones
-- Optionally, include what has been achieved in the CURRENT quarter as additional context, but place primary emphasis on overall progress to date
-
-Each bullet point should be concrete and specific - avoid vague statements. Include actual numbers, percentages, or clear metrics that demonstrate progress. Write in language that a high school student could understand without needing financial expertise.
+- Support and reinforce the information in the cumulative progress and last quarter progress paragraphs
+- Be concrete and specific - avoid vague statements
+- Include actual numbers, percentages, or clear metrics that demonstrate progress
 
 Structure initiatives by PRIORITY/IMPACT - lead with the most significant growth drivers based on their OVERALL COMPANY IMPACT. Consider:
 - Revenue/EPS contribution relative to company size
@@ -81,10 +96,10 @@ Connect these headline bullets to the most important initiatives discussed above
 Provide up to 3 bullet points that represent the most significant accomplishments or failures, focusing especially on tangible outcomes tied to the company's highest-impact strategic initiatives.
 
 For each bullet point:
-- Clearly state whether the result was an accomplishment (positive) or failure (negative).
+- Clearly state whether the result was an accomplishment (positive), failure (negative), or mixed/neutral (not strong enough in either direction - use this when results are ambiguous, mixed signals, or not materially positive or negative).
 - Summarize in 1-2 concise sentences how the company performed on its most impactful initiative(s) this quarter.
 - Include specific metrics or numbers when available, but prioritize outcomes and significance over simply listing metrics.
-- Make clear whether the item reflects strong success, meaningful progress, a shortfall, or a setback in relation to strategic goals.
+- Make clear whether the item reflects strong success, meaningful progress, a shortfall, a setback, or mixed/neutral performance in relation to strategic goals.
 
 These headline bullets should:
 - Highlight the most meaningful wins or problems in executing the current quarter’s key initiatives.
@@ -93,7 +108,26 @@ These headline bullets should:
 
 Do not include more than 3 items—focus only on the most impactful results linked to core initiatives and overall company performance.
 
-## 5. Quarterly Highlights
+## 5. Overall Quarter Strength
+
+Provide an overall assessment of the quarter's performance strength. This should be a single value that captures the overall direction and strength of the quarter's results.
+
+Determine the overall quarter strength as one of:
+- **"up"**: The quarter shows strong positive performance with clear accomplishments and material positive developments. This should be used when the quarter demonstrates meaningful progress, strong execution on key initiatives, positive financial results, or other material positive outcomes that would be viewed favorably by investors.
+- **"down"**: The quarter shows negative performance with clear failures, setbacks, or material negative developments. This should be used when the quarter demonstrates meaningful problems, poor execution, negative financial results, or other material negative outcomes that would be viewed unfavorably by investors.
+- **"neutral"**: The quarter shows mixed performance, ambiguous results, or not strong enough in either direction to be clearly positive or negative. This should be used when results are mixed (some positive, some negative), when performance is flat or unchanged, when developments are not material enough to be clearly positive or negative, or when the overall assessment is ambiguous.
+
+Consider the following factors when determining overall quarter strength:
+- The balance and magnitude of positive vs negative developments
+- The materiality of outcomes relative to the company's overall operations
+- The execution on key strategic initiatives
+- Financial performance and key metrics
+- Whether the quarter meaningfully changes the investment thesis (positive or negative)
+- The overall trajectory and momentum
+
+The overall quarter strength should reflect a holistic assessment of the quarter, not just individual headline bullets. A quarter with one strong positive development but multiple smaller negatives might still be "up" if the positive is highly material. Conversely, a quarter with mixed signals where nothing is clearly dominant should be "neutral".
+
+## 6. Quarterly Highlights
 
 Provide a concise summary of the quarter's key developments written in accessible, less technical language suitable for a high schooler audience. This section should:
 
@@ -107,7 +141,7 @@ Example format:
 
 This section should serve as an accessible summary that captures the essence of the quarter's performance in language that is clear and relatable.
 
-## 6. Analysis
+## 7. Analysis
 
 This section acts as a comprehensive memory bank capturing ALL relevant information for future analysis. Be thorough and detailed - capture everything that might be useful for understanding this quarter and comparing future quarters.
 
@@ -172,8 +206,10 @@ Write each section clearly with the section headers as shown above. Be thorough,
 For the Strategic Initiatives section, ensure each initiative includes:
 - A short, stable title (consistent across quarters when the same initiative continues)
 - A summary that can evolve with more context
+- A cumulative progress paragraph describing overall progress since inception
+- A last quarter progress paragraph describing current quarter achievements
 - A status that reflects current performance
-- 2-4 bullet points that are relatable, measurable, and highlight current quarter progress
+- 2-4 bullet points that complement the cumulative and last quarter progress sections
 
 For the Quarter Headline Bullets section, ensure it provides up to 3 bullet points representing the most significant accomplishments or failures for the quarter.
 

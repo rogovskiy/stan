@@ -95,6 +95,7 @@ export default function QuarterlyAnalysisPage() {
               initiatives: currentData.initiatives || [],
               business_model: currentData.business_model,
               changes: currentData.changes,
+              overall_quarter_strength: currentData.overall_quarter_strength,
               created_at: currentData.created_at,
               num_documents: currentData.num_documents,
               kpi_metrics: [
@@ -117,7 +118,7 @@ export default function QuarterlyAnalysisPage() {
                 ? currentData.headline_bullets.slice(0, 3).map(bullet => ({
                     text: bullet.text,
                     impact: undefined,
-                    trend: bullet.indicator === 'up' ? 'up' as const : 'down' as const
+                    trend: bullet.indicator === 'up' ? 'up' as const : bullet.indicator === 'down' ? 'down' as const : 'neutral' as const
                   }))
                 : (currentData.initiatives || [])
                     .slice(0, 3)
@@ -163,7 +164,7 @@ export default function QuarterlyAnalysisPage() {
               highlights = data.headline_bullets.slice(0, 3).map(bullet => ({
                 text: bullet.text,
                 impact: undefined, // headline_bullets don't have impact values
-                trend: bullet.indicator === 'up' ? 'up' as const : 'down' as const
+                trend: bullet.indicator === 'up' ? 'up' as const : bullet.indicator === 'down' ? 'down' as const : 'neutral' as const
               }));
             } else if (data.initiatives && data.initiatives.length > 0) {
               // Fallback: generate from initiatives
@@ -183,6 +184,7 @@ export default function QuarterlyAnalysisPage() {
               business_model: data.business_model,
               changes: data.changes,
               headline_bullets: data.headline_bullets,
+              overall_quarter_strength: data.overall_quarter_strength,
               created_at: data.created_at,
               num_documents: data.num_documents,
               // Keep mock data for these fields

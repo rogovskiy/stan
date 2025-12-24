@@ -85,36 +85,132 @@ function BusinessModelCard({
 
   const normalizeName = (name: string) => name.toLowerCase().replace(/\b(growth|revenue|sales|margin|expansion|ratio|efficiency)\b/gi, '').trim();
 
-  // Get metric from initiative chart, or fallback to KPI matching
-  const initiativesWithMetric = initiatives.map(initiative => {
-    // First, try to get metric from initiative.chart.metrics[0]
-    const chartMetric = initiative.chart?.metrics?.[0];
-    
-    if (chartMetric) {
-      // Use the metric from chart specification
-      return { 
-        initiative, 
-        metricName: chartMetric,
-        metricValue: 12.5, // Hardcoded for now
-        metricUnit: '%' // Default to percentage, could be determined from metric name or chart spec
-      };
-    }
-    
-    // Fallback: Match with KPIs (for backward compatibility)
-    const matchingKPI = kpiMetrics.find(kpi => {
-      const kpiName = normalizeName(kpi.name);
-      const initiativeName = normalizeName(initiative.title || '');
-      return kpiName === initiativeName || kpiName.includes(initiativeName) || initiativeName.includes(kpiName);
-    });
-    
-    return { 
-      initiative, 
-      metricName: matchingKPI?.name,
-      metricValue: matchingKPI?.values?.[0],
-      metricUnit: matchingKPI?.unit,
-      kpi: matchingKPI
+  // Fetch KPI timeseries data
+  const [kpiTimeseriesData, setKpiTimeseriesData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchKPIData = async () => {
+      try {
+        const response = await fetch(`/api/tickers/timeseries/kpi/${ticker}`);
+        if (response.ok) {
+          const result = await response.json();
+          setKpiTimeseriesData(result);
+        }
+      } catch (err) {
+        console.warn('Error fetching KPI timeseries for initiatives:', err);
+      }
     };
-  });
+
+    if (ticker) {
+      fetchKPIData();
+    }
+  }, [ticker]);
+
+  // Helper function to find KPI by name (flexible matching)
+  const findKPIInTimeseries = (metricName: string): any => {
+    if (!kpiTimeseriesData?.kpis) return null;
+    
+    const normalizedMetric = metricName.toLowerCase().trim();
+    
+    return kpiTimeseriesData.kpis.find((kpi: any) => {
+      const kpiName = (kpi.name || '').toLowerCase().trim();
+      // Exact match or contains match
+      return kpiName === normalizedMetric || 
+             kpiName.includes(normalizedMetric) || 
+             normalizedMetric.includes(kpiName);
+    });
+  };
+
+  // Get metric from initiative chart, or fallback to KPI matching
+  const initiativesWithMetric = useMemo(() => {
+    return initiatives.map(initiative => {
+      // First, try to get metric from initiative.chart.metrics[0]
+      const chartMetric = initiative.chart?.metrics?.[0];
+      
+      if (chartMetric) {
+        // Try to find the metric in KPI timeseries
+        const kpi = findKPIInTimeseries(chartMetric);
+        
+        // Get the latest value from KPI timeseries (first value in the array is most recent)
+        let metricValue: number | undefined = undefined;
+        let metricUnit: string = '%'; // Default to percentage
+        
+        if (kpi && kpi.values && kpi.values.length > 0) {
+          // Values are sorted with most recent first
+          const latestValue = kpi.values[0];
+          const previousValue = kpi.values.length > 1 ? kpi.values[1] : null;
+          metricUnit = kpi.unit || latestValue.unit || '%';
+          
+          // If unit is already a percentage, show the value as-is
+          // Otherwise, calculate quarterly change
+          if (metricUnit === '%') {
+            metricValue = latestValue.value;
+          } else if (previousValue && previousValue.value !== null && previousValue.value !== undefined && previousValue.value !== 0) {
+            // Calculate quarterly change: ((current - previous) / previous) * 100
+            const change = ((latestValue.value - previousValue.value) / previousValue.value) * 100;
+            metricValue = change;
+            metricUnit = '%'; // Change is always shown as percentage
+          } else {
+            // If we can't calculate change, show the raw value
+            metricValue = latestValue.value;
+          }
+        }
+        
+        return { 
+          initiative, 
+          metricName: chartMetric,
+          metricValue,
+          metricUnit
+        };
+      }
+      
+      // Fallback: Match with KPIs (for backward compatibility)
+      const matchingKPI = kpiMetrics.find(kpi => {
+        const kpiName = normalizeName(kpi.name);
+        const initiativeName = normalizeName(initiative.title || '');
+        return kpiName === initiativeName || kpiName.includes(initiativeName) || initiativeName.includes(kpiName);
+      });
+      
+      if (matchingKPI) {
+        const unit = matchingKPI.unit || '%';
+        let metricValue: number | undefined = matchingKPI.values?.[0];
+        
+        // If unit is not a percentage and we have at least 2 values, calculate quarterly change
+        if (unit !== '%' && matchingKPI.values && matchingKPI.values.length >= 2) {
+          const current = matchingKPI.values[0];
+          const previous = matchingKPI.values[1];
+          if (previous !== null && previous !== undefined && previous !== 0) {
+            const change = ((current - previous) / previous) * 100;
+            metricValue = change;
+            // Change is always shown as percentage
+            return {
+              initiative,
+              metricName: matchingKPI.name,
+              metricValue,
+              metricUnit: '%',
+              kpi: matchingKPI
+            };
+          }
+        }
+        
+        return { 
+          initiative, 
+          metricName: matchingKPI.name,
+          metricValue,
+          metricUnit: unit,
+          kpi: matchingKPI
+        };
+      }
+      
+      return {
+        initiative,
+        metricName: undefined,
+        metricValue: undefined,
+        metricUnit: '%',
+        kpi: undefined
+      };
+    });
+  }, [initiatives, kpiMetrics, kpiTimeseriesData, ticker]);
 
   return (
     <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
@@ -174,11 +270,11 @@ function BusinessModelCard({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       </div>
-                      {metricName && metricValue !== undefined && (
+                      {metricName && metricValue !== undefined && metricValue !== null && (
                         <div className="mt-2 pt-2 border-t border-gray-200">
                           <div className="flex items-center justify-between">
                             <span className="text-xs text-gray-500">{metricName}</span>
-                            <span className="text-xs font-semibold text-green-600">
+                            <span className={`text-xs font-semibold ${metricValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                               {metricUnit === '%' ? (metricValue >= 0 ? '+' : '') + metricValue.toFixed(1) + '%' : metricValue.toFixed(1)}
                             </span>
                           </div>

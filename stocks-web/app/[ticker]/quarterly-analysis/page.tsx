@@ -6,7 +6,7 @@ import QuarterlyAnalysisView from '../../components/QuarterlyAnalysisView';
 import AppNavigation from '../../components/AppNavigation';
 import CompanyInfoCard from '../../components/CompanyInfoCard';
 import NewsWidget from '../../components/NewsWidget';
-import { QuarterlyAnalysis, DailyDataPoint, QuarterlyDataPoint } from '../../types/api';
+import { QuarterlyAnalysis, DailyDataPoint, QuarterlyDataPoint, Initiative, QuarterHighlight } from '../../types/api';
 import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint as CalcQuarterlyDataPoint, getTrailing4QuartersEps, calculateAnnualEps, calculateFairValue } from '../../lib/calculations';
 
 export default function QuarterlyAnalysisPage() {
@@ -129,14 +129,14 @@ export default function QuarterlyAnalysisPage() {
                 }
               ],
               highlights: currentData.headline_bullets && currentData.headline_bullets.length > 0
-                ? currentData.headline_bullets.slice(0, 3).map(bullet => ({
+                ? currentData.headline_bullets.slice(0, 3).map((bullet: { text: string; indicator: 'up' | 'down' | 'neutral' }) => ({
                     text: bullet.text,
                     impact: undefined,
                     trend: bullet.indicator === 'up' ? 'up' as const : bullet.indicator === 'down' ? 'down' as const : 'neutral' as const
                   }))
                 : (currentData.initiatives || [])
                     .slice(0, 3)
-                    .map(initiative => ({
+                    .map((initiative: Initiative) => ({
                       text: initiative.title,
                       impact: initiative.status === 'new' ? 'New' : initiative.status === 'on track' ? 'On Track' : 'At Risk',
                       trend: initiative.status === 'at risk' ? 'down' as const : 'up' as const
@@ -175,14 +175,14 @@ export default function QuarterlyAnalysisPage() {
             
             if (data.headline_bullets && data.headline_bullets.length > 0) {
               // Use headline_bullets from database (preferred)
-              highlights = data.headline_bullets.slice(0, 3).map(bullet => ({
+              highlights = data.headline_bullets.slice(0, 3).map((bullet: { text: string; indicator: 'up' | 'down' | 'neutral' }) => ({
                 text: bullet.text,
                 impact: undefined, // headline_bullets don't have impact values
                 trend: bullet.indicator === 'up' ? 'up' as const : bullet.indicator === 'down' ? 'down' as const : 'neutral' as const
               }));
             } else if (data.initiatives && data.initiatives.length > 0) {
               // Fallback: generate from initiatives
-              highlights = data.initiatives.slice(0, 3).map(initiative => ({
+              highlights = data.initiatives.slice(0, 3).map((initiative: Initiative) => ({
                 text: initiative.title,
                 impact: initiative.status === 'new' ? 'New' : initiative.status === 'on track' ? 'On Track' : 'At Risk',
                 trend: initiative.status === 'at risk' ? 'down' as const : 'up' as const

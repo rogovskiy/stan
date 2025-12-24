@@ -9,14 +9,23 @@ interface CompactChartProps {
   renderingMode?: 'small' | 'medium' | 'large';
 }
 
+// Standard metrics that come from quarterly timeseries
+const STANDARD_METRICS = ['EPS', 'FCF', 'Revenue'];
+
 export default function CompactChart({
   chartSpec,
   ticker,
   renderingMode = 'small'
 }: CompactChartProps) {
   const [quarterlyData, setQuarterlyData] = useState<QuarterlyDataPoint[]>([]);
+  const [kpiTimeseriesData, setKpiTimeseriesData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Check if we need custom KPI data
+  const hasCustomMetrics = useMemo(() => {
+    return chartSpec.metrics.some(metric => !STANDARD_METRICS.includes(metric));
+  }, [chartSpec.metrics]);
 
   // Fetch quarterly timeseries data
   useEffect(() => {
@@ -25,13 +34,30 @@ export default function CompactChart({
       setError(null);
       
       try {
-        const response = await fetch(`/api/quarterly-timeseries/${ticker}`);
-        if (!response.ok) {
+        // Always fetch quarterly data
+        const quarterlyResponse = await fetch(`/api/quarterly-timeseries/${ticker}`);
+        if (!quarterlyResponse.ok) {
           throw new Error('Failed to fetch quarterly data');
         }
         
-        const result = await response.json();
-        setQuarterlyData(result.data || []);
+        const quarterlyResult = await quarterlyResponse.json();
+        setQuarterlyData(quarterlyResult.data || []);
+
+        // Fetch KPI timeseries if we have custom metrics
+        if (hasCustomMetrics) {
+          try {
+            const kpiResponse = await fetch(`/api/tickers/timeseries/kpi/${ticker}`);
+            if (kpiResponse.ok) {
+              const kpiResult = await kpiResponse.json();
+              setKpiTimeseriesData(kpiResult);
+            } else {
+              console.warn('KPI timeseries not available, custom metrics may not render');
+            }
+          } catch (kpiErr) {
+            console.warn('Error fetching KPI timeseries:', kpiErr);
+            // Don't fail the whole chart if KPI fetch fails
+          }
+        }
       } catch (err) {
         console.error('Error fetching quarterly data:', err);
         setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -43,7 +69,43 @@ export default function CompactChart({
     if (ticker && chartSpec.metrics.length > 0) {
       fetchData();
     }
-  }, [ticker, chartSpec.metrics]);
+  }, [ticker, chartSpec.metrics, hasCustomMetrics]);
+
+  // Helper function to find KPI by name (flexible matching)
+  const findKPIByName = (metricName: string): any => {
+    if (!kpiTimeseriesData?.kpis) return null;
+    
+    const normalizedMetric = metricName.toLowerCase().trim();
+    
+    return kpiTimeseriesData.kpis.find((kpi: any) => {
+      const kpiName = (kpi.name || '').toLowerCase().trim();
+      // Exact match or contains match
+      return kpiName === normalizedMetric || 
+             kpiName.includes(normalizedMetric) || 
+             normalizedMetric.includes(kpiName);
+    });
+  };
+
+  // Build a map of quarter_key -> KPI values for the primary metric
+  const kpiDataMap = useMemo(() => {
+    const map = new Map<string, number>(); // quarter_key -> value
+    
+    if (!kpiTimeseriesData?.kpis) return map;
+    
+    const primaryMetric = chartSpec.metrics[0];
+    if (!primaryMetric || STANDARD_METRICS.includes(primaryMetric)) return map;
+    
+    const kpi = findKPIByName(primaryMetric);
+    if (!kpi || !kpi.values) return map;
+    
+    kpi.values.forEach((valueObj: any) => {
+      if (valueObj.quarter && valueObj.value !== null && valueObj.value !== undefined) {
+        map.set(valueObj.quarter, valueObj.value);
+      }
+    });
+    
+    return map;
+  }, [kpiTimeseriesData, chartSpec.metrics]);
 
   // Transform data based on frequency and metrics
   const chartData = useMemo(() => {
@@ -65,6 +127,11 @@ export default function CompactChart({
       sortedData.forEach(point => {
         const year = point.year;
         
+        // Build quarter_key from point
+        const quarterMatch = point.quarter?.match(/Q(\d)/);
+        const quarterNum = quarterMatch ? quarterMatch[1] : '';
+        const quarterKey = `${year}Q${quarterNum}`;
+        
         if (!annualMap.has(year)) {
           annualMap.set(year, []);
         }
@@ -78,17 +145,13 @@ export default function CompactChart({
           value = point.eps_adjusted ?? point.eps ?? null;
         } else if (primaryMetric === 'FCF') {
           // FCF would need to be added to QuarterlyDataPoint type
-          // For now, check if it exists as a property
           value = (point as any).fcf ?? (point as any).free_cash_flow ?? null;
         } else if (primaryMetric === 'Revenue') {
           // Revenue would need to be added to QuarterlyDataPoint type
-          // For now, check if it exists as a property
           value = (point as any).revenue ?? (point as any).total_revenue ?? null;
         } else {
-          // Try to find custom KPI as a property on the data point
-          // Convert metric name to snake_case or camelCase variations
-          const metricKey = primaryMetric.toLowerCase().replace(/\s+/g, '_');
-          value = (point as any)[metricKey] ?? (point as any)[primaryMetric] ?? null;
+          // Custom KPI - look it up in KPI data map
+          value = kpiDataMap.get(quarterKey) ?? null;
         }
         
         if (value !== null) {
@@ -117,6 +180,10 @@ export default function CompactChart({
       return sortedData.slice(-10).map(point => {
         let value: number | null = null;
         
+        const quarterMatch = point.quarter?.match(/Q(\d)/);
+        const quarterNum = quarterMatch ? quarterMatch[1] : '';
+        const quarterKey = `${point.year}Q${quarterNum}`;
+        
         if (primaryMetric === 'EPS') {
           value = point.eps_adjusted ?? point.eps ?? null;
         } else if (primaryMetric === 'FCF') {
@@ -124,13 +191,10 @@ export default function CompactChart({
         } else if (primaryMetric === 'Revenue') {
           value = (point as any).revenue ?? (point as any).total_revenue ?? null;
         } else {
-          // Try to find custom KPI as a property on the data point
-          const metricKey = primaryMetric.toLowerCase().replace(/\s+/g, '_');
-          value = (point as any)[metricKey] ?? (point as any)[primaryMetric] ?? null;
+          // Custom KPI - look it up in KPI data map
+          value = kpiDataMap.get(quarterKey) ?? null;
         }
         
-        const quarterMatch = point.quarter?.match(/Q(\d)/);
-        const quarterNum = quarterMatch ? quarterMatch[1] : '';
         const yearLabel = point.year.toString().slice(-2);
         
         return {
@@ -140,7 +204,7 @@ export default function CompactChart({
         };
       });
     }
-  }, [quarterlyData, chartSpec.frequency, chartSpec.metrics]);
+  }, [quarterlyData, chartSpec.frequency, chartSpec.metrics, kpiDataMap]);
 
   if (loading) {
     return (
@@ -172,13 +236,13 @@ export default function CompactChart({
 
   return (
     <div className="w-full">
-      <div className="flex items-end justify-center h-16 gap-1">
+      <div className="flex items-end justify-center h-16 gap-1.5">
         {chartData.map((data, idx) => {
           const barHeight = maxValue > 0 ? (data.value / maxValue) * chartHeight : 0;
           const isLatest = idx === chartData.length - 1;
           
           return (
-            <div key={idx} className="flex flex-col items-center justify-end" style={{ width: '6px' }}>
+            <div key={idx} className="flex flex-col items-center justify-end" style={{ width: '10px' }}>
               <div
                 className={`w-full rounded-sm transition-all ${
                   isLatest ? 'bg-green-500' : 'bg-gray-300'

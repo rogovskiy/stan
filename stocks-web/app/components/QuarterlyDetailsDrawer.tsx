@@ -464,7 +464,6 @@ export function QuarterlyDetailsDrawer({
                     key={index}
                     chartSpec={chart}
                     ticker={ticker}
-                    title={`Quarter Highlights Chart ${index + 1}`}
                     height={300}
                   />
                 ))}

@@ -384,35 +384,6 @@ export default function Home() {
                 analystPriceTargets={analystPriceTargets}
               />
 
-              {/* Valuation Methods Details (if multiple methods) */}
-              {valuation && valuation.methods && valuation.methods.length > 1 && (
-                <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-                  <details>
-                    <summary className="cursor-pointer text-sm font-semibold text-gray-700 hover:text-gray-900 mb-4">
-                      View All Valuation Methods ({valuation.methods.length})
-                    </summary>
-                    <div className="space-y-4 pt-4 border-t border-gray-200">
-                      {valuation.methods
-                        .sort((a, b) => a.preference_order - b.preference_order)
-                        .map((method, index) => (
-                          <div key={index} className="border-l-4 border-blue-500 pl-4 py-2">
-                            <div className="flex items-center gap-3 mb-2">
-                              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                                {method.method}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                Preference #{method.preference_order}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-700 leading-relaxed">
-                              {method.explanation}
-                            </p>
-                          </div>
-                        ))}
-                    </div>
-                  </details>
-                </div>
-              )}
             </div>
 
             {/* Right Sidebar - 1/4 width */}

@@ -249,7 +249,6 @@ export function InitiativeDrawer({
               <AnalysisChart
                 chartSpec={initiative.chart}
                 ticker={ticker}
-                title="Initiative Progress"
                 height={300}
               />
             </div>

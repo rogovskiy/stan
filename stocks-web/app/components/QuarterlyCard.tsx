@@ -129,7 +129,9 @@ export function QuarterlyCard({ analysis, index, onClick }: QuarterlyCardProps) 
           ))
         ) : analysis.quarterly_highlights ? (
           <div className="text-xs text-gray-600 line-clamp-3">
-            {analysis.quarterly_highlights.substring(0, 150)}...
+            {typeof analysis.quarterly_highlights === 'string' 
+              ? analysis.quarterly_highlights.substring(0, 150) + '...'
+              : analysis.quarterly_highlights.text.substring(0, 150) + '...'}
           </div>
         ) : null}
       </div>

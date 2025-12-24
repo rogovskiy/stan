@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { linkRawKPIToDefinition } from '../../../../lib/firebaseService';
+import { linkRawKPIToDefinition } from '../../../../lib/services/kpiDefinitionService';
 
 export async function POST(
   request: Request,

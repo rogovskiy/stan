@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getPromptFragments, savePromptFragment, deletePromptFragment } from '../../../lib/firebaseService';
+import { getPromptFragments, savePromptFragment, deletePromptFragment } from '../../../lib/services/promptFragmentService';
 
 export async function GET(
   request: Request,

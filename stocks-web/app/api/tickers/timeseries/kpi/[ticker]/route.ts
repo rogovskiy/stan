@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../../../../lib/firebaseService';
+import { getKPITimeseries } from '../../../../../lib/services/timeseriesService';
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +18,7 @@ export async function GET(
     console.log(`KPI Timeseries API Request: ${ticker}`);
 
     // Try to get cached KPI timeseries data
-    const kpiData = await firebaseService.getKPITimeseries(ticker);
+    const kpiData = await getKPITimeseries(ticker);
 
     if (!kpiData) {
       return NextResponse.json(

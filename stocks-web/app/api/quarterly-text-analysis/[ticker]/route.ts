@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getQuarterlyTextAnalysis } from '../../../lib/firebaseService';
+import { getQuarterlyTextAnalysis } from '../../../lib/services/quarterlyTextAnalysisService';
 
 export async function GET(
   request: Request,

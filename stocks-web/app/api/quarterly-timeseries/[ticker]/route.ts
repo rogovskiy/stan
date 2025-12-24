@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../../lib/firebaseService';
+import { getQuarterlyTimeseries } from '../../../lib/services/timeseriesService';
 import { QuarterlyDataResponse, QuarterlyDataPoint } from '../../../types/api';
 
 export async function GET(
@@ -19,7 +19,7 @@ export async function GET(
     console.log(`Quarterly API Request: ${ticker}`);
 
     // Try to get cached quarterly time series data
-    const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker);
+    const timeseriesData = await getQuarterlyTimeseries(ticker);
 
     if (!timeseriesData) {
       return NextResponse.json(

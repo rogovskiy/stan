@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createKPIDefinition } from '../../../../lib/firebaseService';
+import { createKPIDefinition } from '../../../../lib/services/kpiDefinitionService';
 
 export async function POST(
   request: Request,

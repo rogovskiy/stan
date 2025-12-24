@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getKPIDefinitions } from '../../../lib/firebaseService';
+import { getKPIDefinitions } from '../../../lib/services/kpiDefinitionService';
 
 export async function GET(
   request: Request,

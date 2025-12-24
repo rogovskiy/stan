@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllTickers, getTickerMetadata } from '../../lib/firebaseService';
+import { getAllTickers, getTickerMetadata } from '../../lib/services/tickerMetadataService';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

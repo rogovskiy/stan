@@ -1,7 +1,7 @@
 import YahooFinance from 'yahoo-finance2';
 import { DataPoint, HistoricalChartResponse } from '../types/api';
 import { FirebaseCache, AnnualPriceData, QuarterlyFinancialData, TickerMetadata } from './cache';
-import { firebaseService } from './firebaseService';
+import { getQuarterlyTimeseries } from './services/timeseriesService';
 
 export class YFinanceService {
   private yf: any;
@@ -519,7 +519,7 @@ export class YFinanceService {
 
   private async calculateMaxPeriodFromQuarterlyData(ticker: string): Promise<number> {
     try {
-      const timeseriesData = await firebaseService.getQuarterlyTimeseries(ticker);
+      const timeseriesData = await getQuarterlyTimeseries(ticker);
       
       if (!timeseriesData) {
         return 50; // Fallback to 50 years if no quarterly data

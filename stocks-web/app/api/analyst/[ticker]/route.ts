@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../../lib/firebaseService';
+import { getAnalystData } from '../../../lib/services/analystDataService';
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +18,7 @@ export async function GET(
     console.log(`Analyst API Request: ${ticker}`);
 
     // Get latest consolidated analyst data
-    const analystData = await firebaseService.getAnalystData(ticker);
+    const analystData = await getAnalystData(ticker);
 
     if (!analystData) {
       return NextResponse.json(

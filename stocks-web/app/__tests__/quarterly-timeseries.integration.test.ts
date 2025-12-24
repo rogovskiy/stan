@@ -1,13 +1,14 @@
-import { firebaseService } from '../lib/firebaseService';
+import { getQuarterlyTimeseries } from '../lib/services/timeseriesService';
+import { getTickerMetadata, hasTickerData } from '../lib/services/tickerMetadataService';
 
 describe('Quarterly Time Series Integration Tests', () => {
   test('getQuarterlyTimeseries method exists and can retrieve AAPL quarterly timeseries', async () => {
     // Test that the method exists
-    expect(firebaseService.getQuarterlyTimeseries).toBeDefined();
-    expect(typeof firebaseService.getQuarterlyTimeseries).toBe('function');
+    expect(getQuarterlyTimeseries).toBeDefined();
+    expect(typeof getQuarterlyTimeseries).toBe('function');
     
     // Test retrieving the AAPL quarterly timeseries data from ticker-specific location
-    const result = await firebaseService.getQuarterlyTimeseries('AAPL');
+    const result = await getQuarterlyTimeseries('AAPL');
     
     console.log('getQuarterlyTimeseries result:', result);
     
@@ -41,7 +42,7 @@ describe('Quarterly Time Series Integration Tests', () => {
 
   test('can access Firebase and retrieve ticker metadata', async () => {
     // Test basic Firebase connectivity by getting ticker metadata
-    const metadata = await firebaseService.getTickerMetadata('AAPL');
+    const metadata = await getTickerMetadata('AAPL');
     console.log('AAPL metadata:', metadata);
     
     if (metadata) {
@@ -52,7 +53,7 @@ describe('Quarterly Time Series Integration Tests', () => {
 
   test('can check if ticker data exists', async () => {
     // Test basic Firebase read operations
-    const hasData = await firebaseService.hasTickerData('AAPL');
+    const hasData = await hasTickerData('AAPL');
     console.log('AAPL has ticker data:', hasData);
     expect(typeof hasData).toBe('boolean');
   });

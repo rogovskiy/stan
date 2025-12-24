@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { firebaseService } from '../../../lib/firebaseService';
+import { getCompanySummary } from '../../../lib/services/companySummaryService';
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +18,7 @@ export async function GET(
     console.log(`Company Summary API Request: ${ticker}`);
 
     // Get company summary data
-    const summaryData = await firebaseService.getCompanySummary(ticker);
+    const summaryData = await getCompanySummary(ticker);
 
     if (!summaryData) {
       return NextResponse.json(

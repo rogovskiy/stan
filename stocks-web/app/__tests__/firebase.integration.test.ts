@@ -10,7 +10,7 @@ import {
   getTickers, 
   getAllTickers,
   type Ticker 
-} from '../lib/firebaseService';
+} from '../lib/services/tickerMetadataService';
 import { getApps, deleteApp } from 'firebase/app';
 import { terminate } from 'firebase/firestore';
 import { db } from '../lib/firebase';

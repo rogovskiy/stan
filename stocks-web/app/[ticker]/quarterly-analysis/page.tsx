@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import QuarterlyAnalysisView from '../../components/QuarterlyAnalysisView';
 import AppNavigation from '../../components/AppNavigation';
 import CompanyInfoCard from '../../components/CompanyInfoCard';
+import NewsWidget from '../../components/NewsWidget';
 import { QuarterlyAnalysis, DailyDataPoint, QuarterlyDataPoint } from '../../types/api';
 import { calculateNormalPERatio, calculateGrowthRate, QuarterlyDataPoint as CalcQuarterlyDataPoint, getTrailing4QuartersEps, calculateAnnualEps, calculateFairValue } from '../../lib/calculations';
 
@@ -284,6 +285,12 @@ export default function QuarterlyAnalysisPage() {
   const normalPERatio = useMemo(() => calculateNormalPERatio(quarterlyCalcData), [quarterlyCalcData]);
   const growthRate = useMemo(() => calculateGrowthRate(quarterlyCalcData), [quarterlyCalcData]);
   const fairValueRatio = 18;
+  
+  // Calculate quarterly growth rate from annual growth rate
+  const quarterlyGrowthRate = useMemo(() => {
+    if (growthRate === null || growthRate === undefined) return null;
+    return Math.pow(1 + growthRate / 100, 1 / 4) - 1;
+  }, [growthRate]);
 
   // Current snapshot for sidebar
   const currentSnapshot = useMemo(() => {
@@ -393,11 +400,19 @@ export default function QuarterlyAnalysisPage() {
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
             {/* Main Content Area - 3/4 width */}
             <div className="xl:col-span-3">
-              <QuarterlyAnalysisView analyses={analyses} />
+              <QuarterlyAnalysisView 
+                analyses={analyses}
+                dailyData={dailyData}
+                quarterlyData={quarterlyData}
+                normalPERatio={normalPERatio}
+                growthRate={growthRate}
+                fairValueRatio={fairValueRatio}
+                quarterlyGrowthRate={quarterlyGrowthRate}
+              />
             </div>
 
             {/* Right Sidebar - 1/4 width */}
-            <div className="xl:col-span-1">
+            <div className="xl:col-span-1 space-y-6">
               <CompanyInfoCard 
                 ticker={ticker}
                 showPrice={true}
@@ -408,6 +423,9 @@ export default function QuarterlyAnalysisPage() {
                 peRatio={currentSnapshot?.peRatio}
                 dividend={currentSnapshot?.dividendsPOR}
               />
+              
+              {/* News Widget */}
+              <NewsWidget ticker={ticker} />
             </div>
           </div>
         </div>

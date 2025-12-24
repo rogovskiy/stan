@@ -31,21 +31,28 @@
  */
 
 import { useState, useMemo } from 'react';
-import { QuarterlyAnalysis, EPSGrowthDriver, KPIMetric, Initiative } from '../types/api';
+import { QuarterlyAnalysis, EPSGrowthDriver, KPIMetric, Initiative, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 import { GrowthCardWithKPI } from './GrowthCardWithKPI';
 import { QuarterlyCard } from './QuarterlyCard';
 import { QuarterlyDetailsDrawer } from './QuarterlyDetailsDrawer';
+import StockAnalysisChart from './StockAnalysisChart';
 
 // Business Model Card Component with Key Growth Factors
 function BusinessModelCard({ 
   businessModel, 
   initiatives, 
-  kpiMetrics 
+  kpiMetrics,
+  analyses,
+  onQuarterClick
 }: { 
   businessModel: { summary?: string; industry?: string; maturity_level?: string };
   initiatives: Initiative[];
   kpiMetrics: KPIMetric[];
+  analyses: QuarterlyAnalysis[];
+  onQuarterClick: (analysis: QuarterlyAnalysis) => void;
 }) {
+  const [expandedInitiatives, setExpandedInitiatives] = useState<Set<number>>(new Set());
+
   const getMaturityColor = (level?: string): string => {
     switch (level) {
       case 'early': return 'bg-blue-100 text-blue-800 border-blue-200';
@@ -80,53 +87,130 @@ function BusinessModelCard({
 
   return (
     <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-      <div className="flex items-start justify-between mb-6">
+      <div className="mb-6">
         <h3 className="text-lg font-bold text-gray-900">Business Model</h3>
-        {businessModel.maturity_level && (
-          <span className={`px-3 py-1 text-xs font-semibold rounded-md border flex-shrink-0 ${getMaturityColor(businessModel.maturity_level)}`}>
-            {getMaturityLabel(businessModel.maturity_level)}
-          </span>
-        )}
       </div>
       
       <div className="space-y-6">
         {/* Business Model Info */}
         <div className="space-y-4">
-          {businessModel.industry && (
-            <div>
-              <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Industry</h4>
-              <p className="text-gray-900">{businessModel.industry}</p>
-            </div>
-          )}
-          
           {businessModel.summary && (
             <div>
-              <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Overview</h4>
               <p className="text-gray-700 leading-relaxed">{businessModel.summary}</p>
             </div>
           )}
         </div>
 
-        {/* Initiatives - All in One Row */}
+        {/* Initiatives - All in One Row (Each Collapsible) */}
         {initiatives.length > 0 && (
           <div>
-            <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">Initiatives</h4>
-            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Company Initiatives</h4>
+              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Annual EPS</h4>
+            </div>
+            <div className="flex items-start gap-6">
+              {/* Initiatives List */}
+              <div className="flex-1 flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
               {initiativesWithKPI.map((item, idx) => {
                 const { initiative, kpi } = item;
+                const isExpanded = expandedInitiatives.has(idx);
+                
+                const toggleExpand = () => {
+                  const newExpanded = new Set(expandedInitiatives);
+                  if (isExpanded) {
+                    newExpanded.delete(idx);
+                  } else {
+                    newExpanded.add(idx);
+                  }
+                  setExpandedInitiatives(newExpanded);
+                };
+
                 return kpi ? (
-                  <div key={idx} className="flex-shrink-0 w-64">
-                    <InitiativeCardWithKPI metric={kpi} initiative={initiative} />
+                  <div key={idx} className="flex-shrink-0 w-80">
+                    <div className="bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-3 hover:shadow-sm transition-shadow">
+                      <button
+                        onClick={toggleExpand}
+                        className="w-full flex items-center justify-between mb-2"
+                      >
+                        <h4 className="text-sm font-bold text-gray-900 leading-tight text-left">
+                          {initiative.title}
+                        </h4>
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={initiative.status} />
+                          <svg
+                            className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      </button>
+                      {isExpanded && (
+                        <div>
+                          {initiative.bullet_points && initiative.bullet_points.length > 0 && (
+                            <div className="mb-3 space-y-1.5">
+                              {initiative.bullet_points.map((point, ptIdx) => (
+                                <div key={ptIdx} className="flex items-start gap-1.5 text-xs text-gray-800 leading-relaxed">
+                                  <span className="text-blue-600 mt-0.5 flex-shrink-0 font-bold">•</span>
+                                  <span>{point}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="mt-3 pt-3 border-t border-gray-200">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium text-gray-500">{kpi.name}</span>
+                              {kpi.trend && (
+                                <div className={`flex-shrink-0 ${kpi.trend === 'up' ? 'text-green-600' : kpi.trend === 'down' ? 'text-red-600' : 'text-gray-500'}`}>
+                                  {kpi.trend === 'up' && (
+                                    <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                    </svg>
+                                  )}
+                                  {kpi.trend === 'down' && (
+                                    <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                                    </svg>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {kpi.values.length > 0 && (
+                              <div className="mb-1">
+                                <div className={`text-sm font-semibold ${kpi.trend === 'up' ? 'text-green-600' : 'text-gray-600'}`}>
+                                  {kpi.unit === '%' ? (kpi.values[0] >= 0 ? '+' : '') + kpi.values[0].toFixed(1) + '%' : kpi.values[0].toFixed(1)}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <div key={idx} className="flex-shrink-0 w-64 bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-bold text-gray-900 leading-tight">
+                  <div key={idx} className="flex-shrink-0 w-80 bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-3">
+                    <button
+                      onClick={toggleExpand}
+                      className="w-full flex items-center justify-between mb-2"
+                    >
+                      <h4 className="text-sm font-bold text-gray-900 leading-tight text-left">
                         {initiative.title}
                       </h4>
-                      <StatusBadge status={initiative.status} />
-                    </div>
-                    {initiative.bullet_points && initiative.bullet_points.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={initiative.status} />
+                        <svg
+                          className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </button>
+                    {isExpanded && initiative.bullet_points && initiative.bullet_points.length > 0 && (
                       <div className="mb-2 space-y-1.5">
                         {initiative.bullet_points.map((point, ptIdx) => (
                           <div key={ptIdx} className="flex items-start gap-1.5 text-xs text-gray-800 leading-relaxed">
@@ -139,9 +223,112 @@ function BusinessModelCard({
                   </div>
                 );
               })}
+              </div>
+              
+              {/* Annual EPS Bar Chart */}
+              <div className="flex-shrink-0 pt-1">
+                <AnnualEPSChart />
+              </div>
             </div>
           </div>
         )}
+
+        {/* Quarter Highlights - Simplified */}
+        {analyses.length > 0 && (
+          <div>
+            <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Quarter Highlights</h4>
+            <div className="flex gap-2 flex-wrap">
+              {analyses.map((analysis) => {
+                // Determine trend from highlights or initiatives
+                const highlights = analysis.highlights || [];
+                const hasPositiveTrend = highlights.some(h => h.trend === 'up') || 
+                  (analysis.initiatives && analysis.initiatives.some(i => i.status !== 'at risk'));
+                const hasNegativeTrend = highlights.some(h => h.trend === 'down') || 
+                  (analysis.initiatives && analysis.initiatives.some(i => i.status === 'at risk'));
+                
+                const trend = hasPositiveTrend && !hasNegativeTrend ? 'up' : 
+                             hasNegativeTrend ? 'down' : 'neutral';
+                
+                const formatQuarterLabel = (quarterKey: string): string => {
+                  const match = quarterKey.match(/^(\d{4})Q(\d)$/);
+                  return match ? `${match[1]} Q${match[2]}` : quarterKey;
+                };
+
+                return (
+                  <button
+                    key={analysis.quarter_key}
+                    onClick={() => onQuarterClick(analysis)}
+                    className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-sm font-medium text-gray-900"
+                  >
+                    <span>{formatQuarterLabel(analysis.quarter_key)}</span>
+                    {trend === 'up' && (
+                      <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                      </svg>
+                    )}
+                    {trend === 'down' && (
+                      <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                      </svg>
+                    )}
+                    {trend === 'neutral' && (
+                      <div className="w-4 h-4 rounded-full bg-gray-300"></div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Annual EPS Chart Component
+function AnnualEPSChart() {
+  // Sample annual EPS data - 10 years
+  const epsData = [
+    { year: '16', eps: 2.31 },
+    { year: '17', eps: 2.50 },
+    { year: '18', eps: 2.98 },
+    { year: '19', eps: 2.97 },
+    { year: '20', eps: 3.28 },
+    { year: '21', eps: 5.61 },
+    { year: '22', eps: 6.11 },
+    { year: '23', eps: 6.13 },
+    { year: '24', eps: 6.75 },
+    { year: '25', eps: 7.20 }
+  ];
+
+  const maxEps = Math.max(...epsData.map(d => d.eps));
+  const chartHeight = 60;
+
+  return (
+    <div className="w-full">
+      <div className="flex items-end justify-center h-16 gap-1">
+        {epsData.map((data, idx) => {
+          const barHeight = (data.eps / maxEps) * chartHeight;
+          const isLatest = idx === epsData.length - 1;
+          
+          return (
+            <div key={idx} className="flex flex-col items-center justify-end" style={{ width: '6px' }}>
+              <div
+                className={`w-full rounded-sm transition-all ${
+                  isLatest ? 'bg-green-500' : 'bg-gray-300'
+                }`}
+                style={{ 
+                  height: `${Math.max(barHeight, 3)}px`,
+                  minHeight: '3px'
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between mt-1.5 px-1 text-[9px] text-gray-400">
+        <span>FY{epsData[0].year}</span>
+        <span className="text-green-600 font-medium">FY{epsData[epsData.length - 1].year}</span>
       </div>
     </div>
   );
@@ -161,15 +348,22 @@ function StatusBadge({ status }: { status: 'new' | 'on track' | 'at risk' }) {
   const getStatusLabel = (status: 'new' | 'on track' | 'at risk'): string => {
     switch (status) {
       case 'new': return 'New';
-      case 'on track': return 'On Track';
+      case 'on track': return '';
       case 'at risk': return 'At Risk';
       default: return status;
     }
   };
 
+  const label = getStatusLabel(status);
+  
+  // Don't render badge if there's no label (for 'on track')
+  if (!label) {
+    return null;
+  }
+
   return (
     <span className={`px-2 py-1 text-xs font-semibold rounded-md border flex-shrink-0 ${getStatusColor(status)}`}>
-      {getStatusLabel(status)}
+      {label}
     </span>
   );
 }
@@ -282,9 +476,23 @@ function InitiativeCardWithKPI({ metric, initiative }: { metric: KPIMetric; init
 
 interface QuarterlyAnalysisViewProps {
   analyses: QuarterlyAnalysis[];
+  dailyData?: DailyDataPoint[];
+  quarterlyData?: QuarterlyDataPoint[];
+  normalPERatio?: number | null;
+  growthRate?: number | null;
+  fairValueRatio?: number;
+  quarterlyGrowthRate?: number | null;
 }
 
-export default function QuarterlyAnalysisView({ analyses }: QuarterlyAnalysisViewProps) {
+export default function QuarterlyAnalysisView({ 
+  analyses,
+  dailyData = [],
+  quarterlyData = [],
+  normalPERatio = null,
+  growthRate = null,
+  fairValueRatio = 18,
+  quarterlyGrowthRate = null
+}: QuarterlyAnalysisViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedQuarter, setSelectedQuarter] = useState<QuarterlyAnalysis | null>(null);
 
@@ -318,17 +526,29 @@ export default function QuarterlyAnalysisView({ analyses }: QuarterlyAnalysisVie
           businessModel={businessModel}
           initiatives={initiatives}
           kpiMetrics={kpiMetrics}
-        />
-      )}
-
-      {/* Quarter Highlights Section */}
-      <QuarterlyTimelineSummary 
         analyses={sortedAnalyses} 
         onQuarterClick={(analysis) => {
           setSelectedQuarter(analysis);
           setDrawerOpen(true);
         }}
       />
+      )}
+
+      {/* Valuation Section */}
+      {dailyData.length > 0 && quarterlyData.length > 0 && (
+        <ValuationSection
+          dailyData={dailyData}
+          quarterlyData={quarterlyData}
+          normalPERatio={normalPERatio}
+          growthRate={growthRate}
+          fairValueRatio={fairValueRatio}
+          quarterlyGrowthRate={quarterlyGrowthRate}
+        />
+      )}
+
+      {/* Investment Ideas */}
+      <InvestmentIdeasSection />
+
 
       {/* Quarter Details Drawer */}
       {drawerOpen && selectedQuarter && (
@@ -345,6 +565,171 @@ export default function QuarterlyAnalysisView({ analyses }: QuarterlyAnalysisVie
   );
 }
 
+// Investment Ideas Section Component
+function InvestmentIdeasSection() {
+  const investmentIdeas = [
+    {
+      title: 'Steady returns',
+      timeFrame: '1–2 years',
+      idea: 'Apple continues generating strong cash flow and buying back shares. The company has demonstrated consistent ability to return capital to shareholders through buybacks, which reduces share count and increases earnings per share. With a strong balance sheet and predictable revenue streams from iPhone, Mac, and Services, Apple can maintain this strategy even in moderate economic downturns. The buyback program has historically been a key driver of shareholder value, and there\'s no indication this will change in the near term.',
+      mainRisk: 'Earnings slow more than expected.',
+      assumedValueCreated: 600,
+      impliedAnnualReturn: 4.1
+    },
+    {
+      title: 'Services drive profits',
+      timeFrame: '3–5 years',
+      idea: 'Services grow faster than hardware and improve profit margins. Apple\'s Services segment, which includes App Store, iCloud, Apple Music, Apple Pay, and other subscription services, has been growing at a faster rate than hardware sales. This shift is significant because Services have much higher profit margins (typically 60-70%) compared to hardware (30-40%). As Services become a larger portion of revenue, overall company margins should expand. The installed base of over 2 billion active devices provides a massive addressable market for these services, and Apple has been successfully monetizing this base through various subscription offerings.',
+      mainRisk: 'Pricing pressure or regulation limits growth.',
+      assumedValueCreated: 800,
+      impliedAnnualReturn: 5.2
+    },
+    {
+      title: 'New product platforms',
+      timeFrame: '7–10 years',
+      idea: 'Apple creates a new product category that adds a new revenue stream. Historically, Apple has successfully created entirely new product categories that have become massive revenue drivers - the iPhone (2007), iPad (2010), and Apple Watch (2015) are prime examples. The company is currently investing heavily in areas like augmented reality (AR), autonomous vehicles, and health technology. If Apple can successfully launch a new platform in any of these areas, it could unlock a new multi-billion dollar revenue stream. The company\'s track record of innovation, strong brand, and ecosystem integration gives it a significant advantage in bringing new products to market.',
+      mainRisk: 'This may never happen.',
+      assumedValueCreated: 1200,
+      impliedAnnualReturn: 6.8
+    }
+  ];
+
+  return (
+    <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
+      <h3 className="text-lg font-bold text-gray-900 mb-6">
+        Investment Ideas
+      </h3>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {investmentIdeas.map((idea, idx) => (
+          <div 
+            key={idx} 
+            className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition-all duration-200 hover:border-gray-300 flex flex-col h-full"
+          >
+            {/* Header with Time Frame */}
+            <div className="flex items-start justify-between mb-5">
+              <h4 className="text-base font-bold text-gray-900 leading-tight">{idea.title}</h4>
+              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 whitespace-nowrap">
+                {idea.timeFrame}
+              </span>
+            </div>
+            
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-2 gap-4 mb-5 pb-5 border-b border-gray-200">
+              {/* Assumed Value Created */}
+              <div>
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Assumed Value Created</div>
+                <div className="text-lg font-bold text-green-600">+${idea.assumedValueCreated}B</div>
+              </div>
+              
+              {/* Implied Annual Return */}
+              <div>
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Implied Annual Return</div>
+                <div className="text-lg font-semibold text-gray-900">~{idea.impliedAnnualReturn.toFixed(1)}%</div>
+              </div>
+            </div>
+            
+            {/* Content Area - Flex grow to push button down */}
+            <div className="flex-1 flex flex-col">
+              {/* Idea Section */}
+              <div className="mb-4">
+                <div className="flex items-start gap-2.5">
+                  <div className="mt-0.5 flex-shrink-0">
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">Idea</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">{idea.idea}</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Risk Section */}
+              <div className="pt-4 border-t border-gray-200 mb-4">
+                <div className="flex items-start gap-2.5">
+                  <div className="mt-0.5 flex-shrink-0">
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Main risk</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">{idea.mainRisk}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* CTA Button - Pushed to bottom with mt-auto */}
+              <button className="mt-auto w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-colors duration-200 border border-gray-200">
+                <span>Explore More</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Create Your Own Button */}
+      <button className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-300 hover:border-gray-400 rounded-lg text-sm font-medium text-gray-700 transition-all duration-200 group">
+        <svg className="w-4 h-4 text-gray-500 group-hover:text-gray-700 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+        <span>Create your own investment idea</span>
+      </button>
+    </div>
+  );
+}
+
+// Valuation Section Component
+function ValuationSection({
+  dailyData,
+  quarterlyData,
+  normalPERatio,
+  growthRate,
+  fairValueRatio,
+  quarterlyGrowthRate
+}: {
+  dailyData: DailyDataPoint[];
+  quarterlyData: QuarterlyDataPoint[];
+  normalPERatio: number | null;
+  growthRate: number | null;
+  fairValueRatio: number;
+  quarterlyGrowthRate: number | null;
+}) {
+  return (
+    <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
+      <h3 className="text-lg font-bold text-gray-900 mb-4">Valuation</h3>
+      
+      {/* Valuation Explanation */}
+      <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <p className="text-sm text-gray-700 leading-relaxed">
+          We value Apple using an <strong className="text-gray-900">EPS multiple approach</strong> based on the company's 
+          consistent earnings generation and predictable cash flow patterns. Apple's mature business model, 
+          strong balance sheet, and history of returning capital to shareholders make earnings per share 
+          a reliable metric for valuation. The fair value calculation uses a multiple of annual EPS, 
+          reflecting the company's ability to generate sustainable profits from its hardware and services ecosystem.
+        </p>
+      </div>
+
+      <StockAnalysisChart
+        dailyData={dailyData}
+        quarterlyData={quarterlyData}
+        currentPeriod="8y"
+        normalPERatio={normalPERatio}
+        fairValueRatio={fairValueRatio}
+        growthRate={growthRate}
+        quarterlyGrowthRate={quarterlyGrowthRate}
+        forecastYears={2}
+        analystPriceTargets={null}
+      />
+    </div>
+  );
+}
+
 // Compact Timeline Summary Component (Quarter Highlights Only)
 function QuarterlyTimelineSummary({ 
   analyses, 
@@ -357,18 +742,18 @@ function QuarterlyTimelineSummary({
 
   return (
     <div className="bg-white rounded-xl shadow-md border border-gray-200 p-4">
-      <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">
-        Quarter Highlights
-      </h3>
-      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-        {analyses.map((analysis, idx) => (
-          <QuarterlyCard
-            key={analysis.quarter_key}
-            analysis={analysis}
-            index={idx}
-            onClick={() => onQuarterClick(analysis)}
-          />
-        ))}
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">
+            Quarter Highlights
+          </h3>
+          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+            {analyses.map((analysis, idx) => (
+              <QuarterlyCard
+                key={analysis.quarter_key}
+                analysis={analysis}
+                index={idx}
+                onClick={() => onQuarterClick(analysis)}
+              />
+            ))}
       </div>
     </div>
   );

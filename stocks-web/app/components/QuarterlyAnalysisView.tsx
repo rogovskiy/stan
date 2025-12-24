@@ -31,10 +31,12 @@
  */
 
 import { useState, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { QuarterlyAnalysis, EPSGrowthDriver, KPIMetric, Initiative, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 import { GrowthCardWithKPI } from './GrowthCardWithKPI';
 import { QuarterlyCard } from './QuarterlyCard';
 import { QuarterlyDetailsDrawer } from './QuarterlyDetailsDrawer';
+import { InitiativeDrawer } from './InitiativeDrawer';
 import StockAnalysisChart from './StockAnalysisChart';
 
 // Business Model Card Component with Key Growth Factors
@@ -43,15 +45,16 @@ function BusinessModelCard({
   initiatives, 
   kpiMetrics,
   analyses,
-  onQuarterClick
+  onQuarterClick,
+  onInitiativeClick
 }: { 
   businessModel: { summary?: string; industry?: string; maturity_level?: string };
   initiatives: Initiative[];
   kpiMetrics: KPIMetric[];
   analyses: QuarterlyAnalysis[];
   onQuarterClick: (analysis: QuarterlyAnalysis) => void;
+  onInitiativeClick: (initiative: Initiative, kpi?: KPIMetric) => void;
 }) {
-  const [expandedInitiatives, setExpandedInitiatives] = useState<Set<number>>(new Set());
 
   const getMaturityColor = (level?: string): string => {
     switch (level) {
@@ -95,8 +98,10 @@ function BusinessModelCard({
         {/* Business Model Info */}
         <div className="space-y-4">
           {businessModel.summary && (
-            <div>
-              <p className="text-gray-700 leading-relaxed">{businessModel.summary}</p>
+            <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
+              <ReactMarkdown>
+                {businessModel.summary}
+              </ReactMarkdown>
             </div>
           )}
         </div>
@@ -113,113 +118,41 @@ function BusinessModelCard({
               <div className="flex-1 flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
               {initiativesWithKPI.map((item, idx) => {
                 const { initiative, kpi } = item;
-                const isExpanded = expandedInitiatives.has(idx);
                 
-                const toggleExpand = () => {
-                  const newExpanded = new Set(expandedInitiatives);
-                  if (isExpanded) {
-                    newExpanded.delete(idx);
-                  } else {
-                    newExpanded.add(idx);
-                  }
-                  setExpandedInitiatives(newExpanded);
+                const handleClick = () => {
+                  onInitiativeClick(initiative, kpi);
                 };
 
-                return kpi ? (
+                return (
                   <div key={idx} className="flex-shrink-0 w-80">
-                    <div className="bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-3 hover:shadow-sm transition-shadow">
-                      <button
-                        onClick={toggleExpand}
-                        className="w-full flex items-center justify-between mb-2"
-                      >
-                        <h4 className="text-sm font-bold text-gray-900 leading-tight text-left">
+                    <button
+                      onClick={handleClick}
+                      className="w-full bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-4 hover:shadow-md hover:border-gray-300 transition-all text-left"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-bold text-gray-900 leading-tight flex-1">
                           {initiative.title}
                         </h4>
-                        <div className="flex items-center gap-2">
-                          <StatusBadge status={initiative.status} />
-                          <svg
-                            className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </div>
-                      </button>
-                      {isExpanded && (
-                        <div>
-                          {initiative.bullet_points && initiative.bullet_points.length > 0 && (
-                            <div className="mb-3 space-y-1.5">
-                              {initiative.bullet_points.map((point, ptIdx) => (
-                                <div key={ptIdx} className="flex items-start gap-1.5 text-xs text-gray-800 leading-relaxed">
-                                  <span className="text-blue-600 mt-0.5 flex-shrink-0 font-bold">•</span>
-                                  <span>{point}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <div className="mt-3 pt-3 border-t border-gray-200">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-medium text-gray-500">{kpi.name}</span>
-                              {kpi.trend && (
-                                <div className={`flex-shrink-0 ${kpi.trend === 'up' ? 'text-green-600' : kpi.trend === 'down' ? 'text-red-600' : 'text-gray-500'}`}>
-                                  {kpi.trend === 'up' && (
-                                    <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                                    </svg>
-                                  )}
-                                  {kpi.trend === 'down' && (
-                                    <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
-                                    </svg>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            {kpi.values.length > 0 && (
-                              <div className="mb-1">
-                                <div className={`text-sm font-semibold ${kpi.trend === 'up' ? 'text-green-600' : 'text-gray-600'}`}>
-                                  {kpi.unit === '%' ? (kpi.values[0] >= 0 ? '+' : '') + kpi.values[0].toFixed(1) + '%' : kpi.values[0].toFixed(1)}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div key={idx} className="flex-shrink-0 w-80 bg-gradient-to-br from-white to-gray-50 rounded-lg border border-gray-200 p-3">
-                    <button
-                      onClick={toggleExpand}
-                      className="w-full flex items-center justify-between mb-2"
-                    >
-                      <h4 className="text-sm font-bold text-gray-900 leading-tight text-left">
-                        {initiative.title}
-                      </h4>
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={initiative.status} />
                         <svg
-                          className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                          className="w-4 h-4 text-gray-400 flex-shrink-0 ml-2"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
                         >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       </div>
-                    </button>
-                    {isExpanded && initiative.bullet_points && initiative.bullet_points.length > 0 && (
-                      <div className="mb-2 space-y-1.5">
-                        {initiative.bullet_points.map((point, ptIdx) => (
-                          <div key={ptIdx} className="flex items-start gap-1.5 text-xs text-gray-800 leading-relaxed">
-                            <span className="text-blue-600 mt-0.5 flex-shrink-0 font-bold">•</span>
-                            <span>{point}</span>
+                      {kpi && kpi.values.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-500">{kpi.name}</span>
+                            <span className={`text-xs font-semibold ${kpi.trend === 'up' ? 'text-green-600' : kpi.trend === 'down' ? 'text-red-600' : 'text-gray-600'}`}>
+                              {kpi.unit === '%' ? (kpi.values[0] >= 0 ? '+' : '') + kpi.values[0].toFixed(1) + '%' : kpi.values[0].toFixed(1)}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        </div>
+                      )}
+                    </button>
                   </div>
                 );
               })}
@@ -239,15 +172,8 @@ function BusinessModelCard({
             <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Quarter Highlights</h4>
             <div className="flex gap-2 flex-wrap">
               {analyses.map((analysis) => {
-                // Determine trend from highlights or initiatives
-                const highlights = analysis.highlights || [];
-                const hasPositiveTrend = highlights.some(h => h.trend === 'up') || 
-                  (analysis.initiatives && analysis.initiatives.some(i => i.status !== 'at risk'));
-                const hasNegativeTrend = highlights.some(h => h.trend === 'down') || 
-                  (analysis.initiatives && analysis.initiatives.some(i => i.status === 'at risk'));
-                
-                const trend = hasPositiveTrend && !hasNegativeTrend ? 'up' : 
-                             hasNegativeTrend ? 'down' : 'neutral';
+                // Use overall_quarter_strength from extracted data, fallback to 'neutral' if not available
+                const trend = analysis.overall_quarter_strength || 'neutral';
                 
                 const formatQuarterLabel = (quarterKey: string): string => {
                   const match = quarterKey.match(/^(\d{4})Q(\d)$/);
@@ -272,7 +198,9 @@ function BusinessModelCard({
                       </svg>
                     )}
                     {trend === 'neutral' && (
-                      <div className="w-4 h-4 rounded-full bg-gray-300"></div>
+                      <svg className="w-4 h-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14" />
+                      </svg>
                     )}
                   </button>
                 );
@@ -356,7 +284,18 @@ function StatusBadge({ status }: { status: 'new' | 'on track' | 'at risk' }) {
 
   const label = getStatusLabel(status);
   
-  // Don't render badge if there's no label (for 'on track')
+  // For 'on track', show an icon instead of text
+  if (status === 'on track') {
+    return (
+      <span className={`px-2 py-1 text-xs font-semibold rounded-md border flex-shrink-0 flex items-center justify-center ${getStatusColor(status)}`}>
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+        </svg>
+      </span>
+    );
+  }
+  
+  // Don't render badge if there's no label
   if (!label) {
     return null;
   }
@@ -495,6 +434,7 @@ export default function QuarterlyAnalysisView({
 }: QuarterlyAnalysisViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedQuarter, setSelectedQuarter] = useState<QuarterlyAnalysis | null>(null);
+  const [selectedInitiative, setSelectedInitiative] = useState<{ initiative: Initiative; kpi?: KPIMetric } | null>(null);
 
   // Sort analyses by quarter (most recent first)
   const sortedAnalyses = useMemo(() => {
@@ -526,12 +466,15 @@ export default function QuarterlyAnalysisView({
           businessModel={businessModel}
           initiatives={initiatives}
           kpiMetrics={kpiMetrics}
-        analyses={sortedAnalyses} 
-        onQuarterClick={(analysis) => {
-          setSelectedQuarter(analysis);
-          setDrawerOpen(true);
-        }}
-      />
+          analyses={sortedAnalyses} 
+          onQuarterClick={(analysis) => {
+            setSelectedQuarter(analysis);
+            setDrawerOpen(true);
+          }}
+          onInitiativeClick={(initiative, kpi) => {
+            setSelectedInitiative({ initiative, kpi });
+          }}
+        />
       )}
 
       {/* Valuation Section */}
@@ -558,6 +501,17 @@ export default function QuarterlyAnalysisView({
           onClose={() => {
             setDrawerOpen(false);
             setSelectedQuarter(null);
+          }}
+        />
+      )}
+
+      {/* Initiative Drawer */}
+      {selectedInitiative && (
+        <InitiativeDrawer
+          initiative={selectedInitiative.initiative}
+          kpi={selectedInitiative.kpi}
+          onClose={() => {
+            setSelectedInitiative(null);
           }}
         />
       )}

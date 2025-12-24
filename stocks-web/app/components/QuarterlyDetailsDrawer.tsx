@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { QuarterlyAnalysis, GrowthThesis, Initiative } from '../types/api';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
@@ -209,12 +210,48 @@ function InitiativeCard({ initiative }: { initiative: Initiative }) {
         </div>
 
         {isExpanded && (
-          <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
+          <div className="mt-3 pt-3 border-t border-gray-200 space-y-4">
+            {/* Initiative Summary */}
+            {initiative.summary && (
+              <div>
+                <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                  Summary
+                </h6>
+                <p className="text-sm text-gray-700 leading-relaxed">
+                  {initiative.summary}
+                </p>
+              </div>
+            )}
+            
+            {/* Cumulative Progress */}
             <div>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                {initiative.summary}
-              </p>
+              <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                Cumulative Progress
+              </h6>
+              {initiative.cumulative_progress && initiative.cumulative_progress.trim() ? (
+                <p className="text-sm text-gray-700 leading-relaxed">
+                  {initiative.cumulative_progress}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500 italic">No cumulative progress data available</p>
+              )}
             </div>
+            
+            {/* Last Quarter Progress */}
+            <div>
+              <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                Last Quarter Progress
+              </h6>
+              {initiative.last_quarter_progress && initiative.last_quarter_progress.trim() ? (
+                <p className="text-sm text-gray-700 leading-relaxed">
+                  {initiative.last_quarter_progress}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500 italic">No last quarter progress data available</p>
+              )}
+            </div>
+            
+            {/* Bullet Points */}
             {initiative.bullet_points && initiative.bullet_points.length > 0 && (
               <div>
                 <h6 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
@@ -352,29 +389,9 @@ export function QuarterlyDetailsDrawer({
   sortedAnalyses,
   onClose
 }: QuarterlyDetailsDrawerProps) {
-  const { paragraph, bullets } = useMemo(() => {
+  const summaryText = useMemo(() => {
     // Use quarterly_highlights if available, otherwise fall back to summary
-    const text = analysis.quarterly_highlights || analysis.summary || '';
-    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-    const paragraph: string[] = [];
-    const bullets: string[] = [];
-    let foundBullets = false;
-
-    for (const line of lines) {
-      if (line.match(/^[•\-\*]/)) {
-        foundBullets = true;
-        bullets.push(line.replace(/^[•\-\*]\s*/, ''));
-      } else if (!foundBullets) {
-        paragraph.push(line);
-      } else {
-        bullets.push(line);
-      }
-    }
-
-    return {
-      paragraph: paragraph.join(' '),
-      bullets
-    };
+    return analysis.quarterly_highlights || analysis.summary || '';
   }, [analysis.summary, analysis.quarterly_highlights]);
 
     const totalExpectedGrowth = (analysis.growth_theses || [])
@@ -418,20 +435,12 @@ export function QuarterlyDetailsDrawer({
             <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
               Summary
             </h4>
-            {paragraph && (
-              <p className="text-gray-700 leading-relaxed mb-4">
-                {paragraph}
-              </p>
-            )}
-            {bullets.length > 0 && (
-              <ul className="space-y-2">
-                {bullets.map((bullet, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-gray-700">
-                    <span className="text-blue-600 mt-1.5 flex-shrink-0">•</span>
-                    <span>{bullet}</span>
-                  </li>
-                ))}
-              </ul>
+            {summaryText && (
+              <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
+                <ReactMarkdown>
+                  {summaryText}
+                </ReactMarkdown>
+              </div>
             )}
           </div>
 
@@ -457,7 +466,9 @@ export function QuarterlyDetailsDrawer({
                         </svg>
                       )}
                       {highlight.trend === 'neutral' && (
-                        <div className="w-5 h-5 rounded-full bg-gray-300"></div>
+                        <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14" />
+                        </svg>
                       )}
                       {!highlight.trend && (
                         <span className="text-blue-600 text-lg font-bold">•</span>

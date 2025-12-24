@@ -40,6 +40,7 @@ import { InitiativeDrawer } from './InitiativeDrawer';
 import StockAnalysisChart from './StockAnalysisChart';
 import AnalysisChart from './AnalysisChart';
 import ValuationChartSelector from './ValuationChartSelector';
+import CompactChart from './CompactChart';
 
 // Business Model Card Component with Key Growth Factors
 function BusinessModelCard({ 
@@ -138,7 +139,11 @@ function BusinessModelCard({
           <div>
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Company Initiatives</h4>
-              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Annual EPS</h4>
+              <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">
+                {valuation?.business_model_chart 
+                  ? `${valuation.business_model_chart.frequency === 'annual' ? 'Annual' : 'Quarterly'} ${valuation.business_model_chart.metrics[0] || 'Chart'}`
+                  : 'Annual EPS2'}
+              </h4>
             </div>
             <div className="flex items-start gap-6">
               {/* Initiatives List */}
@@ -185,9 +190,19 @@ function BusinessModelCard({
               })}
               </div>
               
-              {/* Annual EPS Bar Chart */}
+              {/* Business Model Chart */}
               <div className="flex-shrink-0 pt-1">
-                <AnnualEPSChart />
+                {valuation?.business_model_chart ? (
+                  <CompactChart 
+                    chartSpec={valuation.business_model_chart} 
+                    ticker={ticker}
+                    renderingMode="small"
+                  />
+                ) : (
+                  <div className="w-full flex items-center justify-center h-16 text-xs text-gray-400">
+                    No chart data available
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -235,55 +250,6 @@ function BusinessModelCard({
             </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// Annual EPS Chart Component
-function AnnualEPSChart() {
-  // Sample annual EPS data - 10 years
-  const epsData = [
-    { year: '16', eps: 2.31 },
-    { year: '17', eps: 2.50 },
-    { year: '18', eps: 2.98 },
-    { year: '19', eps: 2.97 },
-    { year: '20', eps: 3.28 },
-    { year: '21', eps: 5.61 },
-    { year: '22', eps: 6.11 },
-    { year: '23', eps: 6.13 },
-    { year: '24', eps: 6.75 },
-    { year: '25', eps: 7.20 }
-  ];
-
-  const maxEps = Math.max(...epsData.map(d => d.eps));
-  const chartHeight = 60;
-
-  return (
-    <div className="w-full">
-      <div className="flex items-end justify-center h-16 gap-1">
-        {epsData.map((data, idx) => {
-          const barHeight = (data.eps / maxEps) * chartHeight;
-          const isLatest = idx === epsData.length - 1;
-          
-          return (
-            <div key={idx} className="flex flex-col items-center justify-end" style={{ width: '6px' }}>
-              <div
-                className={`w-full rounded-sm transition-all ${
-                  isLatest ? 'bg-green-500' : 'bg-gray-300'
-                }`}
-                style={{ 
-                  height: `${Math.max(barHeight, 3)}px`,
-                  minHeight: '3px'
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between mt-1.5 px-1 text-[9px] text-gray-400">
-        <span>FY{epsData[0].year}</span>
-        <span className="text-green-600 font-medium">FY{epsData[epsData.length - 1].year}</span>
       </div>
     </div>
   );

@@ -187,6 +187,108 @@ All analyst predictions are stored together in a single consolidated document pe
 
 ---
 
+### `/portfolios/{portfolioId}` (Portfolio Management)
+
+Portfolios are top-level collections that contain investment portfolios with positions. Each portfolio can have multiple positions, and positions can optionally link to investment theses.
+
+**Structure:**
+```
+/portfolios/{portfolioId}                    (Portfolio document)
+/portfolios/{portfolioId}/positions/{positionId}  (Position subcollection)
+```
+
+**Example: `/portfolios/abc123`**
+```json
+{
+  "name": "Growth Portfolio",
+  "description": "Long-term growth investments",
+  "userId": null,
+  "createdAt": "2024-11-20T10:00:00Z",
+  "updatedAt": "2024-11-20T15:30:00Z"
+}
+```
+
+**Example: `/portfolios/abc123/positions/xyz789`**
+```json
+{
+  "ticker": "AAPL",
+  "quantity": 100,
+  "purchaseDate": "2024-01-15",
+  "purchasePrice": 185.50,
+  "thesisId": "thesis-123",
+  "notes": "Bought on iPhone launch thesis",
+  "createdAt": "2024-11-20T10:15:00Z",
+  "updatedAt": "2024-11-20T10:15:00Z"
+}
+```
+
+**Fields:**
+- `name` (string, required): Portfolio name
+- `description` (string, optional): Portfolio description
+- `userId` (string, optional): User ID for multi-user support (future)
+- `createdAt` (timestamp): Creation timestamp
+- `updatedAt` (timestamp): Last update timestamp
+
+**Position Fields:**
+- `ticker` (string, required): Stock ticker symbol (uppercase)
+- `quantity` (number, required): Number of shares
+- `purchaseDate` (string, optional): ISO date string of purchase
+- `purchasePrice` (number, optional): Purchase price per share
+- `thesisId` (string, optional): Reference to investment thesis document
+- `notes` (string, optional): Additional notes about the position
+- `createdAt` (timestamp): Creation timestamp
+- `updatedAt` (timestamp): Last update timestamp
+
+**Benefits:**
+- ✅ Organized portfolio management with positions as subcollections
+- ✅ Optional linking to investment theses for tracking investment rationale
+- ✅ Flexible position tracking with optional date/price information
+- ✅ Supports multiple portfolios per user (when userId is implemented)
+
+---
+
+### `/watchlist/{itemId}` (Watchlist Management)
+
+Watchlist items are stocks you're watching or considering for investment but haven't purchased yet. This is separate from portfolios which contain actual positions.
+
+**Structure:**
+```
+/watchlist/{itemId}  (Watchlist item document)
+```
+
+**Example: `/watchlist/xyz789`**
+```json
+{
+  "ticker": "AAPL",
+  "notes": "Watching for iPhone launch impact",
+  "thesisId": "thesis-123",
+  "targetPrice": 180.00,
+  "priority": "high",
+  "userId": null,
+  "createdAt": "2024-11-20T10:00:00Z",
+  "updatedAt": "2024-11-20T15:30:00Z"
+}
+```
+
+**Fields:**
+- `ticker` (string, required): Stock ticker symbol (uppercase)
+- `notes` (string, optional): Notes about why you're watching this stock
+- `thesisId` (string, optional): Reference to investment thesis document
+- `targetPrice` (number, optional): Target price at which you'd consider buying
+- `priority` (string, optional): Priority level - "low", "medium", or "high" (default: "medium")
+- `userId` (string, optional): User ID for multi-user support (future)
+- `createdAt` (timestamp): Creation timestamp
+- `updatedAt` (timestamp): Last update timestamp
+
+**Benefits:**
+- ✅ Track stocks you're considering before making investment decisions
+- ✅ Set target prices for entry points
+- ✅ Priority levels help organize your watchlist
+- ✅ Optional linking to investment theses
+- ✅ Same top-level experience as portfolios in the UI
+
+---
+
 ## Query Patterns
 
 ### **Get stock metadata:**
@@ -303,4 +405,93 @@ const priceTargetHistory = snapshot.docs
     date: doc.data().fetched_at,
     priceTargets: doc.data().price_targets
   }));
+```
+
+### **Get all portfolios:**
+```javascript
+const portfoliosRef = collection(db, 'portfolios');
+const q = query(portfoliosRef, orderBy('createdAt', 'desc'));
+const snapshot = await getDocs(q);
+const portfolios = snapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
+```
+
+### **Get portfolio with positions:**
+```javascript
+// Get portfolio document
+const portfolioRef = doc(db, 'portfolios', 'abc123');
+const portfolioSnap = await getDoc(portfolioRef);
+const portfolio = portfolioSnap.data();
+
+// Get positions subcollection
+const positionsRef = collection(db, 'portfolios', 'abc123', 'positions');
+const positionsSnapshot = await getDocs(positionsRef);
+const positions = positionsSnapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
+```
+
+### **Add position to portfolio:**
+```javascript
+const positionsRef = collection(db, 'portfolios', 'abc123', 'positions');
+await addDoc(positionsRef, {
+  ticker: 'AAPL',
+  quantity: 100,
+  purchaseDate: '2024-01-15',
+  purchasePrice: 185.50,
+  thesisId: 'thesis-123',
+  notes: 'Bought on iPhone launch thesis',
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp()
+});
+```
+
+### **Query positions by ticker:**
+```javascript
+const positionsRef = collection(db, 'portfolios', 'abc123', 'positions');
+const q = query(positionsRef, where('ticker', '==', 'AAPL'));
+const snapshot = await getDocs(q);
+const aaplPositions = snapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
+```
+
+### **Get all watchlist items:**
+```javascript
+const watchlistRef = collection(db, 'watchlist');
+const q = query(watchlistRef, orderBy('createdAt', 'desc'));
+const snapshot = await getDocs(q);
+const items = snapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
+```
+
+### **Add item to watchlist:**
+```javascript
+const watchlistRef = collection(db, 'watchlist');
+await addDoc(watchlistRef, {
+  ticker: 'AAPL',
+  notes: 'Watching for iPhone launch impact',
+  thesisId: 'thesis-123',
+  targetPrice: 180.00,
+  priority: 'high',
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp()
+});
+```
+
+### **Query watchlist by priority:**
+```javascript
+const watchlistRef = collection(db, 'watchlist');
+const q = query(watchlistRef, where('priority', '==', 'high'));
+const snapshot = await getDocs(q);
+const highPriorityItems = snapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
 ```

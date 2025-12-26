@@ -30,3 +30,9 @@ export * from './rawKpiService';
 // Prompt fragment service
 export * from './promptFragmentService';
 
+// Portfolio service
+export * from './portfolioService';
+
+// Watchlist service
+export * from './watchlistService';
+

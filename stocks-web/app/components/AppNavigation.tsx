@@ -113,6 +113,16 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
               >
                 Analysis
               </Link>
+              <Link
+                href="/portfolios"
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === '/portfolios' || pathname?.startsWith('/portfolios')
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                Portfolio
+              </Link>
             </nav>
           </div>
           {/* Right side: User Menu with Logout */}

@@ -31,6 +31,7 @@
  */
 
 import { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import { QuarterlyAnalysis, EPSGrowthDriver, KPIMetric, Initiative, DailyDataPoint, QuarterlyDataPoint } from '../types/api';
 import { GrowthCardWithKPI } from './GrowthCardWithKPI';
@@ -604,7 +605,7 @@ export default function QuarterlyAnalysisView({
       )}
 
       {/* Investment Ideas */}
-      <InvestmentIdeasSection />
+      <InvestmentIdeasSection ticker={ticker} />
 
 
       {/* Quarter Details Drawer */}
@@ -635,7 +636,8 @@ export default function QuarterlyAnalysisView({
 }
 
 // Investment Ideas Section Component
-function InvestmentIdeasSection() {
+function InvestmentIdeasSection({ ticker }: { ticker: string }) {
+  const router = useRouter();
   const investmentIdeas = [
     {
       title: 'Steady returns',
@@ -731,7 +733,10 @@ function InvestmentIdeasSection() {
               </div>
 
               {/* CTA Button - Pushed to bottom with mt-auto */}
-              <button className="mt-auto w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-colors duration-200 border border-gray-200">
+              <button 
+                onClick={() => router.push(`/${ticker}/thesis`)}
+                className="mt-auto w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-colors duration-200 border border-gray-200"
+              >
                 <span>Explore More</span>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -743,7 +748,10 @@ function InvestmentIdeasSection() {
       </div>
 
       {/* Create Your Own Button */}
-      <button className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-300 hover:border-gray-400 rounded-lg text-sm font-medium text-gray-700 transition-all duration-200 group">
+      <button 
+        onClick={() => router.push(`/${ticker}/thesis`)}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-300 hover:border-gray-400 rounded-lg text-sm font-medium text-gray-700 transition-all duration-200 group"
+      >
         <svg className="w-4 h-4 text-gray-500 group-hover:text-gray-700 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
         </svg>

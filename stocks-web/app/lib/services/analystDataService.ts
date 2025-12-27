@@ -25,3 +25,4 @@ export async function getAnalystData(ticker: string): Promise<any | null> {
   }
 }
 
+

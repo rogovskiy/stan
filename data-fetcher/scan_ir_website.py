@@ -33,6 +33,9 @@ load_dotenv('.env.local')
 #   "AAPL": ["https://investor.apple.com/...", "https://another-url.com/..."]
 IR_URLS_FILE = os.path.join(os.path.dirname(__file__), 'ir_urls.json')
 
+# Batch size for processing links with Gemini (to avoid token limits)
+BATCH_SIZE = 50
+
 def load_ir_urls() -> Dict[str, List[str]]:
     """Load IR URLs from configuration file.
     
@@ -356,16 +359,32 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
                 print('No financial links found after filtering')
             return []
         
+        # Create mappings for URL preservation (used across all batches)
+        url_to_original_link = {link['url']: link for link in links_data}
+        global_index_to_original_link = {i: link for i, link in enumerate(links_data)}  # 0-indexed global index
+        
         if verbose:
-            print(f'Sending {len(links_data)} candidate links to Gemini for analysis...')
+            print(f'Sending {len(links_data)} candidate links to Gemini for analysis in {((len(links_data) - 1) // BATCH_SIZE) + 1} batch(es)...')
         
-        # Prepare prompt for Gemini
-        links_summary = '\n'.join([
-            f"{i+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
-            for i, link in enumerate(links_data)
-        ])
+        # Process links in batches
+        all_releases = []
+        num_batches = ((len(links_data) - 1) // BATCH_SIZE) + 1
         
-        prompt = f"""You are analyzing the investor relations page for {ticker}. 
+        for batch_num in range(num_batches):
+            batch_start = batch_num * BATCH_SIZE
+            batch_end = min(batch_start + BATCH_SIZE, len(links_data))
+            batch = links_data[batch_start:batch_end]
+            
+            if verbose:
+                print(f'\nProcessing batch {batch_num + 1}/{num_batches} (links {batch_start + 1}-{batch_end} of {len(links_data)})...')
+            
+            # Prepare prompt for this batch
+            links_summary = '\n'.join([
+                f"{j+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
+                for j, link in enumerate(batch)
+            ])
+            
+            prompt = f"""You are analyzing the investor relations page for {ticker}. 
 
 Below are links found on the page. Identify which links are relevant financial documents:
 
@@ -418,78 +437,99 @@ IMPORTANT:
 - If no date is found, use null for release_date
 - Return ALL relevant links found, not just a subset
 """
-        
-        # Call Gemini
-        if verbose:
-            print('Calling Gemini to identify relevant filings...')
-            print('\n' + '='*80)
-            print('PROMPT SENT TO GEMINI:')
-            print('='*80)
-            print(prompt)
-            print('='*80 + '\n')
-        
-        # Use model from env var or default to gemini-2.0-flash
-        model_name = get_gemini_model()
-        
-        # Combine system instruction with user prompt for Gemini
-        system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
-        full_prompt = f"{system_instruction}\n\n{prompt}"
-        
-        # Configure and call Gemini
-        generation_config = genai.types.GenerationConfig(
-            temperature=0.2,
-            max_output_tokens=8000,
-        )
-        
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                full_prompt,
-                generation_config=generation_config
+            
+            # Call Gemini for this batch
+            if verbose:
+                print(f'Calling Gemini for batch {batch_num + 1}...')
+            
+            # Use model from env var or default to gemini-2.0-flash
+            model_name = get_gemini_model()
+            
+            # Combine system instruction with user prompt for Gemini
+            system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
+            full_prompt = f"{system_instruction}\n\n{prompt}"
+            
+            # Configure and call Gemini
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=8000,
             )
             
-            # Extract text from response
             try:
-                result_text = response.text.strip()
-            except (ValueError, AttributeError) as text_error:
-                # Response might be blocked or have no text
-                if verbose:
-                    print(f'Warning: Could not extract text from Gemini response: {text_error}')
-                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                        print(f'Prompt feedback: {response.prompt_feedback}')
-                return []
-            
-            if not result_text:
-                if verbose:
-                    print('Warning: Gemini response was empty')
-                return []
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    full_prompt,
+                    generation_config=generation_config
+                )
                 
-        except Exception as e:
-            print(f'Error calling Gemini API: {e}')
+                # Extract text from response
+                try:
+                    result_text = response.text.strip()
+                except (ValueError, AttributeError) as text_error:
+                    # Response might be blocked or have no text
+                    if verbose:
+                        print(f'Warning: Could not extract text from Gemini response for batch {batch_num + 1}: {text_error}')
+                        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                            print(f'Prompt feedback: {response.prompt_feedback}')
+                    continue  # Skip this batch and continue with next
+                
+                if not result_text:
+                    if verbose:
+                        print(f'Warning: Gemini response was empty for batch {batch_num + 1}')
+                    continue  # Skip this batch and continue with next
+                    
+            except Exception as e:
+                print(f'Error calling Gemini API for batch {batch_num + 1}: {e}')
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
+                continue  # Skip this batch and continue with next
+            
             if verbose:
-                import traceback
-                traceback.print_exc()
+                print(f'Batch {batch_num + 1} response received (length: {len(result_text)} chars)')
+            
+            # Extract JSON from response
+            try:
+                result_text = extract_json_from_llm_response(result_text)
+                batch_releases = json.loads(result_text)
+                
+                # Map batch-local link_index (1-indexed within batch) to global index (0-indexed in links_data)
+                # and update the link_index in each release to the global index
+                for release in batch_releases:
+                    batch_local_index = release.get('link_index')  # 1-indexed within batch
+                    if batch_local_index and 1 <= batch_local_index <= len(batch):
+                        global_index = batch_start + (batch_local_index - 1)  # Convert to 0-indexed global
+                        release['_global_index'] = global_index  # Store global index for matching
+                    else:
+                        release['_global_index'] = None
+                
+                all_releases.extend(batch_releases)
+                
+            except json.JSONDecodeError as e:
+                print(f'Error parsing Gemini response JSON for batch {batch_num + 1}: {e}')
+                if verbose:
+                    response_preview = result_text[:500] if 'result_text' in locals() else "N/A"
+                    print(f'Response preview: {response_preview}')
+                continue  # Skip this batch and continue with next
+            except Exception as e:
+                print(f'Error processing batch {batch_num + 1} response: {e}')
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
+                continue  # Skip this batch and continue with next
+        
+        if not all_releases:
+            if verbose:
+                print('No releases found in any batch')
             return []
         
         if verbose:
-            print('='*80)
-            print('LLM RESPONSE:')
-            print('='*80)
-            print(result_text)
-            print('='*80 + '\n')
-        
-        # Create mappings for URL preservation
-        url_to_original_link = {link['url']: link for link in links_data}
-        index_to_original_link = {i+1: link for i, link in enumerate(links_data)}  # 1-indexed as shown in prompt
-        
-        # Extract JSON from response
-        result_text = extract_json_from_llm_response(result_text)
-        releases = json.loads(result_text)
+            print(f'\nTotal releases found across all batches: {len(all_releases)}')
         
         # Filter out Consolidated Financial Statements
-        original_count = len(releases)
+        original_count = len(all_releases)
         filtered_out = [
-            r for r in releases 
+            r for r in all_releases 
             if (
                 'consolidated financial' in r.get('title', '').lower() or
                 'consolidated financial' in r.get('url', '').lower() or
@@ -498,7 +538,7 @@ IMPORTANT:
         ]
         
         releases = [
-            r for r in releases 
+            r for r in all_releases 
             if not (
                 'consolidated financial' in r.get('title', '').lower() or
                 'consolidated financial' in r.get('url', '').lower() or
@@ -518,15 +558,15 @@ IMPORTANT:
             original_url = None
             original_link = None
             
-            # Try to match by link_index first (most reliable)
-            link_index = release.get('link_index')
-            if link_index and link_index in index_to_original_link:
-                original_link = index_to_original_link[link_index]
+            # Try to match by global index first (most reliable)
+            global_index = release.get('_global_index')
+            if global_index is not None and global_index in global_index_to_original_link:
+                original_link = global_index_to_original_link[global_index]
                 original_url = original_link['url']
                 if verbose:
                     llm_url = release.get('url', 'N/A')
                     if llm_url != original_url:
-                        print(f'  Using original URL from index {link_index}: {original_url[:60]}... (LLM had: {llm_url[:60]}...)')
+                        print(f'  Using original URL from global index {global_index}: {original_url[:60]}... (LLM had: {llm_url[:60]}...)')
             else:
                 # Fall back to URL matching
                 llm_url = release.get('url', '')
@@ -701,17 +741,86 @@ def get_gemini_model() -> str:
     """Get Gemini model from env var or return default"""
     return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 
-def download_document(url: str) -> Optional[bytes]:
-    """Download document from URL"""
+def download_document(url: str, verbose: bool = False) -> Optional[bytes]:
+    """Download document from URL
+    
+    Args:
+        url: URL to download
+        verbose: If True, print detailed error information
+        
+    Returns:
+        Document content as bytes, or None if download failed
+    """
     try:
         headers = {
-            'Accept': 'application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept': 'application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         response = requests.get(url, timeout=60, allow_redirects=True, headers=headers)
         response.raise_for_status()
         return response.content
+    except requests.exceptions.HTTPError as e:
+        # HTTP error (4xx, 5xx)
+        status_code = e.response.status_code if hasattr(e, 'response') and e.response else 'unknown'
+        error_msg = f'Error downloading document from {url}: HTTP {status_code} {e}'
+        
+        if verbose and hasattr(e, 'response') and e.response is not None:
+            # Add detailed information in verbose mode
+            error_msg += f'\n  Status Code: {e.response.status_code}'
+            error_msg += f'\n  Status Text: {e.response.reason}'
+            error_msg += f'\n  Response Headers: {dict(e.response.headers)}'
+            
+            # Try to get response text (might be helpful for debugging)
+            try:
+                response_text = e.response.text[:500]  # First 500 chars
+                if response_text:
+                    error_msg += f'\n  Response Preview: {response_text}'
+            except:
+                pass
+            
+            # Check for common error types
+            if status_code == 451:
+                error_msg += '\n  Note: 451 (Unavailable For Legal Reasons) - may indicate geographic/IP blocking or bot detection'
+            elif status_code == 403:
+                error_msg += '\n  Note: 403 (Forbidden) - server is blocking the request (may need different headers or authentication)'
+            elif status_code == 404:
+                error_msg += '\n  Note: 404 (Not Found) - document may have been moved or deleted'
+            elif status_code >= 500:
+                error_msg += '\n  Note: Server error - may be temporary, consider retrying'
+        
+        print(error_msg)
+        return None
+    except requests.exceptions.Timeout as e:
+        error_msg = f'Error downloading document from {url}: Request timeout after 60 seconds'
+        if verbose:
+            error_msg += f'\n  Exception: {e}'
+        print(error_msg)
+        return None
+    except requests.exceptions.ConnectionError as e:
+        error_msg = f'Error downloading document from {url}: Connection error'
+        if verbose:
+            error_msg += f'\n  Exception: {e}'
+            if hasattr(e, 'args') and e.args:
+                error_msg += f'\n  Details: {e.args[0]}'
+        print(error_msg)
+        return None
+    except requests.exceptions.RequestException as e:
+        error_msg = f'Error downloading document from {url}: Request exception: {e}'
+        if verbose:
+            import traceback
+            error_msg += f'\n  Traceback: {traceback.format_exc()}'
+        print(error_msg)
+        return None
     except Exception as e:
-        print(f'Error downloading document from {url}: {e}')
+        error_msg = f'Error downloading document from {url}: Unexpected error: {e}'
+        if verbose:
+            import traceback
+            error_msg += f'\n  Traceback: {traceback.format_exc()}'
+        print(error_msg)
         return None
 
 def find_pdf_links_in_html(html_content: str, base_url: str) -> List[str]:
@@ -857,7 +966,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
             if verbose:
                 print(f'Downloading: {release["title"]}')
             
-            content = download_document(release['url'])
+            content = download_document(release['url'], verbose=verbose)
             if not content:
                 if verbose:
                     print(f'  Skipped: Could not download')
@@ -963,7 +1072,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                         if verbose:
                             print(f'  Downloading associated PDF: {pdf_url[:60]}...')
                         
-                        pdf_content = download_document(pdf_url)
+                        pdf_content = download_document(pdf_url, verbose=verbose)
                         if not pdf_content:
                             if verbose:
                                 print(f'    Skipped: Could not download PDF')

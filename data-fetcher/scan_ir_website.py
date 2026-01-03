@@ -11,10 +11,10 @@ import json
 import argparse
 import sys
 import re
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urljoin, urlparse
-import requests
 import feedparser
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -22,6 +22,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 from firebase_cache import FirebaseCache
 from services.ir_url_service import IRURLService
+from services.ir_document_service import IRDocumentService
 import yfinance as yf
 import google.generativeai as genai  # Only needed for HTML parsing with LLM
 
@@ -248,25 +249,61 @@ def get_page_html_with_playwright(url: str, wait_time: int = 10, verbose: bool =
             print('Falling back to simple HTTP request...')
         return None
 
-def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[str, Any]]:
-    """Parse HTML page and use Gemini to identify earnings releases/presentations"""
+def _format_link_for_llm(index: int, link: Dict[str, Any]) -> str:
+    """Format a link dictionary for LLM prompt
+    
+    Args:
+        index: Link index (1-based)
+        link: Link dictionary with url, text, parent_text, date_context, is_pdf, html_attributes
+        
+    Returns:
+        Formatted string for LLM prompt
+    """
+    parts = [
+        f"{index}. Text: '{link['text']}'",
+        f"URL: {link['url']}",
+        f"Context: {link['parent_text']}",
+        f"Date: {link['date_context']}",
+        f"PDF: {link['is_pdf']}"
+    ]
+    
+    # Add HTML attributes if present
+    html_attrs = link.get('html_attributes', {})
+    if html_attrs:
+        # Format attributes as key=value pairs
+        attr_parts = []
+        for attr_name, attr_value in html_attrs.items():
+            if isinstance(attr_value, (list, tuple)):
+                attr_value = ' '.join(str(v) for v in attr_value)
+            attr_parts.append(f"{attr_name}={attr_value}")
+        
+        if attr_parts:
+            parts.append(f"Attributes: {', '.join(attr_parts)}")
+    
+    return ' | '.join(parts)
+
+def parse_html_page(url: str, ticker: str, verbose: bool = False, existing_urls: Optional[set] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Parse HTML page and use Gemini to identify earnings releases/presentations
+    
+    Args:
+        url: URL of the HTML page to parse
+        ticker: Stock ticker symbol
+        verbose: Whether to print verbose output
+        existing_urls: Set of URLs that already exist in the database (will be filtered out before Gemini)
+    
+    Returns:
+        Tuple of (releases_list, skipped_links_list) where skipped_links_list contains links that were
+        filtered out before Gemini because they already exist
+    """
     try:
         # Try to get HTML using Playwright first (for dynamic pages)
         html_content = get_page_html_with_playwright(url, wait_time=10, verbose=verbose)
         
-        # Fallback to simple HTTP request if Selenium fails
+        # Fallback: try again with longer timeout if Playwright failed
         if not html_content:
             if verbose:
-                print('Using simple HTTP request (page may not be fully rendered)')
-            headers = {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-            }
-            response = requests.get(url, timeout=30, headers=headers)
-            response.raise_for_status()
-            html_content = response.text
+                print('Retrying with Playwright with longer timeout (page may be slow to load)')
+            html_content = get_page_html_with_playwright(url, wait_time=30, verbose=verbose)
         
         if verbose:
             # Save HTML to file
@@ -305,18 +342,36 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
                         date_context = elem_text[:100]
                         break
             
+            # Extract HTML attributes from the <a> tag that might provide context
+            html_attributes = {}
+            # Common attributes that might be useful
+            useful_attrs = ['class', 'id', 'title', 'aria-label', 'data-*', 'role', 'download', 'type', 'rel']
+            
+            # Get all attributes from the link element
+            for attr_name, attr_value in link.attrs.items():
+                # Include all attributes, but format data-* attributes specially
+                if attr_name.startswith('data-'):
+                    html_attributes[attr_name] = attr_value
+                elif attr_name in ['class', 'id', 'title', 'aria-label', 'role', 'download', 'type', 'rel']:
+                    html_attributes[attr_name] = attr_value
+            
+            # Format class as string if it's a list (BeautifulSoup returns class as list)
+            if 'class' in html_attributes and isinstance(html_attributes['class'], list):
+                html_attributes['class'] = ' '.join(html_attributes['class'])
+            
             links_data.append({
                 'url': full_url,
                 'text': link_text,
                 'parent_text': parent_text,
                 'date_context': date_context,
-                'is_pdf': href.lower().endswith('.pdf') or 'pdf' in href.lower()
+                'is_pdf': href.lower().endswith('.pdf') or 'pdf' in href.lower(),
+                'html_attributes': html_attributes
             })
         
         if not links_data:
             if verbose:
                 print('No links found on page')
-            return []
+            return [], []
         
         # Pre-filter links to only include financial documents before sending to Gemini
         # This reduces token usage significantly
@@ -354,10 +409,24 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
         
         links_data = filtered_links
         
+        # Filter out already-downloaded URLs before sending to Gemini (saves API calls)
+        skipped_links = []
+        if existing_urls:
+            original_count = len(links_data)
+            skipped_links = [link for link in links_data if link['url'] in existing_urls]
+            links_data = [link for link in links_data if link['url'] not in existing_urls]
+            skipped_count = original_count - len(links_data)
+            if skipped_count > 0:
+                if verbose:
+                    print(f'Skipped {skipped_count} already-downloaded link(s) before Gemini analysis')
+                else:
+                    print(f'Skipped {skipped_count} already-downloaded link(s)')
+        
         if not links_data:
             if verbose:
-                print('No financial links found after filtering')
-            return []
+                print('No financial links found after filtering (or all were already downloaded)')
+            # Return empty releases but include skipped links for summary table
+            return [], skipped_links
         
         # Create mappings for URL preservation (used across all batches)
         url_to_original_link = {link['url']: link for link in links_data}
@@ -380,8 +449,7 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False) -> List[Dict[s
             
             # Prepare prompt for this batch
             links_summary = '\n'.join([
-                f"{j+1}. Text: '{link['text']}' | URL: {link['url']} | Context: {link['parent_text']} | Date: {link['date_context']} | PDF: {link['is_pdf']}"
-                for j, link in enumerate(batch)
+                _format_link_for_llm(j+1, link) for j, link in enumerate(batch)
             ])
             
             prompt = f"""You are analyzing the investor relations page for {ticker}. 
@@ -521,7 +589,8 @@ IMPORTANT:
         if not all_releases:
             if verbose:
                 print('No releases found in any batch')
-            return []
+            skipped_links_list = skipped_links if 'skipped_links' in locals() else []
+            return [], skipped_links_list
         
         if verbose:
             print(f'\nTotal releases found across all batches: {len(all_releases)}')
@@ -643,6 +712,18 @@ IMPORTANT:
                 continue
             
             # Use original URL, not LLM URL
+            # Store original link data for debugging (especially for missing fiscal info)
+            original_link_data = None
+            if original_link:
+                original_link_data = {
+                    'text': original_link.get('text', ''),
+                    'url': original_link.get('url', ''),
+                    'parent_text': original_link.get('parent_text', ''),
+                    'date_context': original_link.get('date_context', ''),
+                    'is_pdf': original_link.get('is_pdf', False),
+                    'html_attributes': original_link.get('html_attributes', {})
+                }
+            
             parsed_releases.append({
                 'title': release.get('title', ''),
                 'url': final_url,  # Use original URL from links_data
@@ -650,7 +731,8 @@ IMPORTANT:
                 'fiscal_year': fiscal_year,
                 'fiscal_quarter': fiscal_quarter,
                 'description': '',
-                'document_type': release.get('document_type', 'other')
+                'document_type': release.get('document_type', 'other'),
+                '_original_link_data': original_link_data  # Store for debugging
             })
         
         if verbose:
@@ -658,20 +740,168 @@ IMPORTANT:
             if len(parsed_releases) < len(links_data) * 0.3:  # If less than 30% of links were selected
                 print(f'⚠️  Warning: Only {len(parsed_releases)}/{len(links_data)} links were selected. This might be too restrictive.')
         
-        return parsed_releases
+        # Return releases and skipped links (for summary table)
+        skipped_links_list = skipped_links if 'skipped_links' in locals() else []
+        return parsed_releases, skipped_links_list
         
     except json.JSONDecodeError as e:
         print(f'Error parsing Gemini response: {e}')
         if verbose:
             response_preview = result_text[:500] if 'result_text' in locals() else "N/A"
             print(f'Response: {response_preview}')
-        return []
+        return [], []
     except Exception as e:
         print(f'Error parsing HTML page with LLM {url}: {e}')
         if verbose:
             import traceback
             traceback.print_exc()
-        return []
+        return [], []
+
+def print_link_classification_summary(releases: List[Dict[str, Any]], existing_urls: set, target_quarter: Optional[str] = None, skipped_links: Optional[List[Dict[str, Any]]] = None) -> None:
+    """Print a summary table showing each link with its classification and action
+    
+    Args:
+        releases: List of releases identified by Gemini
+        existing_urls: Set of URLs that already exist in the database
+        target_quarter: Optional target quarter to filter by (format: YYYYQN)
+        skipped_links: List of links that were skipped before Gemini (already exist)
+    """
+    if not releases and not skipped_links:
+        print('\nNo releases to display in summary table')
+        return
+    
+    # Add skipped links to the table (they were filtered out before Gemini)
+    if skipped_links:
+        for link in skipped_links:
+            releases.append({
+                'title': link.get('text', 'N/A'),
+                'url': link.get('url', 'N/A'),
+                'release_date': None,
+                'fiscal_year': None,
+                'fiscal_quarter': None,
+                'description': '',
+                'document_type': 'unknown',
+                '_skipped_before_gemini': True
+            })
+    
+    # Build table data
+    table_data = []
+    for release in releases:
+        url = release.get('url', 'N/A')
+        title = release.get('title', 'N/A')
+        fiscal_year = release.get('fiscal_year')
+        fiscal_quarter = release.get('fiscal_quarter')
+        doc_type = release.get('document_type', 'other')
+        release_date = release.get('release_date')
+        
+        # Format date (needed for all cases)
+        date_str = release_date.strftime("%Y-%m-%d") if release_date else "N/A"
+        
+        # Determine quarter/year
+        if fiscal_year and fiscal_quarter:
+            quarter_str = f"{fiscal_year}Q{fiscal_quarter}"
+        else:
+            quarter_str = "Unknown"
+        
+        # Determine action
+        if release.get('_skipped_before_gemini'):
+            action = "SKIP (already exists - filtered before Gemini)"
+        elif url in existing_urls:
+            action = "SKIP (already exists)"
+        elif not fiscal_year or not fiscal_quarter:
+            # Missing fiscal info - will be skipped during processing
+            # Show what's actually present
+            missing_parts = []
+            if not fiscal_year:
+                missing_parts.append("year")
+            if not fiscal_quarter:
+                missing_parts.append("quarter")
+            present_parts = []
+            if fiscal_year:
+                present_parts.append(f"year={fiscal_year}")
+            if fiscal_quarter:
+                present_parts.append(f"quarter={fiscal_quarter}")
+            
+            if present_parts:
+                action = f"IGNORE (missing {', '.join(missing_parts)}, has {', '.join(present_parts)})"
+            else:
+                action = "IGNORE (missing fiscal year and quarter)"
+            
+            # Store original link data for verbose output
+            table_data.append({
+                'url': url,
+                'title': title[:60] + '...' if len(title) > 60 else title,
+                'quarter': quarter_str,
+                'date': date_str,
+                'type': doc_type,
+                'action': action,
+                '_original_link_data': release.get('_original_link_data')  # Store for verbose output
+            })
+            continue  # Skip adding to table_data again below
+        elif target_quarter and quarter_str != target_quarter:
+            action = f"IGNORE (not {target_quarter})"
+        else:
+            action = "TO BE DOWNLOADED"
+        
+        table_data.append({
+            'url': url,
+            'title': title[:60] + '...' if len(title) > 60 else title,
+            'quarter': quarter_str,
+            'date': date_str,
+            'type': doc_type,
+            'action': action,
+            '_original_link_data': release.get('_original_link_data')  # Store for verbose output
+        })
+    
+    # Print table
+    print('\n' + '='*120)
+    print('LINK CLASSIFICATION SUMMARY')
+    print('='*120)
+    
+    # Header
+    print(f"{'Title':<60} {'Quarter':<12} {'Date':<12} {'Type':<20} {'Action':<30}")
+    print('-'*120)
+    
+    # Sort by quarter (newest first), then by action
+    def sort_key(x):
+        quarter = x['quarter']
+        if quarter == "Unknown":
+            return ("zzz", x['action'])
+        return (quarter, x['action'])
+    
+    table_data.sort(key=sort_key, reverse=True)
+    
+    # Print rows
+    for row in table_data:
+        print(f"{row['title']:<60} {row['quarter']:<12} {row['date']:<12} {row['type']:<20} {row['action']:<30}")
+        
+        # For links missing fiscal info, print full LLM input data
+        if 'IGNORE' in row['action'] and 'missing fiscal' in row['action'].lower():
+            original_data = row.get('_original_link_data')
+            if original_data:
+                print(f"  {'':>60} Full LLM input data:")
+                print(f"  {'':>60}   Text: '{original_data.get('text', 'N/A')}'")
+                print(f"  {'':>60}   URL: {original_data.get('url', 'N/A')}")
+                parent_text = original_data.get('parent_text', 'N/A')
+                if parent_text and parent_text != 'N/A':
+                    print(f"  {'':>60}   Parent context: {parent_text[:150]}")
+                date_context = original_data.get('date_context', 'N/A')
+                if date_context and date_context != 'N/A':
+                    print(f"  {'':>60}   Date context: {date_context}")
+                print(f"  {'':>60}   Is PDF: {original_data.get('is_pdf', False)}")
+                html_attrs = original_data.get('html_attributes', {})
+                if html_attrs:
+                    attrs_str = ', '.join([f"{k}={v}" for k, v in html_attrs.items()])
+                    print(f"  {'':>60}   HTML attributes: {attrs_str}")
+    
+    # Summary statistics
+    skip_count = sum(1 for r in table_data if 'SKIP' in r['action'])
+    ignore_count = sum(1 for r in table_data if 'IGNORE' in r['action'])
+    download_count = sum(1 for r in table_data if 'TO BE DOWNLOADED' in r['action'])
+    
+    print('-'*120)
+    print(f"Summary: {download_count} to download, {skip_count} already exist, {ignore_count} ignored")
+    print('='*120 + '\n')
 
 def extract_text_from_html(content: bytes) -> str:
     """Extract text from HTML content"""
@@ -742,7 +972,9 @@ def get_gemini_model() -> str:
     return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 
 def download_document(url: str, verbose: bool = False) -> Optional[bytes]:
-    """Download document from URL
+    """Download document from URL using Playwright
+    
+    Handles both HTML pages and file downloads (PDFs, etc.)
     
     Args:
         url: URL to download
@@ -752,71 +984,168 @@ def download_document(url: str, verbose: bool = False) -> Optional[bytes]:
         Document content as bytes, or None if download failed
     """
     try:
-        headers = {
-            'Accept': 'application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        response = requests.get(url, timeout=60, allow_redirects=True, headers=headers)
-        response.raise_for_status()
-        return response.content
-    except requests.exceptions.HTTPError as e:
-        # HTTP error (4xx, 5xx)
-        status_code = e.response.status_code if hasattr(e, 'response') and e.response else 'unknown'
-        error_msg = f'Error downloading document from {url}: HTTP {status_code} {e}'
+        if verbose:
+            print(f'Downloading document using Playwright: {url}')
         
-        if verbose and hasattr(e, 'response') and e.response is not None:
-            # Add detailed information in verbose mode
-            error_msg += f'\n  Status Code: {e.response.status_code}'
-            error_msg += f'\n  Status Text: {e.response.reason}'
-            error_msg += f'\n  Response Headers: {dict(e.response.headers)}'
+        with sync_playwright() as p:
+            # Launch browser
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                extra_http_headers={
+                    'Accept': 'application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+            )
+            page = context.new_page()
             
-            # Try to get response text (might be helpful for debugging)
+            # Check if URL is likely a file download (PDF, etc.)
+            url_lower = url.lower()
+            is_likely_download = url_lower.endswith(('.pdf', '.doc', '.docx', '.xls', '.xlsx', '.zip'))
+            
+            # For likely downloads, use download event listener
+            if is_likely_download:
+                if verbose:
+                    print(f'Setting up download handler for file download...')
+                
+                # Use download event listener - more reliable than expect_download for PDFs
+                download = None
+                download_event = None
+                
+                def handle_download(dl):
+                    nonlocal download
+                    download = dl
+                
+                page.on("download", handle_download)
+                
+                # Navigate - even if it raises "Download is starting", the download event will fire
+                try:
+                    page.goto(url, wait_until='commit', timeout=60000)
+                except Exception as goto_error:
+                    # If it's a download error, wait for the download event to fire
+                    if 'Download is starting' in str(goto_error):
+                        # Wait for download to be captured (up to 60 seconds)
+                        max_wait = 60
+                        waited = 0
+                        while download is None and waited < max_wait:
+                            page.wait_for_timeout(500)
+                            waited += 0.5
+                    else:
+                        raise
+                
+                if not download:
+                    raise Exception("Download was not captured after navigation")
+                
+                # Wait for download to complete and get the file path
+                download_path = download.path()
+                
+                # Read the downloaded file
+                with open(download_path, 'rb') as f:
+                    content = f.read()
+                
+                if verbose:
+                    print(f'Successfully downloaded {len(content)} bytes (file download)')
+                
+                browser.close()
+                return content
+            
+            # For HTML pages, try normal navigation
+            # If it triggers a download, catch that and handle it
             try:
-                response_text = e.response.text[:500]  # First 500 chars
-                if response_text:
-                    error_msg += f'\n  Response Preview: {response_text}'
-            except:
-                pass
+                response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            except Exception as nav_error:
+                # If navigation triggers a download, handle it
+                if 'Download is starting' in str(nav_error):
+                    if verbose:
+                        print(f'Download detected during navigation, using download handler...')
+                    
+                    # Create a new page to avoid state issues
+                    page.close()
+                    page = context.new_page()
+                    
+                    # Set up download listener and navigate again
+                    with page.expect_download(timeout=60000) as download_info:
+                        page.goto(url, wait_until='commit', timeout=60000)
+                    
+                    download = download_info.value
+                    # Wait for download to complete and get the file path
+                    download_path = download.path()
+                    
+                    # Read the downloaded file
+                    with open(download_path, 'rb') as f:
+                        content = f.read()
+                    
+                    if verbose:
+                        print(f'Successfully downloaded {len(content)} bytes (file download)')
+                    
+                    browser.close()
+                    return content
+                else:
+                    # Re-raise if it's not a download-related error
+                    raise
             
-            # Check for common error types
-            if status_code == 451:
-                error_msg += '\n  Note: 451 (Unavailable For Legal Reasons) - may indicate geographic/IP blocking or bot detection'
-            elif status_code == 403:
-                error_msg += '\n  Note: 403 (Forbidden) - server is blocking the request (may need different headers or authentication)'
-            elif status_code == 404:
-                error_msg += '\n  Note: 404 (Not Found) - document may have been moved or deleted'
-            elif status_code >= 500:
-                error_msg += '\n  Note: Server error - may be temporary, consider retrying'
-        
-        print(error_msg)
-        return None
-    except requests.exceptions.Timeout as e:
+            # If we get here, navigation succeeded (HTML page)
+            if not response:
+                error_msg = f'Error downloading document from {url}: No response received'
+                print(error_msg)
+                browser.close()
+                return None
+            
+            # Check response status
+            status_code = response.status
+            if status_code >= 400:
+                status_code_str = str(status_code)
+                error_msg = f'Error downloading document from {url}: HTTP {status_code_str}'
+                
+                if verbose:
+                    error_msg += f'\n  Status Code: {status_code}'
+                    error_msg += f'\n  Status Text: {response.status_text}'
+                    error_msg += f'\n  Response Headers: {dict(response.headers)}'
+                    
+                    # Try to get response text (might be helpful for debugging)
+                    try:
+                        response_text = page.content()[:500]  # First 500 chars
+                        if response_text:
+                            error_msg += f'\n  Response Preview: {response_text}'
+                    except:
+                        pass
+                    
+                    # Check for common error types
+                    if status_code == 451:
+                        error_msg += '\n  Note: 451 (Unavailable For Legal Reasons) - may indicate geographic/IP blocking or bot detection'
+                    elif status_code == 403:
+                        error_msg += '\n  Note: 403 (Forbidden) - server is blocking the request (may need different headers or authentication)'
+                    elif status_code == 404:
+                        error_msg += '\n  Note: 404 (Not Found) - document may have been moved or deleted'
+                    elif status_code >= 500:
+                        error_msg += '\n  Note: Server error - may be temporary, consider retrying'
+                
+                print(error_msg)
+                browser.close()
+                return None
+            
+            # Get response body
+            content = response.body()
+            
+            browser.close()
+            
+            if verbose:
+                print(f'Successfully downloaded {len(content)} bytes (HTML page)')
+            
+            return content
+            
+    except PlaywrightTimeoutError as e:
         error_msg = f'Error downloading document from {url}: Request timeout after 60 seconds'
         if verbose:
             error_msg += f'\n  Exception: {e}'
         print(error_msg)
         return None
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f'Error downloading document from {url}: Connection error'
-        if verbose:
-            error_msg += f'\n  Exception: {e}'
-            if hasattr(e, 'args') and e.args:
-                error_msg += f'\n  Details: {e.args[0]}'
-        print(error_msg)
-        return None
-    except requests.exceptions.RequestException as e:
-        error_msg = f'Error downloading document from {url}: Request exception: {e}'
-        if verbose:
-            import traceback
-            error_msg += f'\n  Traceback: {traceback.format_exc()}'
-        print(error_msg)
-        return None
     except Exception as e:
-        error_msg = f'Error downloading document from {url}: Unexpected error: {e}'
+        error_msg = f'Error downloading document from {url}: {type(e).__name__}: {e}'
         if verbose:
             import traceback
             error_msg += f'\n  Traceback: {traceback.format_exc()}'
@@ -906,6 +1235,16 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
         for i, url in enumerate(ticker_urls, 1):
             print(f'  {i}. {url}')
     
+    # Initialize services
+    firebase = FirebaseCache()
+    ir_document_service = IRDocumentService()
+    
+    # Get all existing URLs before processing (to skip them before Gemini)
+    all_existing_docs = ir_document_service.get_all_ir_documents(ticker)
+    existing_urls = {doc.get('url') for doc in all_existing_docs if doc.get('url')}
+    if existing_urls and verbose:
+        print(f'Found {len(existing_urls)} already-downloaded documents in database')
+    
     # Initialize Gemini API for HTML parsing
     gemini_api_key = os.getenv('GEMINI_API_KEY')
     if gemini_api_key:
@@ -915,6 +1254,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     # Collect releases from all URLs
     all_releases = []
+    all_skipped_links = []  # Links that were skipped before Gemini (already exist)
     for ir_url in ticker_urls:
         if verbose:
             print(f'\nProcessing URL: {ir_url}')
@@ -922,9 +1262,10 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
         # Determine if URL is RSS feed or HTML page
         if 'rss' in ir_url.lower() or ir_url.endswith('.xml') or ir_url.endswith('.rss'):
             releases = parse_rss_feed(ir_url)
+            skipped_links = []  # RSS feeds don't have skipped links
         else:
             if gemini_api_key:
-                releases = parse_html_page(ir_url, ticker, verbose)
+                releases, skipped_links = parse_html_page(ir_url, ticker, verbose, existing_urls=existing_urls)
             else:
                 print(f'Error: Cannot parse HTML page {ir_url} without GEMINI_API_KEY')
                 continue
@@ -935,6 +1276,10 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
             all_releases.extend(releases)
         elif verbose:
             print(f'No releases found from {ir_url}')
+        
+        # Collect skipped links for summary table
+        if skipped_links:
+            all_skipped_links.extend(skipped_links)
     
     if not all_releases:
         print(f'No releases found for {ticker} from any configured URLs')
@@ -954,15 +1299,36 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     
     print(f'Found {len(releases)} unique potential releases')
     
-    # Initialize Firebase
-    firebase = FirebaseCache()
+    # Print summary table in verbose mode after Gemini classification
+    if verbose and (releases or all_skipped_links):
+        print_link_classification_summary(releases, existing_urls, target_quarter, all_skipped_links)
     
     processed_count = 0
     skipped_count = 0
     
     for release in releases:
         try:
-            # Download document
+            # Validate that we have required fiscal info from LLM BEFORE downloading
+            # This avoids downloading documents we can't process
+            fiscal_year = release.get('fiscal_year')
+            fiscal_quarter = release.get('fiscal_quarter')
+            release_date = release.get('release_date')  # Already parsed as datetime object from earlier step
+            
+            if not fiscal_year or not fiscal_quarter:
+                # Don't print this message if we already showed it in the summary table
+                # The summary table already shows these as "IGNORE (missing fiscal info)"
+                skipped_count += 1
+                continue
+            
+            quarter_key = f"{fiscal_year}Q{fiscal_quarter}"
+            
+            # Filter by target quarter if specified (before downloading)
+            if target_quarter and quarter_key != target_quarter:
+                # Don't print this message - already shown in summary table as "IGNORE (not {target_quarter})"
+                skipped_count += 1
+                continue
+            
+            # Download document only if we have required fiscal info and match target quarter
             if verbose:
                 print(f'Downloading: {release["title"]}')
             
@@ -998,33 +1364,12 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                         print(f'  Found {len(pdf_links)} PDF link(s) in the page')
                     release['pdf_links'] = pdf_links
             
-            # Use fiscal year/quarter and release date directly from LLM response (no date math needed)
-            fiscal_year = release.get('fiscal_year')
-            fiscal_quarter = release.get('fiscal_quarter')
-            release_date = release.get('release_date')  # Already parsed as datetime object from earlier step
-            
-            # Validate that we have required fiscal info from LLM
-            if not fiscal_year or not fiscal_quarter:
-                if verbose:
-                    print(f'  Skipped: Missing fiscal year or quarter from LLM response')
-                skipped_count += 1
-                continue
-            
             if verbose:
                 print(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
                 if release_date:
                     print(f'  Release date: {release_date.strftime("%Y-%m-%d")}')
                 else:
                     print(f'  Release date: not provided by LLM')
-            
-            quarter_key = f"{fiscal_year}Q{fiscal_quarter}"
-            
-            # Filter by target quarter if specified
-            if target_quarter and quarter_key != target_quarter:
-                if verbose:
-                    print(f'  Skipped: Quarter {quarter_key} does not match target {target_quarter}')
-                skipped_count += 1
-                continue
             
             # Determine document type (use from Gemini if available, otherwise infer)
             doc_type = release.get('document_type')
@@ -1035,31 +1380,28 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
             document_id = create_document_id(quarter_key, doc_type, release_date, release['url'])
             
             # Check if document already exists (by URL, which is the most reliable check)
-            existing_docs = firebase.get_ir_documents_for_quarter(ticker, quarter_key)
-            existing_urls = {doc.get('url') for doc in existing_docs if doc.get('url')}
-            
+            # Use the existing_urls set we already loaded (more efficient than querying by quarter)
             if release['url'] in existing_urls:
                 if verbose:
-                    existing_doc = next((d for d in existing_docs if d.get('url') == release['url']), None)
+                    existing_doc = next((d for d in all_existing_docs if d.get('url') == release['url']), None)
                     existing_title = existing_doc.get('title', 'unknown') if existing_doc else 'unknown'
                     print(f'  Skipped: Document already exists (URL: {release["url"][:60]}..., Title: {existing_title})')
                 skipped_count += 1
                 continue
             
-            # Store document
+            # Store document using the service
             document_data = {
-                'ticker': ticker.upper(),
-                'document_id': document_id,
                 'title': release['title'],
-                'release_date': release_date.isoformat() if release_date else None,
+                'url': release['url'],
+                'quarter_key': quarter_key,
                 'fiscal_year': fiscal_year,
                 'fiscal_quarter': fiscal_quarter,
-                'quarter_key': quarter_key,
-                'url': release['url'],
-                'document_type': doc_type
+                'release_date': release_date.isoformat() if release_date else None,
+                'document_type': doc_type,
+                'description': release.get('description', '')
             }
             
-            firebase.store_ir_document(ticker, document_id, document_data, content, file_ext, verbose)
+            ir_document_service.store_ir_document(ticker, document_id, document_data, content, file_ext, verbose)
             processed_count += 1
             
             if verbose:
@@ -1107,7 +1449,7 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
                             'parent_release_url': release['url']  # Link back to main release
                         }
                         
-                        firebase.store_ir_document(ticker, pdf_document_id, pdf_document_data, pdf_content, 'pdf', verbose)
+                        ir_document_service.store_ir_document(ticker, pdf_document_id, pdf_document_data, pdf_content, 'pdf', verbose)
                         processed_count += 1
                         
                         if verbose:
@@ -1141,7 +1483,8 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
             print(f'Error: Invalid quarter format. Use YYYYQN (e.g., 2024Q3)')
             return
         
-        documents = firebase.get_ir_documents_for_quarter(ticker_upper, quarter_key)
+        ir_document_service = IRDocumentService()
+        documents = ir_document_service.get_ir_documents_for_quarter(ticker_upper, quarter_key)
         
         if not documents:
             print(f'No documents found for {ticker_upper} {quarter_key}')
@@ -1165,8 +1508,9 @@ def list_documents(ticker: str, year: Optional[int] = None, quarter_key: Optiona
         quarters = [f"{year}Q{q}" for q in [1, 2, 3, 4]]
         all_docs = []
         
+        ir_document_service = IRDocumentService()
         for qk in quarters:
-            docs = firebase.get_ir_documents_for_quarter(ticker_upper, qk)
+            docs = ir_document_service.get_ir_documents_for_quarter(ticker_upper, qk)
             all_docs.extend(docs)
         
         if not all_docs:

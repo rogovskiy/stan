@@ -97,6 +97,37 @@ class IRDocumentService(FirebaseBaseService):
             print(f'Error getting IR documents for {ticker} {quarter_key}: {error}')
             return []
     
+    def get_all_ir_documents(self, ticker: str) -> List[Dict[str, Any]]:
+        """Get all IR documents for a ticker (all quarters)
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            List of document metadata dictionaries
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            # Get all documents for this ticker
+            docs_ref = (self.db.collection('tickers')
+                       .document(upper_ticker)
+                       .collection('ir_documents'))
+            
+            docs = docs_ref.stream()
+            
+            documents = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                doc_data['document_id'] = doc.id
+                documents.append(doc_data)
+            
+            return documents
+            
+        except Exception as error:
+            print(f'Error getting all IR documents for {ticker}: {error}')
+            return []
+    
     def get_ir_document_content(self, ticker: str, document_id: str) -> Optional[bytes]:
         """Download document content from Firebase Storage
         

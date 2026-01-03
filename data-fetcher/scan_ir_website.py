@@ -13,6 +13,7 @@ import sys
 import re
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urljoin, urlparse
 import feedparser
@@ -23,6 +24,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from firebase_cache import FirebaseCache
 from services.ir_url_service import IRURLService
 from services.ir_document_service import IRDocumentService
+from extraction_utils import load_prompt_template, get_gemini_model, extract_json_from_llm_response
 import yfinance as yf
 import google.generativeai as genai  # Only needed for HTML parsing with LLM
 
@@ -246,7 +248,6 @@ def get_page_html_with_playwright(url: str, wait_time: int = 10, verbose: bool =
     except Exception as e:
         if verbose:
             print(f'Error using Playwright: {e}')
-            print('Falling back to simple HTTP request...')
         return None
 
 def _format_link_for_llm(index: int, link: Dict[str, Any]) -> str:
@@ -300,10 +301,21 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False, existing_urls:
         html_content = get_page_html_with_playwright(url, wait_time=10, verbose=verbose)
         
         # Fallback: try again with longer timeout if Playwright failed
+        retry_attempted = False
         if not html_content:
             if verbose:
                 print('Retrying with Playwright with longer timeout (page may be slow to load)')
+            retry_attempted = True
             html_content = get_page_html_with_playwright(url, wait_time=30, verbose=verbose)
+        
+        # Check if we successfully got HTML content
+        if not html_content:
+            if retry_attempted:
+                error_msg = f'Error: Could not retrieve HTML content from {url} after retry'
+            else:
+                error_msg = f'Error: Could not retrieve HTML content from {url}'
+            print(error_msg)
+            return [], []
         
         if verbose:
             # Save HTML to file
@@ -435,6 +447,16 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False, existing_urls:
         if verbose:
             print(f'Sending {len(links_data)} candidate links to Gemini for analysis in {((len(links_data) - 1) // BATCH_SIZE) + 1} batch(es)...')
         
+        # Initialize Gemini API once for all batches
+        gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
+        if not gemini_api_key:
+            print(f'Error: GEMINI_API_KEY or GOOGLE_AI_API_KEY not set')
+            return [], []
+        
+        genai.configure(api_key=gemini_api_key)
+        model_name = get_gemini_model()
+        model = genai.GenerativeModel(model_name)
+        
         # Process links in batches
         all_releases = []
         num_batches = ((len(links_data) - 1) // BATCH_SIZE) + 1
@@ -452,82 +474,29 @@ def parse_html_page(url: str, ticker: str, verbose: bool = False, existing_urls:
                 _format_link_for_llm(j+1, link) for j, link in enumerate(batch)
             ])
             
-            prompt = f"""You are analyzing the investor relations page for {ticker}. 
-
-Below are links found on the page. Identify which links are relevant financial documents:
-
-1. Earnings releases (quarterly or annual financial results)
-2. Earnings presentations or slides
-3. SEC filings (10-K, 10-Q, 8-K, etc.)
-4. Annual reports
-5. Proxy statements
-6. Other regulatory or financial documents
-
-For each relevant link, extract:
-- The link URL: Return the EXACT URL as provided below - DO NOT modify, reconstruct, or guess the URL. Copy it exactly as shown.
-- The document title: Extract a descriptive title from the link text and context. Include quarter/year information if available (e.g., "Apple Reports Q3 2024 Results" not just "Press Release")
-- The fiscal year: Extract from URL, title, or context (e.g., FY25, 2025, 2024)
-- The fiscal quarter: Extract from URL, title, or context (1, 2, 3, or 4). If it's an annual report or 10-K, use 4. If not clear, use null.
-- The release/presentation date: If available in context, format as YYYY-MM-DD. Otherwise use null.
-- The document type: earnings_release, presentation, sec_filing_10k, sec_filing_10q, annual_report, proxy_statement, or other
-
-Return a JSON array with this structure:
-[
-  {{
-    "link_index": 1,
-    "url": "full_url_here",
-    "title": "descriptive_document_title_with_quarter_and_year_if_available",
-    "fiscal_year": 2025 or null,
-    "fiscal_quarter": 1, 2, 3, 4, or null,
-    "release_date": "YYYY-MM-DD or null if not found",
-    "document_type": "earnings_release|presentation|sec_filing_10k|sec_filing_10q|annual_report|proxy_statement|other"
-  }},
-  ...
-]
-
-Note: link_index should be the number from the link list above (1, 2, 3, etc.). This ensures we can match back to the original URL.
-
-Links found on page:
-{links_summary}
-
-IMPORTANT: 
-- CRITICAL: Return URLs EXACTLY as shown in the links below - DO NOT modify, reconstruct, or guess URLs. Copy them character-for-character as provided.
-- Include ALL financial documents: earnings releases, presentations, SEC filings (10-K, 10-Q, 8-K), annual reports, proxy statements, and any other regulatory or financial documents
-- EXCLUDE Consolidated Financial Statements - these are obtained from a different data source and should not be downloaded here
-- Be INCLUSIVE - when in doubt, include the link. It's better to include too many than miss important documents.
-- Extract descriptive titles that include quarter/year information when available (e.g., "Q3 2024 Earnings Release", "10-Q Q3 2025")
-- For SEC filings, use the filing type in the title (e.g., "10-K Annual Report 2024", "10-Q Q3 2025")
-- Extract titles from URLs when link text is generic (e.g., if URL contains "FY22_Q2", use "FY22 Q2 Earnings Release")
-- Include ALL PDF links that appear to be financial documents, even if the link text is generic like "10-K"
-- Include historical documents (past quarters/years) - don't filter by date
-- Exclude ONLY: general news articles, press releases about products/features (not financial), marketing materials, Consolidated Financial Statements, or clearly non-financial content
-- If a link points to a PDF and the URL or context suggests it's financial (contains terms like: earnings, filing, 10-k, 10-q, quarterly, annual, report), INCLUDE IT (but still exclude Consolidated Financial Statements)
-- If no date is found, use null for release_date
-- Return ALL relevant links found, not just a subset
-"""
+            # Load and render prompt template
+            prompt = load_prompt_template(
+                'ir_link_classification_prompt.txt',
+                ticker=ticker,
+                links_summary=links_summary
+            )
             
             # Call Gemini for this batch
             if verbose:
                 print(f'Calling Gemini for batch {batch_num + 1}...')
             
-            # Use model from env var or default to gemini-2.0-flash
-            model_name = get_gemini_model()
-            
             # Combine system instruction with user prompt for Gemini
             system_instruction = "You are a financial analyst identifying ALL financial documents from investor relations pages. Return only valid JSON arrays. Include ALL relevant financial documents - be inclusive, not restrictive. IMPORTANT: Exclude Consolidated Financial Statements as these are obtained from a different data source."
             full_prompt = f"{system_instruction}\n\n{prompt}"
             
-            # Configure and call Gemini
-            generation_config = genai.types.GenerationConfig(
-                temperature=0.2,
-                max_output_tokens=8000,
-            )
-            
             try:
-                model = genai.GenerativeModel(model_name)
+                # Generate with same pattern as generate_quarterly_text_analysis.py
                 response = model.generate_content(
                     full_prompt,
-                    generation_config=generation_config
+                    generation_config={
+                        'temperature': 0.2,
+                        'max_output_tokens': 8000,
+                    }
                 )
                 
                 # Extract text from response
@@ -959,17 +928,6 @@ def extract_date_from_url(url: str, fiscal_year_end_month: int) -> Optional[date
                 return None
     return None
 
-def extract_json_from_llm_response(response_text: str) -> str:
-    """Extract JSON from LLM response (handles markdown code blocks)"""
-    if '```json' in response_text:
-        return response_text.split('```json')[1].split('```')[0].strip()
-    elif '```' in response_text:
-        return response_text.split('```')[1].split('```')[0].strip()
-    return response_text.strip()
-
-def get_gemini_model() -> str:
-    """Get Gemini model from env var or return default"""
-    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 
 def download_document(url: str, verbose: bool = False) -> Optional[bytes]:
     """Download document from URL using Playwright
@@ -1245,13 +1203,6 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
     if existing_urls and verbose:
         print(f'Found {len(existing_urls)} already-downloaded documents in database')
     
-    # Initialize Gemini API for HTML parsing
-    gemini_api_key = os.getenv('GEMINI_API_KEY')
-    if gemini_api_key:
-        genai.configure(api_key=gemini_api_key)
-    else:
-        print('Warning: GEMINI_API_KEY not set. HTML page parsing will be limited.')
-    
     # Collect releases from all URLs
     all_releases = []
     all_skipped_links = []  # Links that were skipped before Gemini (already exist)
@@ -1264,11 +1215,8 @@ def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: 
             releases = parse_rss_feed(ir_url)
             skipped_links = []  # RSS feeds don't have skipped links
         else:
-            if gemini_api_key:
-                releases, skipped_links = parse_html_page(ir_url, ticker, verbose, existing_urls=existing_urls)
-            else:
-                print(f'Error: Cannot parse HTML page {ir_url} without GEMINI_API_KEY')
-                continue
+            # parse_html_page will handle Gemini API initialization
+            releases, skipped_links = parse_html_page(ir_url, ticker, verbose, existing_urls=existing_urls)
         
         if releases:
             if verbose:

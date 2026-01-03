@@ -1,0 +1,53 @@
+You are analyzing the investor relations page for {ticker}. 
+
+Below are links found on the page. Identify which links are relevant financial documents:
+
+1. Earnings releases (quarterly or annual financial results)
+2. Earnings presentations or slides
+3. SEC filings (10-K, 10-Q, 8-K, etc.)
+4. Annual reports
+5. Proxy statements
+6. Other regulatory or financial documents
+
+For each relevant link, extract:
+- The link URL: Return the EXACT URL as provided below - DO NOT modify, reconstruct, or guess the URL. Copy it exactly as shown.
+- The document title: Extract a descriptive title from the link text and context. Include quarter/year information if available (e.g., "Apple Reports Q3 2024 Results" not just "Press Release")
+- The fiscal year: Extract from URL, title, or context (e.g., FY25, 2025, 2024)
+- The fiscal quarter: Extract from URL, title, or context (1, 2, 3, or 4). If it's an annual report or 10-K, use 4. If not clear, use null.
+- The release/presentation date: If available in context, format as YYYY-MM-DD. Otherwise use null.
+- The document type: earnings_release, presentation, sec_filing_10k, sec_filing_10q, annual_report, proxy_statement, or other
+
+Return a JSON array with this structure:
+[
+  {{
+    "link_index": 1,
+    "url": "full_url_here",
+    "title": "descriptive_document_title_with_quarter_and_year_if_available",
+    "fiscal_year": 2025 or null,
+    "fiscal_quarter": 1, 2, 3, 4, or null,
+    "release_date": "YYYY-MM-DD or null if not found",
+    "document_type": "earnings_release|presentation|sec_filing_10k|sec_filing_10q|annual_report|proxy_statement|other"
+  }},
+  ...
+]
+
+Note: link_index should be the number from the link list above (1, 2, 3, etc.). This ensures we can match back to the original URL.
+
+Links found on page:
+{links_summary}
+
+IMPORTANT: 
+- CRITICAL: Return URLs EXACTLY as shown in the links below - DO NOT modify, reconstruct, or guess URLs. Copy them character-for-character as provided.
+- Include ALL financial documents: earnings releases, presentations, SEC filings (10-K, 10-Q, 8-K), annual reports, proxy statements, and any other regulatory or financial documents
+- EXCLUDE Consolidated Financial Statements - these are obtained from a different data source and should not be downloaded here
+- Be INCLUSIVE - when in doubt, include the link. It's better to include too many than miss important documents.
+- Extract descriptive titles that include quarter/year information when available (e.g., "Q3 2024 Earnings Release", "10-Q Q3 2025")
+- For SEC filings, use the filing type in the title (e.g., "10-K Annual Report 2024", "10-Q Q3 2025")
+- Extract titles from URLs when link text is generic (e.g., if URL contains "FY22_Q2", use "FY22 Q2 Earnings Release")
+- Include ALL PDF links that appear to be financial documents, even if the link text is generic like "10-K"
+- Include historical documents (past quarters/years) - don't filter by date
+- Exclude ONLY: general news articles, press releases about products/features (not financial), marketing materials, Consolidated Financial Statements, or clearly non-financial content
+- If a link points to a PDF and the URL or context suggests it's financial (contains terms like: earnings, filing, 10-k, 10-q, quarterly, annual, report), INCLUDE IT (but still exclude Consolidated Financial Statements)
+- If no date is found, use null for release_date
+- Return ALL relevant links found, not just a subset
+

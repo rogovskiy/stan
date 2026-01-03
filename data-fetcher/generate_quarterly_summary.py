@@ -19,112 +19,18 @@ import google.generativeai as genai
 
 from services.ir_document_service import IRDocumentService
 from services.quarterly_analysis_service import QuarterlyAnalysisService
+from extraction_utils import (
+    load_prompt_template,
+    load_json_schema,
+    get_gemini_model,
+    extract_json_from_llm_response,
+    clean_schema_for_gemini
+)
 from document_text_extractor import extract_text_from_html
 from pathlib import Path
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
-
-# Get the directory where this script is located
-SCRIPT_DIR = Path(__file__).parent
-PROMPTS_DIR = SCRIPT_DIR / 'prompts'
-SCHEMAS_DIR = SCRIPT_DIR
-
-
-def get_gemini_model() -> str:
-    """Get Gemini model from env var or return default"""
-    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
-
-
-def extract_json_from_llm_response(response_text: str) -> str:
-    """Extract JSON from LLM response (handles markdown code blocks)"""
-    if '```json' in response_text:
-        return response_text.split('```json')[1].split('```')[0].strip()
-    elif '```' in response_text:
-        return response_text.split('```')[1].split('```')[0].strip()
-    return response_text.strip()
-
-
-def load_prompt_template(template_name: str, **kwargs) -> str:
-    """Load and render a prompt template file
-    
-    Args:
-        template_name: Name of template file (e.g., 'quarterly_analysis_prompt.txt')
-        **kwargs: Variables to substitute in the template
-        
-    Returns:
-        Rendered prompt string
-    """
-    template_path = PROMPTS_DIR / template_name
-    if not template_path.exists():
-        raise FileNotFoundError(f"Prompt template not found: {template_path}")
-    
-    with open(template_path, 'r', encoding='utf-8') as f:
-        template = f.read()
-    
-    # Simple template substitution using .format()
-    # Escape braces that should remain literal
-    template = template.replace('{{', '<<<').replace('}}', '>>>')
-    try:
-        rendered = template.format(**kwargs)
-        rendered = rendered.replace('<<<', '{').replace('>>>', '}')
-        return rendered
-    except KeyError as e:
-        raise ValueError(f"Missing template variable: {e}")
-
-
-def load_json_schema(schema_name: str) -> Dict[str, Any]:
-    """Load a JSON schema file
-    
-    Args:
-        schema_name: Name of schema file (e.g., 'quarterly_analysis_schema.json')
-        
-    Returns:
-        Schema as dictionary
-    """
-    schema_path = SCHEMAS_DIR / schema_name
-    if not schema_path.exists():
-        raise FileNotFoundError(f"Schema file not found: {schema_path}")
-    
-    with open(schema_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Clean JSON schema to only include fields supported by Gemini structured output
-    
-    Args:
-        schema: JSON schema dictionary
-        
-    Returns:
-        Cleaned schema dictionary compatible with Gemini
-    """
-    if not isinstance(schema, dict):
-        return schema
-    
-    cleaned = {}
-    
-    # Fields Gemini supports
-    supported_fields = ['type', 'properties', 'items', 'enum', 'required']
-    
-    for key, value in schema.items():
-        if key in ['$schema', 'title', 'description', 'additionalProperties', 'minLength', 'maxLength', 'minimum', 'maximum', 'examples']:
-            continue  # Skip unsupported fields
-        
-        if key in supported_fields:
-            if key == 'properties' and isinstance(value, dict):
-                # Recursively clean properties
-                cleaned[key] = {k: clean_schema_for_gemini(v) for k, v in value.items()}
-            elif key == 'items' and isinstance(value, dict):
-                # Recursively clean items
-                cleaned[key] = clean_schema_for_gemini(value)
-            elif key in ['enum', 'required']:
-                # Keep these as-is
-                cleaned[key] = value
-            elif key == 'type':
-                cleaned[key] = value
-    
-    return cleaned
 
 
 def prepare_documents_for_llm(ticker: str, quarter_key: str, verbose: bool = False) -> tuple[List[tuple[bytes, Dict]], List[tuple[str, Dict]], List[Dict]]:

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from services.firebase_base_service import FirebaseBaseService
 
+MAX_LINK_CACHE_SIZE = 500
 
 class IRURLService(FirebaseBaseService):
     """Service for managing IR URLs in Firebase"""
@@ -154,8 +155,103 @@ class IRURLService(FirebaseBaseService):
         except Exception as error:
             print(f'Error deleting IR URL {url_id} for {ticker}: {error}')
             raise error
-
-
+    
+    def _get_url_hash(self, url: str) -> str:
+        """Generate hash for URL (reuse existing pattern)
+        
+        Args:
+            url: URL to hash
+            
+        Returns:
+            12-character hex hash
+        """
+        return hashlib.md5(url.encode()).hexdigest()[:12]
+    
+    def get_cached_links(self, ticker: str, ir_url: str) -> List[Dict[str, Any]]:
+        """Get cached links for an IR URL
+        
+        Args:
+            ticker: Stock ticker symbol
+            ir_url: IR website URL
+            
+        Returns:
+            List of cached link dictionaries with url and last_seen
+            Sorted by last_seen descending (most recent first)
+        """
+        try:
+            upper_ticker = ticker.upper()
+            url_hash = self._get_url_hash(ir_url)
+            
+            # Get the cache document from the link_cache subcollection
+            cache_doc_ref = (self.db.collection('tickers')
+                            .document(upper_ticker)
+                            .collection('ir_urls')
+                            .document(url_hash)
+                            .collection('link_cache')
+                            .document('cache'))
+            
+            cache_doc = cache_doc_ref.get()
+            if not cache_doc.exists:
+                return []
+            
+            # Get links field (it's a list)
+            cache_data = cache_doc.to_dict()
+            cached_links = cache_data.get('links', [])
+            
+            # Already sorted by last_seen descending, just apply limit
+            return cached_links
+            
+        except Exception as error:
+            print(f'Error getting cached links for {ir_url} for {ticker}: {error}')
+            return []
+    
+    def update_link_cache(self, ticker: str, ir_url: str, links: List[str]) -> None:
+        """Update cache by merging existing cached links with new links
+        
+        Merges existing cached links with the provided list of URLs. New links
+        get their `last_seen` initialized to the current time. Existing links
+        have their `last_seen` updated. The cache is then capped at 200 entries
+        based on most recent `last_seen`.
+        
+        Args:
+            ticker: Stock ticker symbol
+            ir_url: IR website URL
+            links: List of URL strings to merge into the cache
+        """
+        upper_ticker = ticker.upper()
+        url_hash = self._get_url_hash(ir_url)
+        now_iso = datetime.now().isoformat()
+        
+        # Ensure the IR URL document exists
+        ir_url_ref = (self.db.collection('tickers')
+                        .document(upper_ticker)
+                        .collection('ir_urls')
+                        .document(url_hash))
+        
+        if not ir_url_ref.get().exists:
+            raise ValueError(f"IR URL document for {ir_url} does not exist for ticker {ticker}.")
+        
+        # Start with existing links as a dict for O(1) lookup
+        existing_links = self.get_cached_links(ticker, ir_url)
+        links_dict = {link['url']: link for link in existing_links}
+        
+        # Update or add all new links with current timestamp
+        for url in links:
+            if url:
+                links_dict[url] = {'url': url, 'last_seen': now_iso}
+        
+        # Convert to list, sort by last_seen desc, cap at 200
+        merged_links = sorted(links_dict.values(), 
+                                key=lambda x: x['last_seen'], 
+                                reverse=True)[:MAX_LINK_CACHE_SIZE]
+        
+        # Write to cache subcollection
+        cache_doc_ref = (ir_url_ref.collection('link_cache')
+                                    .document('cache'))
+        cache_doc_ref.set({
+            'links': merged_links,
+            'updated_at': now_iso
+        })
 
 
 

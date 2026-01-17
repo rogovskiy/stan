@@ -182,9 +182,25 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
                 verbose=verbose
             )
             
+            # Count how many NEW documents (not already in database) were found
+            new_docs_count = 0
+            for doc in documents:
+                doc_url = doc.get('pdf_url') or doc.get('page_url')
+                if doc_url and doc_url not in existing_urls:
+                    new_docs_count += 1
+            
+            # Update scan tracking immediately for this URL
+            ir_url_service.update_scan_result(
+                ticker=ticker,
+                url=ir_url,
+                documents_found_count=new_docs_count
+            )
+            
             if documents:
                 if verbose:
                     print(f'\n✅ Crawler found {len(documents)} documents from {ir_url}')
+                    if new_docs_count > 0:
+                        print(f'   📝 {new_docs_count} are new (not in database)')
                 all_documents.extend(documents)
             else:
                 print(f'No documents found from {ir_url}')
@@ -201,6 +217,12 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
             if verbose:
                 import traceback
                 traceback.print_exc()
+            # Still update scan timestamp even on error
+            ir_url_service.update_scan_result(
+                ticker=ticker,
+                url=ir_url,
+                documents_found_count=0
+            )
             continue
     
     if not all_documents:

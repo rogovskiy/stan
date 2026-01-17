@@ -135,6 +135,62 @@ class IRURLService(FirebaseBaseService):
         except Exception as error:
             print(f'Error updating last_scanned for IR URL {url} for {ticker}: {error}')
     
+    def update_scan_result(self, ticker: str, url: str, documents_found_count: int, scanned_time: Optional[datetime] = None) -> None:
+        """Update scan result for an IR URL
+        
+        Updates last_scanned timestamp always, and last_documents_found only when documents were found.
+        
+        Args:
+            ticker: Stock ticker symbol
+            url: IR website URL
+            documents_found_count: Number of new documents found in this scan
+            scanned_time: Optional timestamp (defaults to current time)
+        """
+        try:
+            upper_ticker = ticker.upper()
+            
+            if scanned_time is None:
+                scanned_time = datetime.now()
+            
+            # Find the document by URL
+            docs_ref = (self.db.collection('tickers')
+                       .document(upper_ticker)
+                       .collection('ir_urls'))
+            
+            # Query by URL
+            query = docs_ref.where('url', '==', url).limit(1)
+            docs = list(query.stream())
+            
+            if docs:
+                doc_ref = docs[0].reference
+                update_data = {
+                    'last_scanned': scanned_time.isoformat(),
+                    'updated_at': scanned_time.isoformat()
+                }
+                
+                # Only update last_documents_found if we actually found documents
+                if documents_found_count > 0:
+                    update_data['last_documents_found'] = scanned_time.isoformat()
+                
+                doc_ref.update(update_data)
+            else:
+                # If URL doesn't exist, create it
+                self.add_ir_url(ticker, url)
+                # Try again to update
+                query = docs_ref.where('url', '==', url).limit(1)
+                docs = list(query.stream())
+                if docs:
+                    update_data = {
+                        'last_scanned': scanned_time.isoformat(),
+                        'updated_at': scanned_time.isoformat()
+                    }
+                    if documents_found_count > 0:
+                        update_data['last_documents_found'] = scanned_time.isoformat()
+                    docs[0].reference.update(update_data)
+            
+        except Exception as error:
+            print(f'Error updating scan result for IR URL {url} for {ticker}: {error}')
+    
     def delete_ir_url(self, ticker: str, url_id: str) -> None:
         """Delete an IR URL for a ticker
         

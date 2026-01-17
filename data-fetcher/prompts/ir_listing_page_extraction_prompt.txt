@@ -21,7 +21,7 @@ For EACH AND EVERY DOCUMENT you find, extract:
 - link_type: "pdf_download" if direct PDF link, or "details_page" if it leads to a page with the document
 - url: The FULL URL (convert relative URLs to absolute using the page URL: {page_url})
 - fiscal_year: Year (YYYY) if mentioned anywhere near the document, or null
-- fiscal_quarter: Quarter (Q1, Q2, Q3, Q4, FY) if mentioned, or null
+- fiscal_quarter: Quarter number (1, 2, 3, or 4). Use 4 for full year/annual reports (FY, 10-K). Return as integer, not string. Null if unknown.
 
 For PAGINATION LISTING PAGES (pagination only):
 - title: Link text (e.g., "Next", "Page 2", "Previous", "Load More")
@@ -41,25 +41,25 @@ IMPORTANT GUIDELINES:
 10. EXCLUDE consolidated financial statements
 
 Respond in JSON format:
-{{{{
+{{
     "documents": [
-        {{{{
+        {{
             "title": "Q4 2023 Earnings Release",
             "category": "earnings_release",
             "link_type": "pdf_download",
             "url": "https://...",
             "fiscal_year": 2023,
-            "fiscal_quarter": "Q4"
-        }}}}
+            "fiscal_quarter": 4
+        }}
     ],
     "listing_pages": [
-        {{{{
+        {{
             "title": "Next",
             "url": "https://...?page=2",
             "purpose": "pagination - next page"
-        }}}}
+        }}
     ]
-}}}}
+}}
 
 Be thorough and extract EVERY document you can find!
 

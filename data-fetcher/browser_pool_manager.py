@@ -23,11 +23,15 @@ _event_loop_ready = False
 class BrowserPoolManager:
     """Stateful browsing engine that maintains a single browser context/page using Crawlee's browser infrastructure."""
     
-    def __init__(self):
-        """Initialize the browser pool manager."""
+    def __init__(self, headless: bool = True):
+        """Initialize the browser pool manager.
+        
+        Args:
+            headless: Whether to run browser in headless mode (default: True)
+        """
         # Create Crawlee crawler for browser infrastructure
         self._crawler = PlaywrightCrawler(
-            headless=True,
+            headless=headless,
             browser_type='chromium',
             max_request_retries=0,  # We handle retries ourselves
         )
@@ -76,8 +80,8 @@ class BrowserPoolManager:
             # The page comes with its own browser and context managed by Crawlee
             # We need to keep the context active, so we enter it and store it
             if self._browser_pool_context is None:
-                self._browser_pool_context = browser_pool.__aenter__()
-                await self._browser_pool_context
+                self._browser_pool_context = browser_pool
+                await self._browser_pool_context.__aenter__()
             
             page_controller = await browser_pool.new_page()
             
@@ -145,7 +149,10 @@ class BrowserPoolManager:
             return None
     
     async def download_file(self, url: str, verbose: bool = False) -> Optional[bytes]:
-        """Download a file from URL using the working download logic.
+        """Download a file from URL using a two-tier approach.
+        
+        Primary: Direct browser request (fast, works for most PDFs)
+        Fallback: Download event (handles JS redirects, complex cases)
         
         Args:
             url: URL to download
@@ -160,43 +167,80 @@ class BrowserPoolManager:
             if verbose:
                 print(f'Setting up download for: {url}')
             
-            # Set up download waiter BEFORE navigation (this is the working pattern)
-            download_waiter = self._page.wait_for_event("download")
-            
-            # Navigate with 'commit' to avoid "Download is starting" error
+            # PRIMARY METHOD: Direct browser request (fast, maintains bot protection)
             try:
-                await self._page.goto(url, wait_until='commit', timeout=60000)
-            except Exception as e:
-                # Handle "Download is starting" error gracefully
-                if "Download is starting" not in str(e):
-                    raise
-            # Wait for download to complete
-            download = await download_waiter
+                if verbose:
+                    print(f'Attempting direct fetch via browser request API (10s timeout)...')
+                
+                # Use asyncio.wait_for for hard timeout enforcement
+                async def do_request():
+                    response = await self._page.request.get(url, timeout=10000)
+                    if response.ok:
+                        return await response.body()
+                    else:
+                        raise Exception(f"HTTP {response.status}")
+                
+                content = await asyncio.wait_for(do_request(), timeout=10.0)
+                
+                if verbose:
+                    print(f'✅ Successfully fetched {len(content)} bytes via browser request API')
+                return content
+            
+            except asyncio.TimeoutError:
+                if verbose:
+                    print(f'⚠️  Direct fetch timed out after 10s - trying download event fallback...')
+            
+            except Exception as request_error:
+                if verbose:
+                    print(f'⚠️  Direct fetch failed ({type(request_error).__name__}: {request_error}) - trying download event fallback...')
+            
+            # FALLBACK METHOD: Download event (for JS-generated downloads, redirects, etc.)
             if verbose:
-                print(f'Download event received: {download.suggested_filename}')
+                print(f'Using download event method (30s timeout)...')
             
-            # Save to temporary file
-            temp_path = os.path.join(tempfile.gettempdir(), download.suggested_filename)
-            await download.save_as(temp_path)
+            async def do_download_event():
+                download_waiter = self._page.wait_for_event("download", timeout=30000)
+                
+                # Navigate with 'commit' to avoid "Download is starting" error
+                try:
+                    await self._page.goto(url, wait_until='commit', timeout=60000)
+                except Exception as e:
+                    # Handle "Download is starting" error gracefully
+                    if "Download is starting" not in str(e):
+                        raise
+                
+                # Wait for download to complete
+                download = await download_waiter
+                if verbose:
+                    print(f'Download event received: {download.suggested_filename}')
+                
+                # Save to temporary file
+                temp_path = os.path.join(tempfile.gettempdir(), download.suggested_filename)
+                await download.save_as(temp_path)
+                
+                # Read file content
+                with open(temp_path, 'rb') as f:
+                    content = f.read()
+                
+                # Clean up temp file
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                
+                return content
             
-            # Read file content
-            with open(temp_path, 'rb') as f:
-                content = f.read()
-            
-            # Clean up temp file
-            try:
-                os.remove(temp_path)
-            except:
-                pass
+            # Wrap download event with hard timeout
+            content = await asyncio.wait_for(do_download_event(), timeout=30.0)
             
             if verbose:
-                print(f'Successfully downloaded {len(content)} bytes')
+                print(f'✅ Successfully downloaded {len(content)} bytes via download event')
             
             return content
             
         except Exception as e:
             if verbose:
-                print(f'Error downloading file: {e}')
+                print(f'❌ Both download methods failed: {e}')
             return None
     
     async def get_html(self, url: str, wait_time: int = 30, verbose: bool = False) -> Optional[str]:
@@ -376,7 +420,14 @@ def _get_event_loop():
 
 
 def run_in_event_loop(coro):
-    """Run a coroutine in the persistent event loop."""
+    """Run a coroutine in the persistent event loop with timeout protection."""
     loop = _get_event_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
+    # Add 60 second timeout to prevent indefinite hangs
+    # This is a safety net - the async methods have their own timeouts
+    try:
+        return future.result(timeout=60.0)
+    except TimeoutError:
+        print(f"⚠️  Operation timed out after 60 seconds")
+        future.cancel()
+        return None

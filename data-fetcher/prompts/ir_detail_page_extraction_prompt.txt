@@ -10,7 +10,7 @@ Extract the following information:
 - category: Document type (earnings_release, 10-K, 10-Q, 8-K, presentation, annual_report, proxy, press_release, financial_statements, etc.)
 - pdf_url: Full URL to PDF download link if found (look for .pdf links, download buttons, "View PDF" links)
 - fiscal_year: Year (YYYY) if mentioned anywhere on page
-- fiscal_quarter: Quarter (Q1, Q2, Q3, Q4, FY) if mentioned
+- fiscal_quarter: Quarter number (1, 2, 3, or 4). Use 4 for full year/annual reports (FY, 10-K). Return as integer, not string. Null if unknown.
 - is_financial_statement: true if this page itself IS a financial statement/report for a specific quarter (not just linking to one)
 
 IMPORTANT:
@@ -21,12 +21,12 @@ IMPORTANT:
 5. DO NOT extract consolidated financial statements - skip if title contains "consolidated financial"
 
 Respond in JSON format:
-{{{{
+{{
     "title": "Q4 2023 Earnings Release",
     "category": "earnings_release",
-    "pdf_url": "https://...pdf" or null,
+    "pdf_url": "https://example.com/report.pdf",
     "fiscal_year": 2023,
-    "fiscal_quarter": "Q4",
+    "fiscal_quarter": 4,
     "is_financial_statement": false
-}}}}
+}}
 

@@ -10,6 +10,7 @@ import os
 import json
 from typing import Dict, Any, Optional
 from pathlib import Path
+import google.generativeai as genai
 
 
 def get_gemini_model() -> str:
@@ -19,6 +20,27 @@ def get_gemini_model() -> str:
         Gemini model name (default: 'gemini-2.5-pro')
     """
     return os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
+
+
+def initialize_gemini_model() -> genai.GenerativeModel:
+    """Initialize and return a configured Gemini GenerativeModel instance.
+    
+    Reads API key from environment variables (GEMINI_API_KEY or GOOGLE_AI_API_KEY),
+    configures the genai client, and returns a model instance.
+    
+    Returns:
+        Configured GenerativeModel instance
+        
+    Raises:
+        ValueError: If API key is not set in environment variables
+    """
+    gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
+    if not gemini_api_key:
+        raise ValueError('GEMINI_API_KEY or GOOGLE_AI_API_KEY environment variable is not set')
+    
+    genai.configure(api_key=gemini_api_key)
+    model_name = get_gemini_model()
+    return genai.GenerativeModel(model_name)
 
 
 def extract_json_from_llm_response(response_text: str) -> str:

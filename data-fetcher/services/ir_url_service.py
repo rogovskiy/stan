@@ -252,6 +252,99 @@ class IRURLService(FirebaseBaseService):
             'links': merged_links,
             'updated_at': now_iso
         })
+    
+    def get_cached_detail_urls(self, ticker: str, ir_url: str) -> List[str]:
+        """Get cached detail page URLs for an IR URL.
+        
+        Detail pages are pages that have been visited by the crawler to extract documents.
+        We cache these to avoid re-visiting them on subsequent crawls.
+        
+        Args:
+            ticker: Stock ticker symbol
+            ir_url: IR website URL
+            
+        Returns:
+            List of detail page URL strings that have been previously visited
+        """
+        try:
+            upper_ticker = ticker.upper()
+            url_hash = self._get_url_hash(ir_url)
+            
+            # Get the detail_cache document from the detail_cache subcollection
+            cache_doc_ref = (self.db.collection('tickers')
+                            .document(upper_ticker)
+                            .collection('ir_urls')
+                            .document(url_hash)
+                            .collection('detail_cache')
+                            .document('cache'))
+            
+            cache_doc = cache_doc_ref.get()
+            if not cache_doc.exists:
+                return []
+            
+            # Get detail_urls field (it's a list of strings)
+            cache_data = cache_doc.to_dict()
+            detail_urls = cache_data.get('detail_urls', [])
+            
+            return detail_urls
+            
+        except Exception as error:
+            print(f'Error getting cached detail URLs for {ir_url} for {ticker}: {error}')
+            return []
+    
+    def cache_detail_urls(self, ticker: str, ir_url: str, detail_urls: List[str]) -> None:
+        """Cache detail page URLs visited during crawling.
+        
+        This merges new detail URLs with existing cached ones to maintain a complete
+        list of all detail pages that have been visited.
+        
+        Args:
+            ticker: Stock ticker symbol
+            ir_url: IR website URL
+            detail_urls: List of detail page URLs visited during this crawl
+        """
+        try:
+            upper_ticker = ticker.upper()
+            url_hash = self._get_url_hash(ir_url)
+            now_iso = datetime.now().isoformat()
+            
+            # Ensure the IR URL document exists
+            ir_url_ref = (self.db.collection('tickers')
+                            .document(upper_ticker)
+                            .collection('ir_urls')
+                            .document(url_hash))
+            
+            if not ir_url_ref.get().exists:
+                # If IR URL doesn't exist, create it first
+                self.add_ir_url(ticker, ir_url)
+                ir_url_ref = (self.db.collection('tickers')
+                                .document(upper_ticker)
+                                .collection('ir_urls')
+                                .document(url_hash))
+            
+            # Get existing cached detail URLs
+            existing_detail_urls = self.get_cached_detail_urls(ticker, ir_url)
+            existing_set = set(existing_detail_urls)
+            
+            # Merge with new detail URLs (no duplicates)
+            for url in detail_urls:
+                if url:
+                    existing_set.add(url)
+            
+            # Convert back to list
+            merged_detail_urls = list(existing_set)
+            
+            # Write to detail_cache subcollection
+            cache_doc_ref = (ir_url_ref.collection('detail_cache')
+                                        .document('cache'))
+            cache_doc_ref.set({
+                'detail_urls': merged_detail_urls,
+                'updated_at': now_iso,
+                'total_count': len(merged_detail_urls)
+            })
+            
+        except Exception as error:
+            print(f'Error caching detail URLs for {ir_url} for {ticker}: {error}')
 
 
 

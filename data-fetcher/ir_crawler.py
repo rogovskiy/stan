@@ -15,6 +15,7 @@ import os
 import json
 import asyncio
 import tempfile
+import time
 from typing import TypedDict, List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urljoin
 from datetime import datetime
@@ -32,6 +33,7 @@ from extraction_utils import (
     extract_json_from_llm_response,
     load_prompt_template
 )
+from services.metrics_service import MetricsService
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
@@ -73,17 +75,25 @@ class ScraperState(TypedDict):
 class IRWebsiteCrawler:
     """LangGraph-based IR website crawler with intelligent navigation."""
     
-    def __init__(self, model_name: str = "gemini-2.5-pro"):
+    def __init__(self, model_name: str = "gemini-2.5-pro", browser_pool_manager: BrowserPoolManager = None, 
+                 metrics_service: MetricsService = None, ticker: Optional[str] = None):
         """Initialize the crawler.
         
         Args:
             model_name: Gemini model to use (defaults to env var or 'gemini-2.5-pro')
+            browser_pool_manager: Optional shared BrowserPoolManager instance (creates new one if not provided)
+            metrics_service: Optional metrics service for logging
+            ticker: Optional ticker for metrics logging
         """
         # Use extraction_utils to get model name and initialize Gemini
         self.model_name = model_name or get_gemini_model()
         
-        # Initialize BrowserPoolManager
-        self.browser_manager = BrowserPoolManager()
+        # Use provided browser manager or create new one
+        self.browser_manager = browser_pool_manager or BrowserPoolManager()
+        
+        # Store metrics service and ticker
+        self.metrics_service = metrics_service
+        self.ticker = ticker
         
         # Initialize Gemini model using extraction_utils
         # This handles API key configuration automatically
@@ -233,6 +243,7 @@ class IRWebsiteCrawler:
     
     async def _extract_document_from_detail_page(self, url: str, html: str, title: str, verbose: bool = False) -> Optional[Dict[str, Any]]:
         """Extract document information from a detail page using Gemini."""
+        start_time = time.time()
         try:
             html_file, html_file_path = await self._upload_html_to_gemini(html)
             
@@ -258,6 +269,19 @@ class IRWebsiteCrawler:
                     self.total_prompt_tokens += usage.prompt_token_count
                     self.total_response_tokens += usage.candidates_token_count
                     self.total_tokens += usage.total_token_count
+                    
+                    # Log metrics for this API call
+                    if self.metrics_service:
+                        duration_ms = (time.time() - start_time) * 1000
+                        self.metrics_service.log_gemini_api_call(
+                            operation='detail_page_extraction',
+                            url=url,
+                            prompt_tokens=usage.prompt_token_count,
+                            response_tokens=usage.candidates_token_count,
+                            total_tokens=usage.total_token_count,
+                            duration_ms=duration_ms,
+                            ticker=self.ticker
+                        )
                 
                 doc_info = self._parse_json_response(response.text)
                 
@@ -320,6 +344,7 @@ class IRWebsiteCrawler:
         if state['verbose']:
             print(f"\n📋 Processing LISTING page...")
         
+        start_time = time.time()
         try:
             if state['url'] not in state['listing_pages_visited']:
                 state['listing_pages_visited'].append(state['url'])
@@ -366,6 +391,19 @@ class IRWebsiteCrawler:
                     self.total_prompt_tokens += usage.prompt_token_count
                     self.total_response_tokens += usage.candidates_token_count
                     self.total_tokens += usage.total_token_count
+                    
+                    # Log metrics for this API call
+                    if self.metrics_service:
+                        duration_ms = (time.time() - start_time) * 1000
+                        self.metrics_service.log_gemini_api_call(
+                            operation='listing_page_extraction',
+                            url=state['url'],
+                            prompt_tokens=usage.prompt_token_count,
+                            response_tokens=usage.candidates_token_count,
+                            total_tokens=usage.total_token_count,
+                            duration_ms=duration_ms,
+                            ticker=self.ticker
+                        )
                     
                     if usage.candidates_token_count >= 8190 and state['verbose']:
                         print(f"      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")
@@ -718,6 +756,6 @@ class IRWebsiteCrawler:
             traceback.print_exc()
             return ([], [])
         
-        finally:
-            await self.browser_manager.close(verbose=False)
+        # Note: Don't close browser here - it's shared with the document processor
+        # The orchestrator (scan_ir_website.py) is responsible for browser lifecycle
 

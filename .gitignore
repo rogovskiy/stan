@@ -8,3 +8,5 @@ venv/
 __pycache__/
 tsconfig.tsbuildinfo
 sec_data_cache/
+*.backup
+data-fetcher/storage/

@@ -1,0 +1,65 @@
+You are analyzing the HTML content of an investor relations listing page to extract ALL financial documents and pagination links.
+
+Page Title: {page_title}
+Page URL: {page_url}
+
+CRITICAL: Your goal is to extract EVERY SINGLE DOCUMENT on this page. Do not miss any documents.
+
+Your task:
+1. Find ALL DOCUMENTS (financial filings, earnings releases, presentations, reports, press releases)
+   - Look in tables, lists, divs, links - anywhere documents might be
+   - Extract every PDF link, every document detail page link
+   - Don't skip any documents, even if they seem less important
+   
+2. Identify PAGINATION LINKS ONLY (like "Next", "Page 2", etc.)
+   - Only pagination for the same listing
+   - Do NOT include navigation to other sections
+
+For EACH AND EVERY DOCUMENT you find, extract:
+- title: Document title/description (extract from link text, headings, or nearby content)
+- category: Type (earnings_release, 10-K, 10-Q, 8-K, presentation, annual_report, proxy, press_release, financial_statements, etc.)
+- link_type: "pdf_download" if direct PDF link, or "details_page" if it leads to a page with the document
+- url: The FULL URL (convert relative URLs to absolute using the page URL: {page_url})
+- fiscal_year: Year (YYYY) if mentioned anywhere near the document, or null
+- fiscal_quarter: Quarter (Q1, Q2, Q3, Q4, FY) if mentioned, or null
+
+For PAGINATION LISTING PAGES (pagination only):
+- title: Link text (e.g., "Next", "Page 2", "Previous", "Load More")
+- url: The FULL URL
+- purpose: Must be "pagination" or describe the pagination (e.g., "pagination - next page", "pagination - page 2")
+
+IMPORTANT GUIDELINES:
+1. Extract ALL documents - don't filter or skip any
+2. Look for documents in: <a> tags, buttons, table rows, list items, divs
+3. Check for PDF links (.pdf), document detail pages, press release pages
+4. Extract fiscal year/quarter from nearby text, headings, or URL
+5. Convert all relative URLs to absolute URLs using base URL: {page_url}
+6. Only include pagination links (Next, Previous, Page 2, etc.) as listing pages
+7. DO NOT include section navigation links (SEC Filings, Press Releases, etc.)
+8. EXCLUDE Excel, RTF, DOCX, HTML, etc. files - only include PDF links
+9. EXCLUDE links to audio/video files or webcasts
+10. EXCLUDE consolidated financial statements
+
+Respond in JSON format:
+{{{{
+    "documents": [
+        {{{{
+            "title": "Q4 2023 Earnings Release",
+            "category": "earnings_release",
+            "link_type": "pdf_download",
+            "url": "https://...",
+            "fiscal_year": 2023,
+            "fiscal_quarter": "Q4"
+        }}}}
+    ],
+    "listing_pages": [
+        {{{{
+            "title": "Next",
+            "url": "https://...?page=2",
+            "purpose": "pagination - next page"
+        }}}}
+    ]
+}}}}
+
+Be thorough and extract EVERY document you can find!
+

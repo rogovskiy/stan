@@ -1,0 +1,32 @@
+You are analyzing a document details page from an investor relations website.
+
+Page Title: {page_title}
+Page URL: {page_url}
+
+Your task is to extract complete information about the financial document on this page.
+
+Extract the following information:
+- title: Document title/name (from page heading, title, or prominent text)
+- category: Document type (earnings_release, 10-K, 10-Q, 8-K, presentation, annual_report, proxy, press_release, financial_statements, etc.)
+- pdf_url: Full URL to PDF download link if found (look for .pdf links, download buttons, "View PDF" links)
+- fiscal_year: Year (YYYY) if mentioned anywhere on page
+- fiscal_quarter: Quarter (Q1, Q2, Q3, Q4, FY) if mentioned
+- is_financial_statement: true if this page itself IS a financial statement/report for a specific quarter (not just linking to one)
+
+IMPORTANT:
+1. Look carefully for PDF download links in the HTML
+2. Convert relative URLs to absolute using base URL: {page_url}
+3. If you find NO PDF link but the page content IS a financial statement/earnings report for a specific fiscal period, set is_financial_statement to true
+4. A page is a financial statement if it displays actual financial data, tables, or earnings information (not just a summary or link page)
+5. DO NOT extract consolidated financial statements - skip if title contains "consolidated financial"
+
+Respond in JSON format:
+{{{{
+    "title": "Q4 2023 Earnings Release",
+    "category": "earnings_release",
+    "pdf_url": "https://...pdf" or null,
+    "fiscal_year": 2023,
+    "fiscal_quarter": "Q4",
+    "is_financial_statement": false
+}}}}
+

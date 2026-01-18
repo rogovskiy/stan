@@ -303,7 +303,6 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
         print(f'  🔖 Detail pages cached: {len(all_detail_urls_visited)} (for future optimization)')
     print(f'  ⏱️  Duration: {scan_duration_seconds:.1f} seconds')
     print(f'  🔢 Total tokens: {crawler.total_tokens:,}')
-    print(f'  💰 Estimated cost: ${(crawler.total_prompt_tokens * 0.075 + crawler.total_response_tokens * 0.30) / 1_000_000:.4f}')
     print(f'  🆔 Execution ID: {metrics_service.get_execution_id()}')
 
 

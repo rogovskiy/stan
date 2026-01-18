@@ -156,8 +156,6 @@ class MetricsService:
             'total_tokens': total_tokens,
             'duration_ms': duration_ms,
             'ticker': ticker,
-            # Cost per call
-            'call_cost_usd': (prompt_tokens * 0.075 + response_tokens * 0.30) / 1_000_000
         })
     
     def log_document_download(self, url: str, file_size_bytes: int, 

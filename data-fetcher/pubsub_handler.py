@@ -6,7 +6,6 @@ Receives Pub/Sub push messages with ticker symbols and triggers IR website scans
 """
 
 import os
-import sys
 import json
 import base64
 import logging
@@ -15,18 +14,8 @@ from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, get_logger
 
-# Initialize Cloud Logging when running in Cloud Run
-if os.environ.get('K_SERVICE'):
-    setup_cloud_logging()
-    logging.info('Cloud Logging initialized for Cloud Run')
-else:
-    # Local dev - configure standard logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler(sys.stdout)]
-    )
-    logging.info('Standard logging configured for local development')
+# Initialize logging (Cloud Run or local dev)
+setup_cloud_logging()
 
 logger = logging.getLogger(__name__)
 

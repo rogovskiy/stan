@@ -46,6 +46,7 @@ class BrowserPoolManager:
             browser_type='chromium',
             max_request_retries=0,  # We handle retries ourselves
             browser_launch_options=browser_launch_options,
+            configure_logging=False, 
         )
         # Browser/context/page will be lazily initialized on first use
         self._browser = None

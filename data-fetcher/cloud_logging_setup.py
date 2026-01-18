@@ -32,49 +32,56 @@ _cloud_logging_initialized = False
 
 def setup_cloud_logging() -> bool:
     """
-    Initialize Google Cloud Logging for the application.
+    Initialize logging for the application.
     
-    Uses StructuredLogHandler to write JSON logs to stdout, which Cloud Run
-    automatically ingests as jsonPayload. This approach is simpler and doesn't
-    require API calls.
-    
-    Only initializes when running in Cloud Run (detected by K_SERVICE env var).
-    For local development, use standard logging instead.
+    - In Cloud Run: Uses StructuredLogHandler to write JSON logs to stdout
+    - Local development: Configures standard Python logging with console output
     
     Returns:
-        bool: True if Cloud Logging was successfully initialized, False otherwise
+        bool: True if logging was successfully initialized, False otherwise
     """
     global _cloud_logging_initialized
     
     if _cloud_logging_initialized:
         return True
     
-    # Only use Cloud Logging in Cloud Run
+    # Check if running in Cloud Run
     is_cloud_run = bool(os.environ.get('K_SERVICE'))
-    if not is_cloud_run:
-        logging.info("Not in Cloud Run, skipping Cloud Logging setup")
-        return False
     
-    try:
-        from google.cloud.logging.handlers import StructuredLogHandler
-        
-        # Structured JSON logs to stdout (Cloud Run ingests these as jsonPayload)
-        handler = StructuredLogHandler(stream=sys.stdout)
-        
-        root = logging.getLogger()
-        root.handlers = [handler]
-        root.setLevel(logging.INFO)
-        
-        _cloud_logging_initialized = True
-        logging.info("Cloud Logging initialized with StructuredLogHandler")
-        return True
-        
-    except ImportError:
-        logging.warning("google-cloud-logging not installed, using standard logging")
-        return False
-    except Exception as e:
-        logging.error(f"Failed to initialize Cloud Logging: {e}")
-        return False
+    if is_cloud_run:
+        # Cloud Run: Use StructuredLogHandler for JSON logs
+        try:
+            from google.cloud.logging.handlers import StructuredLogHandler
+            
+            # Structured JSON logs to stdout (Cloud Run ingests these as jsonPayload)
+            handler = StructuredLogHandler(stream=sys.stdout)
+            
+            root = logging.getLogger()
+            root.handlers = [handler]
+            root.setLevel(logging.INFO)
+            
+            _cloud_logging_initialized = True
+            logging.info("Cloud Logging initialized with StructuredLogHandler")
+            return True
+            
+        except ImportError:
+            logging.warning("google-cloud-logging not installed, falling back to standard logging")
+            # Fall through to standard logging setup
+        except Exception as e:
+            logging.error(f"Failed to initialize Cloud Logging: {e}")
+            # Fall through to standard logging setup
+    
+    # Local dev or fallback: Configure standard logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True  # Override any existing configuration
+    )
+    
+    _cloud_logging_initialized = True
+    logging.info('Standard logging configured for local development' if not is_cloud_run else 'Standard logging configured (Cloud Logging unavailable)')
+    return True
 
 
 class ContextLogger:
@@ -114,7 +121,7 @@ class ContextLogger:
     
 
     def dump_handlers(self,label):
-        root = self.logger
+        root = logging.getLogger()
         print(label,root)
         for h in root.handlers:
             print("  ", h, getattr(h, "formatter", None))

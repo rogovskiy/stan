@@ -125,7 +125,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         logger.info(f'Scanning {len(ticker_urls)} IR websites for {ticker}:')
         for i, url in enumerate(ticker_urls, 1):
             logger.info(f'  {i}. {url}')
-    
+    logger.dump_handlers("Before services init")
     # Initialize services
     ir_document_service = IRDocumentService(logger=logger)
     ir_url_service = IRURLService()

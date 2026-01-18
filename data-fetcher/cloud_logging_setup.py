@@ -160,6 +160,37 @@ class ContextLogger:
     def critical(self, message: str, exc_info: bool = False, **extra_fields):
         """Log a critical message with context."""
         self.logger.critical(message, exc_info=exc_info, extra=self._get_extra(**extra_fields))
+    
+    def metric(self, operation_type: str, severity: str = 'INFO', **metric_fields):
+        """Log a metric with unified format.
+        
+        Args:
+            operation_type: Type of metric operation (e.g., 'scan_start', 'gemini_api_call')
+            severity: Log severity level ('INFO', 'WARNING', 'ERROR') - defaults to 'INFO'
+            **metric_fields: Additional metric fields to include in json_fields
+        
+        Example:
+            logger.metric('scan_start', target_quarter='2024Q3', max_pages=50)
+            logger.metric('document_download', success=False, error='Download failed', severity='WARNING')
+        """
+        message = f'Metric: {operation_type}'
+        
+        # Include operation_type in metric_fields
+        metric_data = {
+            'operation_type': operation_type,
+            **metric_fields
+        }
+        
+        # Call appropriate log method based on severity
+        if severity == 'INFO':
+            self.logger.info(message, extra=self._get_extra(**metric_data))
+        elif severity == 'WARNING':
+            self.logger.warning(message, extra=self._get_extra(**metric_data))
+        elif severity == 'ERROR':
+            self.logger.error(message, extra=self._get_extra(**metric_data))
+        else:
+            # Default to INFO for unknown severity
+            self.logger.info(message, extra=self._get_extra(**metric_data))
 
 
 def get_logger(

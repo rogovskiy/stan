@@ -278,8 +278,8 @@ class IRDocumentProcessor:
                         self.log.warning(f'  Skipped: Could not download')
                     # Log failed download
                     url_truncated = release['url'][:200] if release['url'] else None
-                    self.log.warning('Metric: document_download',
-                        operation_type='document_download',
+                    self.log.metric('document_download',
+                        severity='WARNING',
                         url=url_truncated,
                         file_size_bytes=0,
                         duration_ms=download_duration_ms,
@@ -290,8 +290,7 @@ class IRDocumentProcessor:
                 
                 # Log successful download
                 url_truncated = release['url'][:200] if release['url'] else None
-                self.log.info('Metric: document_download',
-                    operation_type='document_download',
+                self.log.metric('document_download',
                     url=url_truncated,
                     file_size_bytes=len(content),
                     duration_ms=download_duration_ms,
@@ -356,8 +355,7 @@ class IRDocumentProcessor:
                 existing_urls.add(release['url'])  # Add to set to avoid re-processing
                 
                 # Log document storage
-                self.log.info('Metric: document_storage',
-                    operation_type='document_storage',
+                self.log.metric('document_storage',
                     document_id=document_id,
                     quarter_key=quarter_key,
                     document_type=doc_type

@@ -117,7 +117,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         return
     
     # Log scan start
-    logger.info('Metric: scan_start', operation_type='scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
+    logger.metric('scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
     
     if len(ticker_urls) == 1:
         logger.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
@@ -278,8 +278,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     
     # Log scan complete with all metrics
     estimated_cost_usd = (crawler.total_prompt_tokens * 0.075 + crawler.total_response_tokens * 0.30) / 1_000_000
-    logger.info('Metric: scan_complete',
-        operation_type='scan_complete',
+    logger.metric('scan_complete',
         duration_seconds=scan_duration_seconds,
         total_documents=len(documents),
         documents_processed=processed_count,

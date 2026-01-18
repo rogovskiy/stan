@@ -283,8 +283,7 @@ class IRWebsiteCrawler:
                     # Log metrics for this API call
                     duration_ms = (time.time() - start_time) * 1000
                     url_truncated = url[:200] if url else None
-                    self.log.info('Metric: gemini_api_call',
-                        operation_type='gemini_api_call',
+                    self.log.metric('gemini_api_call',
                         operation='detail_page_extraction',
                         url=url_truncated,
                         prompt_tokens=usage.prompt_token_count,
@@ -405,8 +404,7 @@ class IRWebsiteCrawler:
                     # Log metrics for this API call
                     duration_ms = (time.time() - start_time) * 1000
                     url_truncated = state['url'][:200] if state['url'] else None
-                    self.log.info('Metric: gemini_api_call',
-                        operation_type='gemini_api_call',
+                    self.log.metric('gemini_api_call',
                         operation='listing_page_extraction',
                         url=url_truncated,
                         prompt_tokens=usage.prompt_token_count,

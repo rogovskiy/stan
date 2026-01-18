@@ -16,6 +16,8 @@ import json
 import asyncio
 import tempfile
 import time
+import logging
+import sys
 from typing import TypedDict, List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urljoin
 from datetime import datetime
@@ -26,6 +28,7 @@ from google.api_core.exceptions import ResourceExhausted, InvalidArgument
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from cloud_logging_setup import get_logger
 from browser_pool_manager import BrowserPoolManager
 from extraction_utils import (
     get_gemini_model,
@@ -38,6 +41,8 @@ from services.metrics_service import MetricsService
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
 load_dotenv(env_path)
+
+
 
 
 # Define the state for our graph
@@ -94,6 +99,11 @@ class IRWebsiteCrawler:
         # Store metrics service and ticker
         self.metrics_service = metrics_service
         self.ticker = ticker
+        
+        # Initialize structured logger with execution context
+        execution_id = os.environ.get('EXECUTION_ID') or (metrics_service.get_execution_id() if metrics_service else None)
+        scan_type = os.environ.get('SCAN_TYPE')
+        self.log = get_logger(__name__, execution_id=execution_id, ticker=ticker, scan_type=scan_type)
         
         # Initialize Gemini model using extraction_utils
         # This handles API key configuration automatically
@@ -214,8 +224,8 @@ class IRWebsiteCrawler:
     async def _navigate_listing_node(self, state: ScraperState) -> ScraperState:
         """Navigate to a listing page."""
         if state['verbose']:
-            print(f"\n📋 Navigating to LISTING page:")
-            print(f"   {state['url'][:80]}...")
+            self.log.info(f"📋 Navigating to LISTING page: {state['url'][:80]}...", 
+                         page_type='listing', url=state['url'])
         
         try:
             html_content = await self.browser_manager.get_html(state['url'], wait_time=30, verbose=False)
@@ -232,11 +242,13 @@ class IRWebsiteCrawler:
                 state['listing_pages_visited'].append(state['url'])
             
             if state['verbose']:
-                print(f"   ✅ Loaded: {title[:70] if title else 'Untitled'}")
+                self.log.info(f"✅ Loaded: {title[:70] if title else 'Untitled'}", 
+                            page_title=title, url=state['url'])
             
         except Exception as e:
             error_msg = str(e)
-            print(f"   ❌ Navigation error: {error_msg}")
+            self.log.error(f"❌ Navigation error: {error_msg}", 
+                          url=state['url'], error=error_msg)
             
             # Check for critical browser errors that should fail immediately
             critical_errors = [
@@ -713,11 +725,10 @@ class IRWebsiteCrawler:
             - visited_detail_urls: List of detail page URLs visited (for caching)
         """
         if verbose:
-            print(f"\n🚀 Starting IR Website Crawler")
-            print(f"   Start URL: {start_url}")
-            print(f"   Ticker: {ticker}")
-            print(f"   Max Pages: {max_pages}")
-            print(f"   Skip URLs: {len(skip_urls) if skip_urls else 0}")
+            self.log.info("🚀 Starting IR Website Crawler", 
+                         start_url=start_url, 
+                         max_pages=max_pages,
+                         skip_urls_count=len(skip_urls) if skip_urls else 0)
         
         initial_state = ScraperState(
             url=start_url,
@@ -748,30 +759,30 @@ class IRWebsiteCrawler:
             visited_detail_urls = final_state['detail_pages_visited']
             
             if verbose:
-                print(f"\n✅ Crawling Complete!")
-                print(f"   📋 Listing Pages: {len(final_state['listing_pages_visited'])}")
-                print(f"   📄 Detail Pages: {len(visited_detail_urls)}")
-                print(f"   📦 Documents Found: {len(documents)}")
-                
                 direct_pdfs = sum(1 for d in documents if d.get('extraction_method') == 'direct_link')
                 from_details = sum(1 for d in documents if d.get('extraction_method') == 'details_page')
-                print(f"      - Direct PDFs: {direct_pdfs}")
-                print(f"      - From detail pages: {from_details}")
+                
+                self.log.info("✅ Crawling Complete!", 
+                             listing_pages=len(final_state['listing_pages_visited']),
+                             detail_pages=len(visited_detail_urls),
+                             documents_found=len(documents),
+                             direct_pdfs=direct_pdfs,
+                             from_details=from_details,
+                             prompt_tokens=self.total_prompt_tokens,
+                             response_tokens=self.total_response_tokens,
+                             total_tokens=self.total_tokens)
                 
                 unvisited_details = len(final_state['detail_pages_queue'])
                 unvisited_listings = len(final_state['listing_pages_queue'])
                 if unvisited_details > 0 or unvisited_listings > 0:
-                    print(f"   ⚠️  Unvisited: {unvisited_details} details, {unvisited_listings} listings (increase max_pages to visit more)")
-                
-                print(f"\n📊 Total Token Usage:")
-                print(f"   Prompt tokens: {self.total_prompt_tokens:,}")
-                print(f"   Response tokens: {self.total_response_tokens:,}")
-                print(f"   Total tokens: {self.total_tokens:,}")
+                    self.log.warning(f"⚠️  Unvisited pages (increase max_pages to visit more)",
+                                   unvisited_details=unvisited_details,
+                                   unvisited_listings=unvisited_listings)
             
             return (documents, visited_detail_urls)
             
         except Exception as e:
-            print(f"\n❌ Crawling failed: {e}")
+            self.log.error(f"❌ Crawling failed: {e}", exc_info=True, start_url=start_url)
             import traceback
             traceback.print_exc()
             return ([], [])

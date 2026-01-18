@@ -69,12 +69,12 @@ gcloud run deploy $SERVICE_NAME \
   --memory 2Gi \
   --cpu 2 \
   --timeout 600 \
-  --max-instances 5 \
+  --max-instances 3 \
   --concurrency 1 \
   --no-allow-unauthenticated \
   --service-account $SERVICE_ACCOUNT \
   --set-env-vars FIREBASE_PROJECT_ID=$PROJECT_ID \
-  --set-env-vars GEMINI_API_KEY=$GEMINI_API_KEY
+  --set-secrets GEMINI_API_KEY=ir_scanner_gemini_api_key:latest
 
 # Get the service URL
 SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)')

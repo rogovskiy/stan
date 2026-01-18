@@ -29,11 +29,23 @@ class BrowserPoolManager:
         Args:
             headless: Whether to run browser in headless mode (default: True)
         """
+        # Chrome launch args for container environments (Cloud Run, Docker)
+        # Containers run as root and need --no-sandbox
+        browser_launch_options = {
+            'args': [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',  # overcome limited resource problems
+                '--disable-gpu',  # not needed in headless
+            ]
+        }
+        
         # Create Crawlee crawler for browser infrastructure
         self._crawler = PlaywrightCrawler(
             headless=headless,
             browser_type='chromium',
             max_request_retries=0,  # We handle retries ourselves
+            browser_launch_options=browser_launch_options,
         )
         # Browser/context/page will be lazily initialized on first use
         self._browser = None

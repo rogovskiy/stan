@@ -212,7 +212,14 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
                 if verbose:
                     print(f'Cached {len(detail_urls_visited)} detail page URLs for future runs')
         
+        except RuntimeError as e:
+            # Critical error (e.g., browser failure) - re-raise to stop processing
+            print(f'💥 CRITICAL ERROR crawling {ir_url}: {e}')
+            print(f'Cannot continue - browser infrastructure failure')
+            raise
+        
         except Exception as e:
+            # Non-critical error - log and continue with next URL
             print(f'Error crawling {ir_url}: {e}')
             if verbose:
                 import traceback

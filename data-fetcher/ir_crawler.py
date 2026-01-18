@@ -235,8 +235,28 @@ class IRWebsiteCrawler:
                 print(f"   ✅ Loaded: {title[:70] if title else 'Untitled'}")
             
         except Exception as e:
-            print(f"   ❌ Navigation error: {e}")
-            state['error'] = str(e)
+            error_msg = str(e)
+            print(f"   ❌ Navigation error: {error_msg}")
+            
+            # Check for critical browser errors that should fail immediately
+            critical_errors = [
+                'Target page, context or browser has been closed',
+                'Browser has been closed',
+                'Context has been closed',
+                'launch_persistent_context',
+                'Chromium sandboxing failed',
+                'Browser pool',
+                'Browser type',
+            ]
+            
+            is_critical = any(critical_err in error_msg for critical_err in critical_errors)
+            
+            if is_critical:
+                # Critical browser infrastructure error - raise immediately
+                raise RuntimeError(f"Critical browser error - cannot continue: {error_msg}") from e
+            
+            # Non-critical error - mark for finishing this run
+            state['error'] = error_msg
             state['next_action'] = 'finish'
         
         return state

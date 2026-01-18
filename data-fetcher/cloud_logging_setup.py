@@ -23,7 +23,6 @@ Usage:
 import os
 import sys
 import logging
-from typing import Optional
 from contextvars import ContextVar
 
 # Global flag to track if Cloud Logging is initialized
@@ -91,38 +90,45 @@ def setup_cloud_logging() -> bool:
     logging.info('Standard logging configured for local development' if not is_cloud_run else 'Standard logging configured (Cloud Logging unavailable)')
     return True
 
-import pprint
-def _setup_mdc_context():
-    old_factory = logging.getLogRecordFactory()
+class MDCFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Base json_fields (may come from extra={"json_fields": {...}})
+        base = getattr(record, "json_fields", None)
+        if not isinstance(base, dict):
+            base = {}
 
-    def record_factory(*args, **kwargs):
-        record = old_factory(*args, **kwargs)
+        # Merge metric_fields (comes from extra={"metric_fields": {...}})
+        metric_fields = getattr(record, "metric_fields", None)
+        if isinstance(metric_fields, dict):
+            base = {**base, **metric_fields}
 
-        # Pull MDC/contextvars safely (these should never raise, but keep it defensive)
+        # Merge MDC/contextvars
         execution_id = mdc_execution_id.get(None)
         operation_type = mdc_operation_type.get(None)
         ticker = mdc_ticker.get(None)
 
-        # Ensure json_fields is a dict (StructuredLogHandler only serializes json_fields / dict msg)
-        base_json_fields = getattr(record, "json_fields", None)
-        if not isinstance(base_json_fields, dict):
-            base_json_fields = {}
-
-        # Only include non-None values; stringify for safety (Cloud Logging prefers JSON-serializable types)
-        mdc_fields = {}
         if execution_id is not None:
-            mdc_fields["execution_id"] = str(execution_id)
+            base["execution_id"] = str(execution_id)
         if operation_type is not None:
-            mdc_fields["operation_type"] = str(operation_type)
+            base["operation_type"] = str(operation_type)
         if ticker is not None:
-            mdc_fields["ticker"] = str(ticker)
+            base["ticker"] = str(ticker)
 
-        record.json_fields = {**base_json_fields, **mdc_fields}
+        record.json_fields = base
+        return True
 
-        return record
-
-    logging.setLogRecordFactory(record_factory)
+def _setup_mdc_context():
+    root = logging.getLogger()
+    root.addFilter(MDCFilter())
 
 def emit_metric(metric_name: str, **metric_fields):
-    logging.info(f'Metric: {metric_name}', extra={**metric_fields, "metric_name": metric_name})
-    return
+    logging.info(
+        f"Metric: {metric_name}",
+        extra={
+            "metric_fields": {
+                "event_type": "metric",
+                "metric_name": metric_name,
+                **metric_fields,
+            }
+        },
+    )

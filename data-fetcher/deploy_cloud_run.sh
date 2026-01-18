@@ -12,14 +12,14 @@ if [ ! -f .env.local ]; then
     echo "❌ Error: .env.local not found"
     echo "Please create .env.local with required environment variables:"
     echo "  - FIREBASE_PROJECT_ID"
-    echo "  - GEMINI_API_KEY"
+    echo "  - FIREBASE_STORAGE_BUCKET"
     exit 1
 fi
 
 # Load environment variables from .env.local
 echo "📋 Loading configuration from .env.local..."
 export $(grep -v '^#' .env.local | grep FIREBASE_PROJECT_ID | xargs)
-export $(grep -v '^#' .env.local | grep GEMINI_API_KEY | xargs)
+export $(grep -v '^#' .env.local | grep FIREBASE_STORAGE_BUCKET | xargs)
 
 # Validate required variables
 if [ -z "$FIREBASE_PROJECT_ID" ]; then
@@ -27,8 +27,8 @@ if [ -z "$FIREBASE_PROJECT_ID" ]; then
     exit 1
 fi
 
-if [ -z "$GEMINI_API_KEY" ]; then
-    echo "❌ Error: GEMINI_API_KEY not found in .env.local"
+if [ -z "$FIREBASE_STORAGE_BUCKET" ]; then
+    echo "❌ Error: FIREBASE_STORAGE_BUCKET not found in .env.local"
     exit 1
 fi
 
@@ -74,6 +74,7 @@ gcloud run deploy $SERVICE_NAME \
   --no-allow-unauthenticated \
   --service-account $SERVICE_ACCOUNT \
   --set-env-vars FIREBASE_PROJECT_ID=$PROJECT_ID \
+  --set-env-vars FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET \
   --set-secrets GEMINI_API_KEY=ir_scanner_gemini_api_key:latest
 
 # Get the service URL

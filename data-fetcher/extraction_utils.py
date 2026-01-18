@@ -22,7 +22,7 @@ def get_gemini_model() -> str:
     return os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
 
 
-def initialize_gemini_model() -> genai.GenerativeModel:
+def initialize_gemini_model(model_name: str = None, generation_config: Optional[Dict[str, Any]] = None) -> genai.GenerativeModel:
     """Initialize and return a configured Gemini GenerativeModel instance.
     
     Reads API key from environment variables (GEMINI_API_KEY or GOOGLE_AI_API_KEY),
@@ -39,8 +39,7 @@ def initialize_gemini_model() -> genai.GenerativeModel:
         raise ValueError('GEMINI_API_KEY or GOOGLE_AI_API_KEY environment variable is not set')
     
     genai.configure(api_key=gemini_api_key)
-    model_name = get_gemini_model()
-    return genai.GenerativeModel(model_name)
+    return genai.GenerativeModel(model_name or get_gemini_model(), generation_config=generation_config)
 
 
 def extract_json_from_llm_response(response_text: str) -> str:

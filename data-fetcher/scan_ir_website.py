@@ -15,11 +15,10 @@ import sys
 import re
 import asyncio
 import time
-import logging
 from typing import Dict, List, Optional, Set
 from dotenv import load_dotenv
 
-from cloud_logging_setup import get_logger
+from cloud_logging_setup import ContextLogger, get_logger
 from services.ir_url_service import IRURLService
 from services.ir_document_service import IRDocumentService
 from services.metrics_service import MetricsService
@@ -39,7 +38,7 @@ IR_URLS_FILE = os.path.join(os.path.dirname(__file__), 'ir_urls.json')
 browser_pool_manager = None
 
 
-def load_ir_urls() -> Dict[str, List[str]]:
+def load_ir_urls(logger) -> Dict[str, List[str]]:
     """Load IR URLs from configuration file.
     
     Returns a dictionary where each ticker maps to a list of URL strings.
@@ -48,14 +47,14 @@ def load_ir_urls() -> Dict[str, List[str]]:
         with open(IR_URLS_FILE, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
-        log.warning(f'{IR_URLS_FILE} not found. Create it with IR URLs per ticker.')
+        logger.warning(f'{IR_URLS_FILE} not found. Create it with IR URLs per ticker.')
         return {}
     except json.JSONDecodeError as e:
-        log.error(f'Error parsing {IR_URLS_FILE}: {e}')
+        logger.error(f'Error parsing {IR_URLS_FILE}: {e}')
         return {}
 
 
-def get_ir_urls_for_ticker(ticker: str) -> List[str]:
+def get_ir_urls_for_ticker(ticker: str, logger) -> List[str]:
     """Get list of IR URLs for a ticker. Checks Firebase first, then falls back to JSON config.
     
     Args:
@@ -64,7 +63,7 @@ def get_ir_urls_for_ticker(ticker: str) -> List[str]:
     Returns:
         List of URLs for the ticker (from Firebase if available, otherwise from JSON)
     """
-    ir_urls = load_ir_urls()
+    ir_urls = load_ir_urls(logger)
     
     # Initialize Firebase service to get URLs from Firebase
     ir_url_service = IRURLService()
@@ -72,31 +71,25 @@ def get_ir_urls_for_ticker(ticker: str) -> List[str]:
     ticker_upper = ticker.upper()
     
     # First, try to get URLs from Firebase (priority)
-    try:
-        firebase_urls = ir_url_service.get_ir_urls(ticker)
-        if firebase_urls:
-            urls = []
-            for url_data in firebase_urls:
-                url = url_data.get('url')
-                if url:
-                    urls.append(url)
-            if urls:
-                return urls
-    except Exception as e:
-        log.warning(f'Could not get IR URLs from Firebase for {ticker}: {e}')
+    firebase_urls = ir_url_service.get_ir_urls(ticker)
+    if firebase_urls:
+        urls = []
+        for url_data in firebase_urls:
+            url = url_data.get('url')
+            if url:
+                urls.append(url)
+        if urls:
+            return urls
     
     # Fallback to JSON config if Firebase has no URLs
     if ticker_upper in ir_urls:
         urls = ir_urls[ticker_upper]
         if isinstance(urls, list):
             return urls
-        else:
-            log.warning(f'Invalid URL format for {ticker_upper} in JSON, expected list. Got: {type(urls).__name__}')
     
     return []
 
-
-async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
+async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool, logger: ContextLogger) -> None:
     """Step 1: Scan IR website using LangGraph crawler and download documents.
     
     Args:
@@ -105,24 +98,25 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         verbose: Print verbose output
         logger: ContextLogger instance for structured logging
     """
+    
     # Use the passed logger
     log = logger
     
-    # Initialize metrics service and log scan start
-    metrics_service = MetricsService()
+    # Initialize metrics service with logger
+    metrics_service = MetricsService(execution_id=None, logger=logger)
     scan_start_time = time.time()
     
     # Validate quarter format if provided
     if target_quarter and not re.match(r'^\d{4}Q[1-4]$', target_quarter):
-        log.error(f'Invalid quarter format: {target_quarter}. Use YYYYQN (e.g., 2024Q2)')
+        logger.error(f'Invalid quarter format: {target_quarter}. Use YYYYQN (e.g., 2024Q2)')
         return
     
     # Get all URLs for this ticker (from Firebase first, then JSON fallback)
-    ticker_urls = get_ir_urls_for_ticker(ticker)
+    ticker_urls = get_ir_urls_for_ticker(ticker, logger)
     
     if not ticker_urls:
-        log.error(f'No IR URL configured for {ticker}')
-        log.error(f'Add it to {IR_URLS_FILE} or Firebase (tickers/{ticker}/ir_urls)')
+        logger.error(f'No IR URL configured for {ticker}')
+        logger.error(f'Add it to {IR_URLS_FILE} or Firebase (tickers/{ticker}/ir_urls)')
         return
     
     # Log scan start
@@ -134,16 +128,31 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     )
     
     if len(ticker_urls) == 1:
-        log.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
+        logger.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
     else:
-        log.info(f'Scanning {len(ticker_urls)} IR websites for {ticker}:')
+        logger.info(f'Scanning {len(ticker_urls)} IR websites for {ticker}:')
         for i, url in enumerate(ticker_urls, 1):
-            log.info(f'  {i}. {url}')
+            logger.info(f'  {i}. {url}')
     
+    logger.dump_handlers("Before crawler init")
+
     # Initialize services
-    ir_document_service = IRDocumentService()
+    ir_document_service = IRDocumentService(logger = logger)
+    logger.dump_handlers("After crawler init")
     ir_url_service = IRURLService()
-    
+    # Initialize crawler and processor with metrics service (sharing browser pool manager)
+    # crawler = IRWebsiteCrawler(
+    #     browser_pool_manager=browser_pool_manager,
+    #     metrics_service=metrics_service,
+    #     ticker=ticker,
+    #     logger=logger
+    # )
+    processor = IRDocumentProcessor(
+        browser_pool_manager=browser_pool_manager,
+        metrics_service=metrics_service,
+        logger=logger
+    )
+
     # Get all IR URLs from Firebase to check if they've been scanned before
     firebase_ir_urls = ir_url_service.get_ir_urls(ticker)
     url_scan_history = {url_data['url']: url_data.get('last_scanned') for url_data in firebase_ir_urls}
@@ -152,20 +161,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     all_existing_docs = ir_document_service.get_all_ir_documents(ticker)
     existing_urls = {doc.get('url') for doc in all_existing_docs if doc.get('url')}
     if existing_urls and verbose:
-        log.info(f'Found {len(existing_urls)} already-downloaded documents in database')
-    
-    # Initialize crawler and processor with metrics service (sharing browser pool manager)
-    crawler = IRWebsiteCrawler(
-        browser_pool_manager=browser_pool_manager,
-        metrics_service=metrics_service,
-        ticker=ticker,
-        logger=log
-    )
-    processor = IRDocumentProcessor(
-        browser_pool_manager=browser_pool_manager,
-        metrics_service=metrics_service,
-        logger=log
-    )
+        logger.info(f'Found {len(existing_urls)} already-downloaded documents in database')
     
     # Collect documents from all URLs
     all_documents = []
@@ -176,20 +172,18 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         scan_type = "new" if not url_scan_history.get(ir_url) else "update"
         
         # Set scan_type in environment for logging context
-        os.environ['SCAN_TYPE'] = scan_type
+        logger.set_scan_type(scan_type)
         
         if verbose:
-            log.info(f'\n{"="*80}')
-            log.info(f'Processing URL: {ir_url}')
-            log.info(f'Scan type: {scan_type}')
-            log.info(f'{"="*80}')
+            logger.info(f'Processing URL: {ir_url}')
+            logger.info(f'Scan type: {scan_type}')
         
         # Get cached detail page URLs for this IR URL (to skip revisiting)
         cached_detail_urls = ir_url_service.get_cached_detail_urls(ticker, ir_url)
         skip_urls = set(cached_detail_urls) | existing_urls  # Skip both cached and already-downloaded
         
         if skip_urls and verbose:
-            log.info(f'Skipping {len(skip_urls)} previously-visited detail pages and existing documents')
+            logger.info(f'Skipping {len(skip_urls)} previously-visited detail pages and existing documents')
         
         try:
             # Run crawler to discover documents
@@ -217,29 +211,29 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
             
             if documents:
                 if verbose:
-                    log.info(f'\n✅ Crawler found {len(documents)} documents from {ir_url}')
+                    logger.info(f'\n✅ Crawler found {len(documents)} documents from {ir_url}')
                     if new_docs_count > 0:
-                        log.info(f'   📝 {new_docs_count} are new (not in database)')
+                        logger.info(f'   📝 {new_docs_count} are new (not in database)')
                 all_documents.extend(documents)
             else:
-                log.info(f'No documents found from {ir_url}')
+                logger.info(f'No documents found from {ir_url}')
             
             # Cache detail page URLs visited (for future runs)
             if detail_urls_visited:
                 all_detail_urls_visited.extend(detail_urls_visited)
                 ir_url_service.cache_detail_urls(ticker, ir_url, detail_urls_visited)
                 if verbose:
-                    log.info(f'Cached {len(detail_urls_visited)} detail page URLs for future runs')
+                    logger.info(f'Cached {len(detail_urls_visited)} detail page URLs for future runs')
         
         except RuntimeError as e:
             # Critical error (e.g., browser failure) - re-raise to stop processing
-            log.critical(f'💥 CRITICAL ERROR crawling {ir_url}: {e}')
-            log.critical(f'Cannot continue - browser infrastructure failure')
+            logger.critical(f'💥 CRITICAL ERROR crawling {ir_url}: {e}')
+            logger.critical(f'Cannot continue - browser infrastructure failure')
             raise
         
         except Exception as e:
             # Non-critical error - log and continue with next URL
-            log.error(f'Error crawling {ir_url}: {e}', exc_info=verbose)
+            logger.error(f'Error crawling {ir_url}: {e}', exc_info=verbose)
             # Still update scan timestamp even on error
             ir_url_service.update_scan_result(
                 ticker=ticker,
@@ -249,7 +243,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
             continue
     
     if not all_documents:
-        log.warning(f'❌ No documents discovered for {ticker} from any configured URLs')
+        logger.warning(f'❌ No documents discovered for {ticker} from any configured URLs')
         return
     
     # Normalize documents: ensure each has a 'url' field (from pdf_url or page_url)
@@ -267,24 +261,22 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         if not url:
             docs_without_url += 1
             if verbose:
-                log.warning(f'⚠️  Skipping document without URL: {doc.get("title", "unknown")}')
+                logger.warning(f'⚠️  Skipping document without URL: {doc.get("title", "unknown")}')
             continue
         if url not in seen_urls:
             seen_urls.add(url)
             documents.append(doc)
     
     if docs_without_url > 0:
-        log.warning(f'⚠️  Skipped {docs_without_url} document(s) without URLs')
+        logger.warning(f'⚠️  Skipped {docs_without_url} document(s) without URLs')
     
     if len(all_documents) > len(documents) + docs_without_url:
-        log.info(f'Removed {len(all_documents) - len(documents) - docs_without_url} duplicate document(s)')
+        logger.info(f'Removed {len(all_documents) - len(documents) - docs_without_url} duplicate document(s)')
     
-    log.info(f'📦 Total unique documents discovered: {len(documents)}')
+    logger.info(f'📦 Total unique documents discovered: {len(documents)}')
     
     # Process and store documents
-    log.info(f'{"="*80}')
-    log.info(f'Downloading and storing documents...')
-    log.info(f'{"="*80}')
+    logger.info(f'Downloading and storing documents...')
     
     processed_count, skipped_count = await processor.process_documents(
         ticker=ticker,
@@ -310,22 +302,17 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         target_quarter=target_quarter
     )
     
-    log.info(f'{"="*80}')
-    log.info(f'✅ Scan complete!')
-    log.info(f'{"="*80}')
-    log.info(f'  📥 Documents stored: {processed_count}')
-    log.info(f'  ⏭️  Documents skipped: {skipped_count}')
+    logger.info(f'✅ Scan complete!')
+    logger.info(f'  📥 Documents stored: {processed_count}')
+    logger.info(f'  ⏭️  Documents skipped: {skipped_count}')
     if all_detail_urls_visited:
-        log.info(f'  🔖 Detail pages cached: {len(all_detail_urls_visited)} (for future optimization)')
-    log.info(f'  ⏱️  Duration: {scan_duration_seconds:.1f} seconds')
-    log.info(f'  🔢 Total tokens: {crawler.total_tokens:,}')
-    log.info(f'  🆔 Execution ID: {metrics_service.get_execution_id()}')
+        logger.info(f'  🔖 Detail pages cached: {len(all_detail_urls_visited)} (for future optimization)')
+    logger.info(f'  ⏱️  Duration: {scan_duration_seconds:.1f} seconds')
+    logger.info(f'  🔢 Total tokens: {crawler.total_tokens:,}')
 
 
 async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
     """Wrapper that ensures browser cleanup."""
-    # Use the passed logger
-    log = logger
     
     try:
         await scan_ir_website_async(ticker, target_quarter, verbose, logger)
@@ -335,10 +322,10 @@ async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Option
             try:
                 await browser_pool_manager.close(verbose=verbose)
                 if verbose:
-                    log.info('🔒 Browser closed')
+                    logger.info('🔒 Browser closed')
             except Exception as e:
                 if verbose:
-                    log.warning(f'⚠️  Error closing browser: {e}')
+                    logger.warning(f'⚠️  Error closing browser: {e}')
 
 
 def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:

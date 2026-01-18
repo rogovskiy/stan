@@ -16,13 +16,13 @@ import yfinance as yf
 from services.ir_document_service import IRDocumentService
 from services.metrics_service import MetricsService
 from browser_pool_manager import BrowserPoolManager
-
+from cloud_logging_setup import ContextLogger
 
 class IRDocumentProcessor:
     """Processes and stores IR documents discovered by crawler."""
     
     def __init__(self, browser_pool_manager: BrowserPoolManager = None, 
-                 metrics_service: MetricsService = None, logger=None):
+                 metrics_service: MetricsService = None, logger: ContextLogger = None):
         """Initialize document processor.
         
         Args:
@@ -31,7 +31,7 @@ class IRDocumentProcessor:
             logger: ContextLogger instance for structured logging (required)
         """
         self.browser_pool_manager = browser_pool_manager or BrowserPoolManager()
-        self.ir_document_service = IRDocumentService()
+        self.ir_document_service = IRDocumentService(logger = logger)
         self.metrics_service = metrics_service
         self.log = logger
     

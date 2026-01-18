@@ -115,10 +115,7 @@ def handle_pubsub():
     
     context_logger.info('scan_start', quarter=quarter, operation='scan_start')
     
-    try:
-        # Set execution_id in environment for child processes
-        os.environ['EXECUTION_ID'] = execution_id
-        
+    try:        
         # Run the scan with context logger
         scan_ir_website(ticker, quarter, verbose, context_logger)
         

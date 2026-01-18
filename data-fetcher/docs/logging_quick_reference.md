@@ -135,7 +135,6 @@ The logging system uses environment variables for context:
 
 ```python
 # Set in pubsub_handler.py before calling scan
-os.environ['EXECUTION_ID'] = str(uuid.uuid4())
 os.environ['TICKER'] = ticker
 os.environ['SCAN_TYPE'] = 'new'  # or 'update'
 

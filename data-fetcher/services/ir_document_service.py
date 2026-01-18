@@ -9,10 +9,16 @@ IR documents are stored at: /tickers/{ticker}/ir_documents/* and Storage ir_docu
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from services.firebase_base_service import FirebaseBaseService
-
+from cloud_logging_setup import ContextLogger
 
 class IRDocumentService(FirebaseBaseService):
     """Service for managing IR documents in Firebase"""
+    
+    def __init__(self, logger: ContextLogger):
+        logger.dump_handlers("First line of IRDocumentService init")
+        super().__init__()
+        self.logger = logger
+        logger.dump_handlers("Last line of IRDocumentService init")
     
     def store_ir_document(self, ticker: str, document_id: str, document_data: Dict[str, Any], 
                          file_content: bytes, file_extension: str = 'pdf', verbose: bool = True) -> None:
@@ -33,7 +39,7 @@ class IRDocumentService(FirebaseBaseService):
             storage_path = f'ir_documents/{upper_ticker}/{document_id}.{file_extension}'
             
             if verbose:
-                print(f'Uploading IR document {document_id} for {ticker} to Storage...')
+                self.logger.info(f'Uploading IR document {document_id} for {ticker} to Storage...')
             
             blob = self.bucket.blob(storage_path)
             blob.upload_from_string(file_content, content_type=f'application/{file_extension}')
@@ -58,10 +64,10 @@ class IRDocumentService(FirebaseBaseService):
             doc_ref.set(metadata)
             
             if verbose:
-                print(f'✅ Stored IR document {document_id} for {ticker}')
+                self.logger.info(f'✅ Stored IR document {document_id} for {ticker}')
                 
         except Exception as error:
-            print(f'Error storing IR document {document_id} for {ticker}: {error}')
+            self.logger.error(f'Error storing IR document {document_id} for {ticker}: {error}')
             raise error
     
     def get_ir_documents_for_quarter(self, ticker: str, quarter_key: str) -> List[Dict[str, Any]]:
@@ -94,7 +100,7 @@ class IRDocumentService(FirebaseBaseService):
             return documents
             
         except Exception as error:
-            print(f'Error getting IR documents for {ticker} {quarter_key}: {error}')
+            self.logger.error(f'Error getting IR documents for {ticker} {quarter_key}: {error}')
             return []
     
     def get_all_ir_documents(self, ticker: str) -> List[Dict[str, Any]]:
@@ -125,7 +131,7 @@ class IRDocumentService(FirebaseBaseService):
             return documents
             
         except Exception as error:
-            print(f'Error getting all IR documents for {ticker}: {error}')
+            self.logger.error(f'Error getting all IR documents for {ticker}: {error}')
             return []
     
     def get_ir_document_content(self, ticker: str, document_id: str) -> Optional[bytes]:
@@ -165,10 +171,5 @@ class IRDocumentService(FirebaseBaseService):
             return blob.download_as_bytes()
             
         except Exception as error:
-            print(f'Error getting document content for {ticker} {document_id}: {error}')
+            self.logger.error(f'Error getting document content for {ticker} {document_id}: {error}')
             return None
-
-
-
-
-

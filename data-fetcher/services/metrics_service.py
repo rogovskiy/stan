@@ -12,31 +12,21 @@ import time
 import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime
-from google.cloud import logging as cloud_logging
 
 
 class MetricsService:
-    """Service for logging structured metrics to Google Cloud Logging."""
+    """Service for logging structured metrics using the shared logger."""
     
-    def __init__(self, execution_id: Optional[str] = None):
+    def __init__(self, execution_id: Optional[str] = None, logger=None):
         """Initialize metrics service.
         
         Args:
             execution_id: Optional execution ID. If not provided, generates one.
                          In Cloud Run, uses trace ID from request context.
+            logger: ContextLogger instance for structured logging (optional, can be set later)
         """
         self.execution_id = execution_id or self._generate_execution_id()
-        self.project_id = os.getenv('FIREBASE_PROJECT_ID')
-        
-        # Initialize Cloud Logging client
-        try:
-            self.logging_client = cloud_logging.Client(project=self.project_id)
-            self.logger = self.logging_client.logger('ir-scanner-metrics')
-        except Exception as e:
-            print(f"Warning: Could not initialize Cloud Logging client: {e}")
-            print("Metrics will be logged to stdout only")
-            self.logging_client = None
-            self.logger = None
+        self.logger = logger
     
     def _generate_execution_id(self) -> str:
         """Generate execution ID based on environment.
@@ -57,32 +47,34 @@ class MetricsService:
         return str(uuid.uuid4())
     
     def _log_structured(self, operation_type: str, data: Dict[str, Any], severity: str = 'INFO'):
-        """Log structured data to Cloud Logging.
+        """Log structured data using the shared logger.
         
         Args:
             operation_type: Type of operation (e.g., 'scan_start', 'gemini_api_call')
             data: Dictionary of metric data
-            severity: Log severity level
+            severity: Log severity level ('INFO', 'WARNING', 'ERROR')
         """
-        # Add standard fields
-        log_entry = {
-            'execution_id': self.execution_id,
+        if not self.logger:
+            # If no logger provided, silently skip (metrics are optional)
+            return
+        
+        # Build message and data for logger
+        message = f"Metric: {operation_type}"
+        metric_data = {
             'operation_type': operation_type,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             **data
         }
         
-        # Log to Cloud Logging
-        if self.logger:
-            try:
-                self.logger.log_struct(log_entry, severity=severity)
-            except Exception as e:
-                print(f"Warning: Failed to log to Cloud Logging: {e}")
-                # Fallback to stdout
-                print(f"METRIC: {json.dumps(log_entry)}")
+        # Use logger's methods based on severity
+        if severity == 'INFO':
+            self.logger.info(message, **metric_data)
+        elif severity == 'WARNING':
+            self.logger.warning(message, **metric_data)
+        elif severity == 'ERROR':
+            self.logger.error(message, **metric_data)
         else:
-            # Fallback to stdout if Cloud Logging not available
-            print(f"METRIC: {json.dumps(log_entry)}")
+            self.logger.info(message, **metric_data)
     
     def log_scan_start(self, ticker: str, target_quarter: Optional[str] = None, 
                        max_pages: int = 50, num_urls: int = 1):

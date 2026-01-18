@@ -16,8 +16,6 @@ import json
 import asyncio
 import tempfile
 import time
-import logging
-import sys
 from typing import TypedDict, List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urljoin
 from datetime import datetime
@@ -40,9 +38,6 @@ from services.metrics_service import MetricsService
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
 load_dotenv(env_path)
-
-
-
 
 # Define the state for our graph
 class ScraperState(TypedDict):
@@ -91,7 +86,7 @@ class IRWebsiteCrawler:
             logger: ContextLogger instance for structured logging (required)
         """
         # Use extraction_utils to get model name and initialize Gemini
-        self.model_name = model_name or get_gemini_model()
+        self.model_name = model_name
         
         # Use provided browser manager or create new one
         self.browser_manager = browser_pool_manager or BrowserPoolManager()
@@ -102,24 +97,13 @@ class IRWebsiteCrawler:
         
         # Store the logger
         self.log = logger
-        
-        # Initialize Gemini model using extraction_utils
-        # This handles API key configuration automatically
-        base_model = initialize_gemini_model()
+        self.log.info("Hello from IRWebsiteCrawler")
         
         # Override with specified model name if provided
-        if model_name:
-            gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
-            genai.configure(api_key=gemini_api_key)
-        
-        # Create model with custom config
-        self.model = genai.GenerativeModel(
-            self.model_name,
-            generation_config={
-                "max_output_tokens": 65535,
-                "temperature": 0.1,
-            }
-        )
+        self.model = initialize_gemini_model(model_name, generation_config={
+            "max_output_tokens": 65535,
+            "temperature": 0.1,
+        })
         
         # Token usage tracking
         self.total_prompt_tokens = 0

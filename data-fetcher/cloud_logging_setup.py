@@ -104,10 +104,21 @@ class ContextLogger:
         self.logger = logging.getLogger(name)
         
         # Try to get context from environment if not provided
-        self.execution_id = execution_id or os.environ.get('EXECUTION_ID')
-        self.ticker = ticker or os.environ.get('TICKER')
-        self.scan_type = scan_type or os.environ.get('SCAN_TYPE')
+        self.execution_id = execution_id
+        self.ticker = ticker
+        self.scan_type = scan_type
+
+    def set_scan_type(self, scan_type: str):
+        """Set the scan type."""
+        self.scan_type = scan_type
     
+
+    def dump_handlers(self,label):
+        root = self.logger
+        print(label,root)
+        for h in root.handlers:
+            print("  ", h, getattr(h, "formatter", None))
+
     def _get_extra(self, **additional_fields):
         """Build the extra fields dict with context labels and additional json_fields."""
         extra = {}

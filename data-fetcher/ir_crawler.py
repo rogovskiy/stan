@@ -152,10 +152,10 @@ class IRWebsiteCrawler:
                         pass
                 
                 if attempt < max_retries - 1:
-                    print(f"   ⚠️  Rate limit hit (429). Waiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
+                    self.log.warning(f"   ⚠️  Rate limit hit (429). Waiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
                     await asyncio.sleep(retry_delay)
                 else:
-                    print(f"   ❌ Max retries ({max_retries}) exceeded. Giving up.")
+                    self.log.error(f"   ❌ Max retries ({max_retries}) exceeded. Giving up.")
                     raise
             
             except Exception as e:
@@ -320,7 +320,7 @@ class IRWebsiteCrawler:
                 # Filter out consolidated financial statements
                 if 'consolidated financial' in doc_info.get('title', '').lower():
                     if verbose:
-                        print(f"      ⏭️  Skipping consolidated financial statement")
+                        self.log.info("      ⏭️  Skipping consolidated financial statement")
                     return None
                 
                 pdf_url = doc_info.get('pdf_url')
@@ -357,24 +357,24 @@ class IRWebsiteCrawler:
         except InvalidArgument as e:
             if "token count exceeds" in str(e) or "1048576" in str(e):
                 if verbose:
-                    print(f"      ⚠️  Page HTML too large (exceeds 1M token limit)")
+                    self.log.warning("      ⚠️  Page HTML too large (exceeds 1M token limit)")
                 return None
             raise
-            
+        
         except json.JSONDecodeError as e:
             if verbose:
-                print(f"      ❌ JSON parsing error: {e.msg}")
+                self.log.error(f"      ❌ JSON parsing error: {e.msg}")
             return None
             
         except Exception as e:
             if verbose:
-                print(f"      ⚠️ Error extracting document: {e}")
+                self.log.warning(f"      ⚠️ Error extracting document: {e}")
             return None
     
     async def _process_listing_node(self, state: ScraperState) -> ScraperState:
         """Process a listing page: use LLM to extract structured document info and identify listing pages."""
         if state['verbose']:
-            print(f"\n📋 Processing LISTING page...")
+            self.log.info("📋 Processing LISTING page...")
         
         start_time = time.time()
         try:
@@ -384,12 +384,12 @@ class IRWebsiteCrawler:
             state['_current_listing_url'] = state['url']
             
             if state['verbose']:
-                print(f"   🤖 Analyzing page HTML with Gemini (as file attachment)...")
+                self.log.info("   🤖 Analyzing page HTML with Gemini (as file attachment)...")
             
             html_file, html_file_path = await self._upload_html_to_gemini(state['current_page_html'])
             
             if state['verbose']:
-                print(f"      ✅ Uploaded HTML file: {html_file.name}")
+                self.log.info(f"      ✅ Uploaded HTML file: {html_file.name}")
             
             try:
                 # Load prompt template
@@ -400,8 +400,8 @@ class IRWebsiteCrawler:
                 )
                 
                 if state['verbose']:
-                    print(f"      🤖 Model: {self.model_name}")
-                    print(f"      ⚙️  Config: max_output_tokens={65535}, temperature={0.1}")
+                    self.log.info(f"      🤖 Model: {self.model_name}")
+                    self.log.info(f"      ⚙️  Config: max_output_tokens={65535}, temperature={0.1}")
                 
                 response = await self._call_gemini_with_retry(
                     self.model.generate_content,
@@ -413,12 +413,12 @@ class IRWebsiteCrawler:
                 )
                 
                 if state['verbose']:
-                    print(f"      ✅ Response received: {len(response.text)} chars")
+                    self.log.info(f"      ✅ Response received: {len(response.text)} chars")
                 
                 if hasattr(response, 'usage_metadata'):
                     usage = response.usage_metadata
                     if state['verbose']:
-                        print(f"      📊 Tokens: {usage.prompt_token_count} prompt + {usage.candidates_token_count} response = {usage.total_token_count} total")
+                        self.log.info(f"      📊 Tokens: {usage.prompt_token_count} prompt + {usage.candidates_token_count} response = {usage.total_token_count} total")
                     
                     self.total_prompt_tokens += usage.prompt_token_count
                     self.total_response_tokens += usage.candidates_token_count
@@ -438,7 +438,7 @@ class IRWebsiteCrawler:
                         )
                     
                     if usage.candidates_token_count >= 8190 and state['verbose']:
-                        print(f"      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")
+                        self.log.warning("      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")
                 
                 try:
                     analysis = self._parse_json_response(response.text)
@@ -446,17 +446,17 @@ class IRWebsiteCrawler:
                     error_doc = e.doc if hasattr(e, 'doc') else response.text
                     
                     if state['verbose']:
-                        print(f"   ❌ JSON parsing error at position {e.pos}: {e.msg}")
-                        print(f"   📝 Response length: {len(error_doc)} characters")
+                        self.log.error(f"   ❌ JSON parsing error at position {e.pos}: {e.msg}")
+                        self.log.error(f"   📝 Response length: {len(error_doc)} characters")
                         
                         start_pos = max(0, e.pos - 100)
                         end_pos = min(len(error_doc), e.pos + 100)
-                        print(f"   📝 Error context: ...{error_doc[start_pos:end_pos]}...")
+                        self.log.error(f"   📝 Error context: ...{error_doc[start_pos:end_pos]}...")
                         
                         failed_file = f"/tmp/gemini_failed_listing_{int(datetime.now().timestamp())}.json"
                         with open(failed_file, 'w', encoding='utf-8') as f:
                             f.write(error_doc)
-                        print(f"   💾 Saved broken JSON to: {failed_file}")
+                        self.log.error(f"   💾 Saved broken JSON to: {failed_file}")
                     
                     analysis = {'documents': [], 'listing_pages': []}
                 
@@ -464,7 +464,7 @@ class IRWebsiteCrawler:
                 listing_pages = analysis.get('listing_pages', [])
                 
                 if state['verbose']:
-                    print(f"   ✅ LLM found {len(documents)} documents and {len(listing_pages)} pagination links")
+                    self.log.info(f"   ✅ LLM found {len(documents)} documents and {len(listing_pages)} pagination links")
                 
             finally:
                 await self._cleanup_gemini_file(html_file, html_file_path)
@@ -524,43 +524,39 @@ class IRWebsiteCrawler:
                     state['listing_pages_queue'].append(listing_url)
             
             if state['verbose']:
-                print(f"   ✅ Direct PDFs: {direct_pdfs}")
-                print(f"   ✅ Detail pages to visit: {detail_pages}")
+                self.log.info(f"   ✅ Direct PDFs: {direct_pdfs}")
+                self.log.info(f"   ✅ Detail pages to visit: {detail_pages}")
                 if skipped_cached > 0:
-                    print(f"   ⏭️  Skipped {skipped_cached} cached detail pages")
-                print(f"   ✅ Pagination links found: {len(listing_pages)}")
+                    self.log.info(f"   ⏭️  Skipped {skipped_cached} cached detail pages")
+                self.log.info(f"   ✅ Pagination links found: {len(listing_pages)}")
                 
                 if listing_pages:
-                    print(f"      Pagination:")
+                    self.log.info("      Pagination:")
                     for i, listing in enumerate(listing_pages[:5], 1):
                         purpose = listing.get('purpose', 'No description')
-                        print(f"        {i}. {listing['title'][:40]} - {purpose[:40]}")
+                        self.log.info(f"        {i}. {listing['title'][:40]} - {purpose[:40]}")
                     if len(listing_pages) > 5:
-                        print(f"        ... and {len(listing_pages) - 5} more")
+                        self.log.info(f"        ... and {len(listing_pages) - 5} more")
                 
-                print(f"   📦 Total documents so far: {len(state['documents_found'])}")
+                self.log.info(f"   📦 Total documents so far: {len(state['documents_found'])}")
                 
                 if documents and direct_pdfs > 0:
-                    print(f"      Sample documents:")
+                    self.log.info("      Sample documents:")
                     for i, doc in enumerate([d for d in documents if d['link_type'] == 'pdf_download'][:3], 1):
                         year_qtr = f"{doc.get('fiscal_quarter', '')} {doc.get('fiscal_year', '')}".strip()
                         category = doc.get('category', 'unknown')
-                        print(f"        {i}. [{category}] {doc['title'][:50]} ({year_qtr})")
+                        self.log.info(f"        {i}. [{category}] {doc['title'][:50]} ({year_qtr})")
             
         except InvalidArgument as e:
             if "token count exceeds" in str(e) or "1048576" in str(e):
                 if state['verbose']:
-                    print(f"   ⚠️  Page HTML too large (exceeds 1M token limit)")
-                    print(f"   ⏭️  Skipping this listing page: {state['url']}")
+                    self.log.warning("   ⚠️  Page HTML too large (exceeds 1M token limit)")
+                    self.log.warning(f"   ⏭️  Skipping this listing page: {state['url']}")
             else:
-                print(f"   ⚠️ Listing processing error: {e}")
-                import traceback
-                traceback.print_exc()
+                self.log.warning(f"   ⚠️ Listing processing error: {e}", exc_info=True)
         
         except Exception as e:
-            print(f"   ⚠️ Listing processing error: {e}")
-            import traceback
-            traceback.print_exc()
+            self.log.warning(f"   ⚠️ Listing processing error: {e}", exc_info=True)
         
         return state
     
@@ -570,44 +566,44 @@ class IRWebsiteCrawler:
         
         if not detail_pages:
             if state['verbose']:
-                print(f"\n📦 No detail pages to process")
+                self.log.info("📦 No detail pages to process")
             state['detail_pages_queue'] = []
             return state
         
         total_visited = len(state['listing_pages_visited']) + len(state['detail_pages_visited'])
         
         if state['verbose']:
-            print(f"\n📦 Batch processing {len(detail_pages)} detail pages...")
+            self.log.info(f"📦 Batch processing {len(detail_pages)} detail pages...")
         
         for i, detail_url in enumerate(detail_pages, 1):
             if total_visited >= state['max_pages']:
                 remaining = len(detail_pages) - i + 1
                 if state['verbose']:
-                    print(f"   🛑 Hit page limit, stopping batch ({remaining} pages not visited)")
+                    self.log.info(f"   🛑 Hit page limit, stopping batch ({remaining} pages not visited)")
                 break
             
             if detail_url in state['detail_pages_visited']:
                 continue
             
             if state['verbose']:
-                print(f"\n📄 Detail page {i}/{len(detail_pages)}: {detail_url[:70]}...")
+                self.log.info(f"📄 Detail page {i}/{len(detail_pages)}: {detail_url[:70]}...")
             
             try:
                 html = await self.browser_manager.get_html(detail_url, wait_time=30, verbose=False)
                 if html is None:
                     if state['verbose']:
-                        print(f"   ❌ Failed to load page")
+                        self.log.error("   ❌ Failed to load page")
                     continue
                 
                 title = await self.browser_manager.get_title(verbose=False)
                 if state['verbose']:
-                    print(f"   ✅ Loaded: {title[:60] if title else 'Untitled'}")
+                    self.log.info(f"   ✅ Loaded: {title[:60] if title else 'Untitled'}")
                 
                 state['detail_pages_visited'].append(detail_url)
                 total_visited += 1
                 
                 if state['verbose']:
-                    print(f"   🤖 Extracting document with Gemini...")
+                    self.log.info("   🤖 Extracting document with Gemini...")
                 doc = await self._extract_document_from_detail_page(detail_url, html, title or "Untitled", state['verbose'])
                 
                 if doc:
@@ -623,7 +619,7 @@ class IRWebsiteCrawler:
                         
                         state['documents_found'].append(doc)
                         if state['verbose']:
-                            print(f"   ✅ Saved: {doc['title'][:50]}")
+                            self.log.info(f"   ✅ Saved: {doc['title'][:50]}")
                             
                             fiscal_info = []
                             if doc.get('fiscal_quarter'):
@@ -631,48 +627,48 @@ class IRWebsiteCrawler:
                             if doc.get('fiscal_year'):
                                 fiscal_info.append(str(doc['fiscal_year']))
                             if fiscal_info:
-                                print(f"      Fiscal Period: {' '.join(fiscal_info)}")
+                                self.log.info(f"      Fiscal Period: {' '.join(fiscal_info)}")
                             
                             if doc.get('pdf_url'):
-                                print(f"      PDF: {doc['pdf_url'][:60]}...")
+                                self.log.info(f"      PDF: {doc['pdf_url'][:60]}...")
                             elif doc.get('page_url'):
-                                print(f"      Page URL: {doc['page_url'][:60]}...")
+                                self.log.info(f"      Page URL: {doc['page_url'][:60]}...")
                     else:
                         if state['verbose']:
-                            print(f"   ⏭️  Duplicate, skipping")
+                            self.log.info("   ⏭️  Duplicate, skipping")
                 else:
                     if state['verbose']:
-                        print(f"   ⚠️  No document found on this page")
+                        self.log.warning("   ⚠️  No document found on this page")
                     
             except Exception as e:
                 if state['verbose']:
-                    print(f"   ⚠️ Error processing detail page: {e}")
+                    self.log.warning(f"   ⚠️ Error processing detail page: {e}")
         
         state['detail_pages_queue'] = []
         
         if state['verbose']:
-            print(f"\n✅ Batch complete: processed {len(state['detail_pages_visited'])} detail pages total")
+            self.log.info(f"✅ Batch complete: processed {len(state['detail_pages_visited'])} detail pages total")
         
         return state
     
     async def _decide_next_listing_node(self, state: ScraperState) -> ScraperState:
         """Decide what listing page to visit next."""
         if state['verbose']:
-            print(f"\n🤔 Deciding next action...")
+            self.log.info("🤔 Deciding next action...")
         
         listings_pending = len(state['listing_pages_queue'])
         if state['verbose']:
-            print(f"   📊 Listing pages remaining: {listings_pending}")
+            self.log.info(f"   📊 Listing pages remaining: {listings_pending}")
         
         total_visited = len(state['listing_pages_visited']) + len(state['detail_pages_visited'])
         if state['verbose']:
-            print(f"   📊 Pages visited so far: {total_visited}/{state['max_pages']}")
+            self.log.info(f"   📊 Pages visited so far: {total_visited}/{state['max_pages']}")
         
         if total_visited >= state['max_pages']:
             if state['verbose']:
-                print(f"   🛑 Reached max pages limit ({state['max_pages']})")
+                self.log.info(f"   🛑 Reached max pages limit ({state['max_pages']})")
                 if listings_pending > 0:
-                    print(f"   ⚠️  Stopped with {listings_pending} listings still queued")
+                    self.log.warning(f"   ⚠️  Stopped with {listings_pending} listings still queued")
             state['next_action'] = 'finish'
             return state
         
@@ -681,18 +677,18 @@ class IRWebsiteCrawler:
             
             if next_listing in state['listing_pages_visited']:
                 if state['verbose']:
-                    print(f"   ⏭️  Skipping already visited listing")
+                    self.log.info("   ⏭️  Skipping already visited listing")
                 return await self._decide_next_listing_node(state)
             
             state['url'] = next_listing
             state['next_action'] = 'next_listing'
             if state['verbose']:
-                print(f"   ➡️  Next: LISTING page")
-                print(f"      {next_listing[:80]}")
+                self.log.info("   ➡️  Next: LISTING page")
+                self.log.info(f"      {next_listing[:80]}")
             return state
         
         if state['verbose']:
-            print(f"   ✅ No more listing pages to visit")
+            self.log.info("   ✅ No more listing pages to visit")
         state['next_action'] = 'finish'
         return state
     

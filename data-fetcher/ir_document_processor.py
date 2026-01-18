@@ -6,8 +6,7 @@ Downloads and stores IR documents discovered by the crawler.
 Handles fiscal date calculations, document type classification, and Firebase storage.
 """
 
-import os
-import re
+import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple, Set
@@ -15,21 +14,22 @@ import yfinance as yf
 
 from services.ir_document_service import IRDocumentService
 from browser_pool_manager import BrowserPoolManager
-from cloud_logging_setup import ContextLogger
+from cloud_logging_setup import emit_metric, setup_cloud_logging
+
+setup_cloud_logging()
+logger = logging.getLogger(__name__)
 
 class IRDocumentProcessor:
     """Processes and stores IR documents discovered by crawler."""
     
-    def __init__(self, browser_pool_manager: BrowserPoolManager = None, logger: ContextLogger = None):
+    def __init__(self, browser_pool_manager: BrowserPoolManager = None):
         """Initialize document processor.
         
         Args:
             browser_pool_manager: Optional browser pool manager (creates new one if not provided)
-            logger: ContextLogger instance for structured logging (required)
         """
         self.browser_pool_manager = browser_pool_manager or BrowserPoolManager()
-        self.ir_document_service = IRDocumentService(logger=logger)
-        self.log = logger
+        self.ir_document_service = IRDocumentService()
     
     def get_fiscal_year_end_month(self, ticker: str) -> int:
         """Get fiscal year-end month for a ticker.
@@ -52,7 +52,7 @@ class IRDocumentProcessor:
             # Default to December
             return 12
         except Exception as e:
-            self.log.warning(f'Could not get fiscal year-end for {ticker}, defaulting to December: {e}')
+            logger.warning(f'Could not get fiscal year-end for {ticker}, defaulting to December: {e}')
             return 12
     
     def get_fiscal_quarter_from_date(self, date: datetime, fiscal_year_end_month: int) -> Tuple[int, int]:
@@ -230,7 +230,7 @@ class IRDocumentProcessor:
             all_existing_docs = self.ir_document_service.get_all_ir_documents(ticker)
             existing_urls = {doc.get('url') for doc in all_existing_docs if doc.get('url')}
             if existing_urls and verbose:
-                self.log.info(f'Found {len(existing_urls)} already-downloaded documents in database')
+                logger.info(f'Found {len(existing_urls)} already-downloaded documents in database')
         
         for release in documents:
             try:
@@ -255,7 +255,7 @@ class IRDocumentProcessor:
                 is_downloadable = release.get('is_downloadable', True)  # Default to True for backward compatibility
                 if not is_downloadable:
                     if verbose:
-                        self.log.info(f'Skipping {release["title"]}: Not a downloadable link (likely HTML page or navigation)')
+                        logger.info(f'Skipping {release["title"]}: Not a downloadable link (likely HTML page or navigation)')
                     skipped_count += 1
                     continue
                 
@@ -266,7 +266,7 @@ class IRDocumentProcessor:
                 
                 # Download document only if we have required fiscal info and match target quarter
                 if verbose:
-                    self.log.info(f'Downloading: {release["title"]}')
+                    logger.info(f'Downloading: {release["title"]}')
                 
                 download_start = time.time()
                 # Use async download to stay in same event loop as crawler
@@ -275,10 +275,10 @@ class IRDocumentProcessor:
                 
                 if not content:
                     if verbose:
-                        self.log.warning(f'  Skipped: Could not download')
+                        logger.warning(f'  Skipped: Could not download')
                     # Log failed download
                     url_truncated = release['url'][:200] if release['url'] else None
-                    self.log.metric('document_download',
+                    emit_metric('document_download',
                         severity='WARNING',
                         url=url_truncated,
                         file_size_bytes=0,
@@ -290,7 +290,7 @@ class IRDocumentProcessor:
                 
                 # Log successful download
                 url_truncated = release['url'][:200] if release['url'] else None
-                self.log.metric('document_download',
+                emit_metric('document_download',
                     url=url_truncated,
                     file_size_bytes=len(content),
                     duration_ms=download_duration_ms,
@@ -312,7 +312,7 @@ class IRDocumentProcessor:
 
                 
                 if verbose:
-                    self.log.info(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
+                    logger.info(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
                     if release_date:
                         # Handle both string and datetime objects
                         if isinstance(release_date, str):
@@ -326,9 +326,9 @@ class IRDocumentProcessor:
                             date_str = release_date.strftime("%Y-%m-%d")
                         else:
                             date_str = str(release_date)
-                        self.log.info(f'  Release date: {date_str}')
+                        logger.info(f'  Release date: {date_str}')
                     else:
-                        self.log.info(f'  Release date: not provided by LLM')
+                        logger.info(f'  Release date: not provided by LLM')
                 
                 # Determine document type (use from Gemini if available, otherwise infer)
                 doc_type = release.get('document_type')
@@ -355,17 +355,17 @@ class IRDocumentProcessor:
                 existing_urls.add(release['url'])  # Add to set to avoid re-processing
                 
                 # Log document storage
-                self.log.metric('document_storage',
+                emit_metric('document_storage',
                     document_id=document_id,
                     quarter_key=quarter_key,
                     document_type=doc_type
                 )
                 
                 if verbose:
-                    self.log.info(f'  ✅ Stored: {document_id} ({quarter_key})')
+                    logger.info(f'  ✅ Stored: {document_id} ({quarter_key})')
             
             except Exception as e:
-                self.log.error(f'Error processing release {release.get("title", "unknown")}: {e}')
+                logger.error(f'Error processing release {release.get("title", "unknown")}: {e}')
                 if verbose:
                     import traceback
                     traceback.print_exc()

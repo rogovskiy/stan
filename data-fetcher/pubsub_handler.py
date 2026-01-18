@@ -9,10 +9,11 @@ import os
 import json
 import base64
 import logging
+import re
 import uuid
 from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
-from cloud_logging_setup import setup_cloud_logging, get_logger
+from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
 
 # Initialize logging (Cloud Run or local dev)
 setup_cloud_logging()
@@ -24,106 +25,65 @@ app = Flask(__name__)
 
 @app.route('/scan', methods=['POST'])
 def handle_pubsub():
-    """Handle Pub/Sub push messages"""
-    # Generate execution ID for this request
-    execution_id = str(uuid.uuid4())
-    
+    """Handle Pub/Sub push messages"""    
     envelope = request.get_json()
     
     if not envelope:
-        msg = 'No Pub/Sub message received'
-        logger.error(msg, extra={
-            "labels": {
-                "execution_id": execution_id
-            }
-        })
-        return jsonify({'error': msg}), 400
-    
-    # Log the raw incoming message
-    logger.info('Received Pub/Sub message', extra={
-        "labels": {
-            "execution_id": execution_id,
-            "operation": "pubsub_receive"
-        }
-    })
+        return render_error('No Pub/Sub message received')
+
     
     # Pub/Sub sends message in 'message' field
     pubsub_message = envelope.get('message', {})
-    
+
+    message_id = pubsub_message.get('messageId') or str(uuid.uuid4())
+    publish_time = pubsub_message.get("publishTime")
+    attributes = pubsub_message.get("attributes", {})
+
+    mdc_execution_id.set(message_id)
+    logger.info(f'Received Pub/Sub message: {message_id} published at {publish_time} with attributes: {attributes}')
+
     # Decode base64 data
     if 'data' in pubsub_message:
         try:
             data = base64.b64decode(pubsub_message['data']).decode('utf-8')
-            logger.info(f'Decoded message data: {data}', extra={
-                "labels": {
-                    "execution_id": execution_id
-                }
-            })
+            logger.info(f'Decoded message data: {data}')
             try:
                 message_data = json.loads(data)
             except json.JSONDecodeError:
                 # If not JSON, treat as plain string ticker
                 message_data = {'ticker': data}
         except Exception as e:
-            msg = f'Failed to decode message data: {e}'
-            logger.error(msg, extra={
-                "labels": {
-                    "execution_id": execution_id
-                }
-            })
-            return jsonify({'error': msg}), 400
+            return render_error(f'Failed to decode message data: {e}')
     else:
-        msg = 'No data in Pub/Sub message'
-        logger.error(msg, extra={
-            "labels": {
-                "execution_id": execution_id
-            }
-        })
-        return jsonify({'error': msg}), 400
+        return render_error('No data in Pub/Sub message')
     
     ticker = message_data.get('ticker')
     if not ticker:
-        msg = 'No ticker in message'
-        logger.error(msg, extra={
-            "labels": {
-                "execution_id": execution_id
-            }
-        })
-        return jsonify({'error': msg}), 400
+        return render_error('No ticker in message')
     
-    quarter = message_data.get('quarter')
-    verbose = message_data.get('verbose', False)
+    quarter = None #message_data.get('quarter')
+    verbose = True
     
-    # Create context logger with execution_id and ticker
-    context_logger = get_logger(
-        __name__,
-        execution_id=execution_id,
-        ticker=ticker,
-        scan_type=None  # Will be set per URL in scan_ir_website
-    )
-    
-    context_logger.info('scan_start', quarter=quarter, operation='scan_start')
+    mdc_ticker.set(ticker)
     
     try:        
         # Run the scan with context logger
-        scan_ir_website(ticker, quarter, verbose, context_logger)
+        scan_ir_website(ticker, quarter, verbose)
         
-        context_logger.info('scan_complete', operation='scan_complete')
         return jsonify({
             'status': 'success',
             'ticker': ticker,
-            'quarter': quarter,
-            'execution_id': execution_id
+            'execution_id': message_id
         }), 200
         
     except Exception as e:
-        context_logger.error(f'Error scanning {ticker}: {e}', operation='scan_error', error=str(e), exc_info=True)
+        logger.error(f'Error scanning {ticker}: {e}', operation='scan_error', error=str(e), exc_info=True)
         # Return 500 so Pub/Sub retries
         return jsonify({
             'status': 'error',
             'ticker': ticker,
             'error': str(e),
-            'execution_id': execution_id
+            'execution_id': message_id
         }), 500
 
 
@@ -145,6 +105,9 @@ def root():
         }
     }), 200
 
+def render_error(msg: str):
+    logger.error(msg)
+    return jsonify({'error': msg}), 400
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))

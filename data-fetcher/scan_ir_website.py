@@ -16,9 +16,10 @@ import re
 import asyncio
 import time
 from typing import Dict, List, Optional, Set
+import logging
 from dotenv import load_dotenv
 
-from cloud_logging_setup import ContextLogger, get_logger
+from cloud_logging_setup import mdc_execution_id, mdc_operation_type, mdc_ticker, setup_cloud_logging, emit_metric
 from services.ir_url_service import IRURLService
 from services.ir_document_service import IRDocumentService
 from ir_crawler import IRWebsiteCrawler
@@ -27,6 +28,10 @@ from browser_pool_manager import BrowserPoolManager
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
+
+setup_cloud_logging()
+
+logger = logging.getLogger(__name__)
 
 # Load IR URLs configuration
 # The ir_urls.json file uses arrays of URLs per ticker:
@@ -37,7 +42,7 @@ IR_URLS_FILE = os.path.join(os.path.dirname(__file__), 'ir_urls.json')
 browser_pool_manager = None
 
 
-def load_ir_urls(logger) -> Dict[str, List[str]]:
+def load_ir_urls() -> Dict[str, List[str]]:
     """Load IR URLs from configuration file.
     
     Returns a dictionary where each ticker maps to a list of URL strings.
@@ -53,7 +58,7 @@ def load_ir_urls(logger) -> Dict[str, List[str]]:
         return {}
 
 
-def get_ir_urls_for_ticker(ticker: str, logger) -> List[str]:
+def get_ir_urls_for_ticker(ticker: str) -> List[str]:
     """Get list of IR URLs for a ticker. Checks Firebase first, then falls back to JSON config.
     
     Args:
@@ -62,7 +67,7 @@ def get_ir_urls_for_ticker(ticker: str, logger) -> List[str]:
     Returns:
         List of URLs for the ticker (from Firebase if available, otherwise from JSON)
     """
-    ir_urls = load_ir_urls(logger)
+    ir_urls = load_ir_urls()
     
     # Initialize Firebase service to get URLs from Firebase
     ir_url_service = IRURLService()
@@ -88,19 +93,15 @@ def get_ir_urls_for_ticker(ticker: str, logger) -> List[str]:
     
     return []
 
-async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool, logger: ContextLogger) -> None:
+async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
     """Step 1: Scan IR website using LangGraph crawler and download documents.
     
     Args:
         ticker: Stock ticker symbol
         target_quarter: Optional quarter filter (format: YYYYQN, e.g., '2024Q3')
         verbose: Print verbose output
-        logger: ContextLogger instance for structured logging
     """
-    
-    # Use the passed logger
-    log = logger
-    
+
     scan_start_time = time.time()
     
     # Validate quarter format if provided
@@ -109,7 +110,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         return
     
     # Get all URLs for this ticker (from Firebase first, then JSON fallback)
-    ticker_urls = get_ir_urls_for_ticker(ticker, logger)
+    ticker_urls = get_ir_urls_for_ticker(ticker)
     
     if not ticker_urls:
         logger.error(f'No IR URL configured for {ticker}')
@@ -117,7 +118,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         return
     
     # Log scan start
-    logger.metric('scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
+    emit_metric('scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
     
     if len(ticker_urls) == 1:
         logger.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
@@ -125,19 +126,16 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         logger.info(f'Scanning {len(ticker_urls)} IR websites for {ticker}:')
         for i, url in enumerate(ticker_urls, 1):
             logger.info(f'  {i}. {url}')
-    logger.dump_handlers("Before services init")
     # Initialize services
-    ir_document_service = IRDocumentService(logger=logger)
+    ir_document_service = IRDocumentService()
     ir_url_service = IRURLService()
     # Initialize crawler and processor (sharing browser pool manager)
     crawler = IRWebsiteCrawler(
         browser_pool_manager=browser_pool_manager,
         ticker=ticker,
-        logger=logger
     )
     processor = IRDocumentProcessor(
         browser_pool_manager=browser_pool_manager,
-        logger=logger
     )
 
     # Get all IR URLs from Firebase to check if they've been scanned before
@@ -156,14 +154,12 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     
     for ir_url in ticker_urls:
         # Determine scan_type: "new" if never scanned, "update" if scanned before
-        scan_type = "new" if not url_scan_history.get(ir_url) else "update"
+        scan_type = "scan_new" if not url_scan_history.get(ir_url) else "scan_update"
         
-        # Set scan_type in environment for logging context
-        logger.set_scan_type(scan_type)
+        mdc_operation_type.set(scan_type)
         
         if verbose:
-            logger.info(f'Processing URL: {ir_url}')
-            logger.info(f'Scan type: {scan_type}')
+            logger.info(f'Processing URL: {ir_url}; Scan type: {scan_type}')
         
         # Get cached detail page URLs for this IR URL (to skip revisiting)
         cached_detail_urls = ir_url_service.get_cached_detail_urls(ticker, ir_url)
@@ -278,7 +274,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     
     # Log scan complete with all metrics
     estimated_cost_usd = (crawler.total_prompt_tokens * 0.075 + crawler.total_response_tokens * 0.30) / 1_000_000
-    logger.metric('scan_complete',
+    emit_metric('scan_complete',
         duration_seconds=scan_duration_seconds,
         total_documents=len(documents),
         documents_processed=processed_count,
@@ -299,11 +295,11 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     logger.info(f'  🔢 Total tokens: {crawler.total_tokens:,}')
 
 
-async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
+async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
     """Wrapper that ensures browser cleanup."""
     
     try:
-        await scan_ir_website_async(ticker, target_quarter, verbose, logger)
+        await scan_ir_website_async(ticker, target_quarter, verbose)
     finally:
         # Cleanup browser resources
         if browser_pool_manager:
@@ -316,9 +312,9 @@ async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Option
                     logger.warning(f'⚠️  Error closing browser: {e}')
 
 
-def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
+def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
     """Synchronous wrapper for scan_ir_website_async."""
-    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose, logger))
+    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose))
 
 
 def main():
@@ -345,28 +341,27 @@ Examples:
     
     args = parser.parse_args()
     
-    # Create logger for CLI usage
-    cli_logger = get_logger(__name__, ticker=args.ticker.upper())
-    
     # Initialize browser pool manager with headless setting
     headless = not args.no_headless
     browser_pool_manager = BrowserPoolManager(headless=headless)
     
     if not headless:
-        cli_logger.info('🖥️  Running in visible browser mode (debugging)')
+        logger.info('🖥️  Running in visible browser mode (debugging)')
     
     # Validate quarter format if provided
     if args.quarter and not re.match(r'^\d{4}Q[1-4]$', args.quarter):
         parser.error(f'Invalid quarter format: {args.quarter}. Use YYYYQN (e.g., 2024Q2)')
     
     try:
-        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose, cli_logger)
+        mdc_ticker.set(args.ticker.upper())
+        mdc_execution_id.set("local")
+        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose)
     
     except KeyboardInterrupt:
-        cli_logger.info('\n\nInterrupted by user')
+        logger.info('\n\nInterrupted by user')
         sys.exit(1)
     except Exception as e:
-        cli_logger.error(f'Error: {e}', exc_info=args.verbose)
+        logger.error(f'Error: {e}', exc_info=args.verbose)
         sys.exit(1)
 
 

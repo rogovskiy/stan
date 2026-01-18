@@ -11,6 +11,7 @@ Key Features:
 - Rate limit handling with automatic retry
 """
 
+import logging
 import os
 import json
 import asyncio
@@ -28,15 +29,19 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from browser_pool_manager import BrowserPoolManager
 from extraction_utils import (
-    get_gemini_model,
     initialize_gemini_model,
     extract_json_from_llm_response,
     load_prompt_template
 )
+from services.html_reduction_service import HTMLReductionService
+from cloud_logging_setup import emit_metric, setup_cloud_logging
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
 load_dotenv(env_path)
+
+setup_cloud_logging()
+logger = logging.getLogger(__name__)
 
 # Define the state for our graph
 class ScraperState(TypedDict):
@@ -74,14 +79,13 @@ class IRWebsiteCrawler:
     """LangGraph-based IR website crawler with intelligent navigation."""
     
     def __init__(self, model_name: str = "gemini-2.5-pro", browser_pool_manager: BrowserPoolManager = None, 
-                 ticker: Optional[str] = None, logger=None):
+                 ticker: Optional[str] = None):
         """Initialize the crawler.
         
         Args:
             model_name: Gemini model to use (defaults to env var or 'gemini-2.5-pro')
             browser_pool_manager: Optional shared BrowserPoolManager instance (creates new one if not provided)
             ticker: Optional ticker for metrics logging
-            logger: ContextLogger instance for structured logging (required)
         """
         # Use extraction_utils to get model name and initialize Gemini
         self.model_name = model_name
@@ -92,8 +96,8 @@ class IRWebsiteCrawler:
         # Store ticker
         self.ticker = ticker
         
-        # Store the logger
-        self.log = logger
+        # Initialize HTML reduction service
+        self.html_reduction_service = HTMLReductionService()
         
         # Override with specified model name if provided
         self.model = initialize_gemini_model(model_name, generation_config={
@@ -130,10 +134,10 @@ class IRWebsiteCrawler:
                         pass
                 
                 if attempt < max_retries - 1:
-                    self.log.warning(f"   ⚠️  Rate limit hit (429). Waiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
+                    logger.warning(f"   ⚠️  Rate limit hit (429). Waiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}...")
                     await asyncio.sleep(retry_delay)
                 else:
-                    self.log.error(f"   ❌ Max retries ({max_retries}) exceeded. Giving up.")
+                    logger.error(f"   ❌ Max retries ({max_retries}) exceeded. Giving up.")
                     raise
             
             except Exception as e:
@@ -145,12 +149,35 @@ class IRWebsiteCrawler:
         cleaned_text = extract_json_from_llm_response(response_text)
         return json.loads(cleaned_text)
     
-    async def _upload_html_to_gemini(self, html_content: str) -> Tuple[Any, str]:
-        """Upload HTML content to Gemini as a temporary file."""
+    async def _upload_html_to_gemini(self, url: str, html_content: str, verbose: bool = False) -> Tuple[Any, str]:
+        """Upload HTML content to Gemini as a temporary file after reducing size.
+        
+        Args:
+            html_content: Original HTML content
+            url: URL of the page (informational)
+            verbose: Whether to log reduction details
+        
+        Returns:
+            Tuple of (html_file, temp_path) where html_file is the uploaded Gemini file
+        """
+        # Reduce HTML before uploading (try normal reduction first)
+        reduced_html, metrics = self.html_reduction_service.reduce_html(url, html_content, aggressive=False)
+        
+        # If still too large (~1M tokens = ~4MB), try aggressive reduction
+        if metrics['reduced_size'] > 3_500_000:  # ~875k tokens estimated
+            if verbose:
+                logger.warning(f"      ⚠️  HTML still large after normal reduction ({metrics['reduced_size']/1024:.1f} KB), trying aggressive reduction...")
+            reduced_html, metrics = self.html_reduction_service.reduce_html(html_content, aggressive=True)
+        
+        if verbose and metrics['reduction_percent'] > 0:
+            logger.info(f"      📉 HTML reduced: {metrics['original_size']/1024:.1f} KB → {metrics['reduced_size']/1024:.1f} KB ({metrics['reduction_percent']:.1f}% reduction, ~{metrics['reduction_bytes']/4:.0f} tokens saved)")
+        
+        # Write reduced HTML to temp file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-            f.write(html_content)
+            f.write(reduced_html)
             temp_path = f.name
         
+        # Upload to Gemini
         html_file = await asyncio.to_thread(
             genai.upload_file,
             temp_path,
@@ -202,8 +229,7 @@ class IRWebsiteCrawler:
     async def _navigate_listing_node(self, state: ScraperState) -> ScraperState:
         """Navigate to a listing page."""
         if state['verbose']:
-            self.log.info(f"📋 Navigating to LISTING page: {state['url'][:80]}...", 
-                         page_type='listing', url=state['url'])
+            logger.info(f"📋 Navigating to LISTING page: {state['url'][:80]}...")
         
         try:
             html_content = await self.browser_manager.get_html(state['url'], wait_time=30, verbose=False)
@@ -220,13 +246,11 @@ class IRWebsiteCrawler:
                 state['listing_pages_visited'].append(state['url'])
             
             if state['verbose']:
-                self.log.info(f"✅ Loaded: {title[:70] if title else 'Untitled'}", 
-                            page_title=title, url=state['url'])
+                logger.info(f"✅ Loaded: {title[:70] if title else 'Untitled'}")
             
         except Exception as e:
             error_msg = str(e)
-            self.log.error(f"❌ Navigation error: {error_msg}", 
-                          url=state['url'], error=error_msg)
+            logger.error(f"❌ Navigation error: {error_msg}")
             
             # Check for critical browser errors that should fail immediately
             critical_errors = [
@@ -255,7 +279,7 @@ class IRWebsiteCrawler:
         """Extract document information from a detail page using Gemini."""
         start_time = time.time()
         try:
-            html_file, html_file_path = await self._upload_html_to_gemini(html)
+            html_file, html_file_path = await self._upload_html_to_gemini(url, html, verbose=verbose)
             
             try:
                 # Load prompt template
@@ -283,7 +307,7 @@ class IRWebsiteCrawler:
                     # Log metrics for this API call
                     duration_ms = (time.time() - start_time) * 1000
                     url_truncated = url[:200] if url else None
-                    self.log.metric('gemini_api_call',
+                    emit_metric('gemini_api_call',
                         operation='detail_page_extraction',
                         url=url_truncated,
                         prompt_tokens=usage.prompt_token_count,
@@ -297,7 +321,7 @@ class IRWebsiteCrawler:
                 # Filter out consolidated financial statements
                 if 'consolidated financial' in doc_info.get('title', '').lower():
                     if verbose:
-                        self.log.info("      ⏭️  Skipping consolidated financial statement")
+                        logger.info("      ⏭️  Skipping consolidated financial statement")
                     return None
                 
                 pdf_url = doc_info.get('pdf_url')
@@ -334,24 +358,24 @@ class IRWebsiteCrawler:
         except InvalidArgument as e:
             if "token count exceeds" in str(e) or "1048576" in str(e):
                 if verbose:
-                    self.log.warning("      ⚠️  Page HTML too large (exceeds 1M token limit)")
+                    logger.warning("      ⚠️  Page HTML too large (exceeds 1M token limit)")
                 return None
             raise
         
         except json.JSONDecodeError as e:
             if verbose:
-                self.log.error(f"      ❌ JSON parsing error: {e.msg}")
+                logger.error(f"      ❌ JSON parsing error: {e.msg}")
             return None
             
         except Exception as e:
             if verbose:
-                self.log.warning(f"      ⚠️ Error extracting document: {e}")
+                logger.warning(f"      ⚠️ Error extracting document: {e}")
             return None
     
     async def _process_listing_node(self, state: ScraperState) -> ScraperState:
         """Process a listing page: use LLM to extract structured document info and identify listing pages."""
         if state['verbose']:
-            self.log.info("📋 Processing LISTING page...")
+            logger.info("📋 Processing LISTING page...")
         
         start_time = time.time()
         try:
@@ -361,12 +385,12 @@ class IRWebsiteCrawler:
             state['_current_listing_url'] = state['url']
             
             if state['verbose']:
-                self.log.info("   🤖 Analyzing page HTML with Gemini (as file attachment)...")
+                logger.info("   🤖 Analyzing page HTML with Gemini (as file attachment)...")
             
-            html_file, html_file_path = await self._upload_html_to_gemini(state['current_page_html'])
+            html_file, html_file_path = await self._upload_html_to_gemini(state['url'], state['current_page_html'], verbose=state['verbose'])
             
             if state['verbose']:
-                self.log.info(f"      ✅ Uploaded HTML file: {html_file.name}")
+                logger.info(f"      ✅ Uploaded HTML file: {html_file.name}")
             
             try:
                 # Load prompt template
@@ -377,8 +401,8 @@ class IRWebsiteCrawler:
                 )
                 
                 if state['verbose']:
-                    self.log.info(f"      🤖 Model: {self.model_name}")
-                    self.log.info(f"      ⚙️  Config: max_output_tokens={65535}, temperature={0.1}")
+                    logger.info(f"      🤖 Model: {self.model_name}")
+                    logger.info(f"      ⚙️  Config: max_output_tokens={65535}, temperature={0.1}")
                 
                 response = await self._call_gemini_with_retry(
                     self.model.generate_content,
@@ -390,12 +414,12 @@ class IRWebsiteCrawler:
                 )
                 
                 if state['verbose']:
-                    self.log.info(f"      ✅ Response received: {len(response.text)} chars")
+                    logger.info(f"      ✅ Response received: {len(response.text)} chars")
                 
                 if hasattr(response, 'usage_metadata'):
                     usage = response.usage_metadata
                     if state['verbose']:
-                        self.log.info(f"      📊 Tokens: {usage.prompt_token_count} prompt + {usage.candidates_token_count} response = {usage.total_token_count} total")
+                        logger.info(f"      📊 Tokens: {usage.prompt_token_count} prompt + {usage.candidates_token_count} response = {usage.total_token_count} total")
                     
                     self.total_prompt_tokens += usage.prompt_token_count
                     self.total_response_tokens += usage.candidates_token_count
@@ -404,7 +428,7 @@ class IRWebsiteCrawler:
                     # Log metrics for this API call
                     duration_ms = (time.time() - start_time) * 1000
                     url_truncated = state['url'][:200] if state['url'] else None
-                    self.log.metric('gemini_api_call',
+                    emit_metric('gemini_api_call',
                         operation='listing_page_extraction',
                         url=url_truncated,
                         prompt_tokens=usage.prompt_token_count,
@@ -414,7 +438,7 @@ class IRWebsiteCrawler:
                     )
                     
                     if usage.candidates_token_count >= 8190 and state['verbose']:
-                        self.log.warning("      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")
+                        logger.warning("      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")
                 
                 try:
                     analysis = self._parse_json_response(response.text)
@@ -422,17 +446,17 @@ class IRWebsiteCrawler:
                     error_doc = e.doc if hasattr(e, 'doc') else response.text
                     
                     if state['verbose']:
-                        self.log.error(f"   ❌ JSON parsing error at position {e.pos}: {e.msg}")
-                        self.log.error(f"   📝 Response length: {len(error_doc)} characters")
+                        logger.error(f"   ❌ JSON parsing error at position {e.pos}: {e.msg}")
+                        logger.error(f"   📝 Response length: {len(error_doc)} characters")
                         
                         start_pos = max(0, e.pos - 100)
                         end_pos = min(len(error_doc), e.pos + 100)
-                        self.log.error(f"   📝 Error context: ...{error_doc[start_pos:end_pos]}...")
+                        logger.error(f"   📝 Error context: ...{error_doc[start_pos:end_pos]}...")
                         
                         failed_file = f"/tmp/gemini_failed_listing_{int(datetime.now().timestamp())}.json"
                         with open(failed_file, 'w', encoding='utf-8') as f:
                             f.write(error_doc)
-                        self.log.error(f"   💾 Saved broken JSON to: {failed_file}")
+                        logger.error(f"   💾 Saved broken JSON to: {failed_file}")
                     
                     analysis = {'documents': [], 'listing_pages': []}
                 
@@ -440,7 +464,7 @@ class IRWebsiteCrawler:
                 listing_pages = analysis.get('listing_pages', [])
                 
                 if state['verbose']:
-                    self.log.info(f"   ✅ LLM found {len(documents)} documents and {len(listing_pages)} pagination links")
+                    logger.info(f"   ✅ LLM found {len(documents)} documents and {len(listing_pages)} pagination links")
                 
             finally:
                 await self._cleanup_gemini_file(html_file, html_file_path)
@@ -500,39 +524,39 @@ class IRWebsiteCrawler:
                     state['listing_pages_queue'].append(listing_url)
             
             if state['verbose']:
-                self.log.info(f"   ✅ Direct PDFs: {direct_pdfs}")
-                self.log.info(f"   ✅ Detail pages to visit: {detail_pages}")
+                logger.info(f"   ✅ Direct PDFs: {direct_pdfs}")
+                logger.info(f"   ✅ Detail pages to visit: {detail_pages}")
                 if skipped_cached > 0:
-                    self.log.info(f"   ⏭️  Skipped {skipped_cached} cached detail pages")
-                self.log.info(f"   ✅ Pagination links found: {len(listing_pages)}")
+                    logger.info(f"   ⏭️  Skipped {skipped_cached} cached detail pages")
+                logger.info(f"   ✅ Pagination links found: {len(listing_pages)}")
                 
                 if listing_pages:
-                    self.log.info("      Pagination:")
+                    logger.info("      Pagination:")
                     for i, listing in enumerate(listing_pages[:5], 1):
                         purpose = listing.get('purpose', 'No description')
-                        self.log.info(f"        {i}. {listing['title'][:40]} - {purpose[:40]}")
+                        logger.info(f"        {i}. {listing['title'][:40]} - {purpose[:40]}")
                     if len(listing_pages) > 5:
-                        self.log.info(f"        ... and {len(listing_pages) - 5} more")
+                        logger.info(f"        ... and {len(listing_pages) - 5} more")
                 
-                self.log.info(f"   📦 Total documents so far: {len(state['documents_found'])}")
+                logger.info(f"   📦 Total documents so far: {len(state['documents_found'])}")
                 
                 if documents and direct_pdfs > 0:
-                    self.log.info("      Sample documents:")
+                    logger.info("      Sample documents:")
                     for i, doc in enumerate([d for d in documents if d['link_type'] == 'pdf_download'][:3], 1):
                         year_qtr = f"{doc.get('fiscal_quarter', '')} {doc.get('fiscal_year', '')}".strip()
                         category = doc.get('category', 'unknown')
-                        self.log.info(f"        {i}. [{category}] {doc['title'][:50]} ({year_qtr})")
+                        logger.info(f"        {i}. [{category}] {doc['title'][:50]} ({year_qtr})")
             
         except InvalidArgument as e:
             if "token count exceeds" in str(e) or "1048576" in str(e):
                 if state['verbose']:
-                    self.log.warning("   ⚠️  Page HTML too large (exceeds 1M token limit)")
-                    self.log.warning(f"   ⏭️  Skipping this listing page: {state['url']}")
+                    logger.warning("   ⚠️  Page HTML too large (exceeds 1M token limit)")
+                    logger.warning(f"   ⏭️  Skipping this listing page: {state['url']}")
             else:
-                self.log.warning(f"   ⚠️ Listing processing error: {e}", exc_info=True)
+                logger.warning(f"   ⚠️ Listing processing error: {e}")
         
         except Exception as e:
-            self.log.warning(f"   ⚠️ Listing processing error: {e}", exc_info=True)
+            logger.warning(f"   ⚠️ Listing processing error: {e}")
         
         return state
     
@@ -542,44 +566,44 @@ class IRWebsiteCrawler:
         
         if not detail_pages:
             if state['verbose']:
-                self.log.info("📦 No detail pages to process")
+                logger.info("📦 No detail pages to process")
             state['detail_pages_queue'] = []
             return state
         
         total_visited = len(state['listing_pages_visited']) + len(state['detail_pages_visited'])
         
         if state['verbose']:
-            self.log.info(f"📦 Batch processing {len(detail_pages)} detail pages...")
+            logger.info(f"📦 Batch processing {len(detail_pages)} detail pages...")
         
         for i, detail_url in enumerate(detail_pages, 1):
             if total_visited >= state['max_pages']:
                 remaining = len(detail_pages) - i + 1
                 if state['verbose']:
-                    self.log.info(f"   🛑 Hit page limit, stopping batch ({remaining} pages not visited)")
+                    logger.info(f"   🛑 Hit page limit, stopping batch ({remaining} pages not visited)")
                 break
             
             if detail_url in state['detail_pages_visited']:
                 continue
             
             if state['verbose']:
-                self.log.info(f"📄 Detail page {i}/{len(detail_pages)}: {detail_url[:70]}...")
+                logger.info(f"📄 Detail page {i}/{len(detail_pages)}: {detail_url[:70]}...")
             
             try:
                 html = await self.browser_manager.get_html(detail_url, wait_time=30, verbose=False)
                 if html is None:
                     if state['verbose']:
-                        self.log.error("   ❌ Failed to load page")
+                        logger.error("   ❌ Failed to load page")
                     continue
                 
                 title = await self.browser_manager.get_title(verbose=False)
                 if state['verbose']:
-                    self.log.info(f"   ✅ Loaded: {title[:60] if title else 'Untitled'}")
+                    logger.info(f"   ✅ Loaded: {title[:60] if title else 'Untitled'}")
                 
                 state['detail_pages_visited'].append(detail_url)
                 total_visited += 1
                 
                 if state['verbose']:
-                    self.log.info("   🤖 Extracting document with Gemini...")
+                    logger.info("   🤖 Extracting document with Gemini...")
                 doc = await self._extract_document_from_detail_page(detail_url, html, title or "Untitled", state['verbose'])
                 
                 if doc:
@@ -595,7 +619,7 @@ class IRWebsiteCrawler:
                         
                         state['documents_found'].append(doc)
                         if state['verbose']:
-                            self.log.info(f"   ✅ Saved: {doc['title'][:50]}")
+                            logger.info(f"   ✅ Saved: {doc['title'][:50]}")
                             
                             fiscal_info = []
                             if doc.get('fiscal_quarter'):
@@ -603,48 +627,48 @@ class IRWebsiteCrawler:
                             if doc.get('fiscal_year'):
                                 fiscal_info.append(str(doc['fiscal_year']))
                             if fiscal_info:
-                                self.log.info(f"      Fiscal Period: {' '.join(fiscal_info)}")
+                                logger.info(f"      Fiscal Period: {' '.join(fiscal_info)}")
                             
                             if doc.get('pdf_url'):
-                                self.log.info(f"      PDF: {doc['pdf_url'][:60]}...")
+                                logger.info(f"      PDF: {doc['pdf_url'][:60]}...")
                             elif doc.get('page_url'):
-                                self.log.info(f"      Page URL: {doc['page_url'][:60]}...")
+                                logger.info(f"      Page URL: {doc['page_url'][:60]}...")
                     else:
                         if state['verbose']:
-                            self.log.info("   ⏭️  Duplicate, skipping")
+                            logger.info("   ⏭️  Duplicate, skipping")
                 else:
                     if state['verbose']:
-                        self.log.warning("   ⚠️  No document found on this page")
+                        logger.warning("   ⚠️  No document found on this page")
                     
             except Exception as e:
                 if state['verbose']:
-                    self.log.warning(f"   ⚠️ Error processing detail page: {e}")
+                    logger.warning(f"   ⚠️ Error processing detail page: {e}")
         
         state['detail_pages_queue'] = []
         
         if state['verbose']:
-            self.log.info(f"✅ Batch complete: processed {len(state['detail_pages_visited'])} detail pages total")
+            logger.info(f"✅ Batch complete: processed {len(state['detail_pages_visited'])} detail pages total")
         
         return state
     
     async def _decide_next_listing_node(self, state: ScraperState) -> ScraperState:
         """Decide what listing page to visit next."""
         if state['verbose']:
-            self.log.info("🤔 Deciding next action...")
+            logger.info("🤔 Deciding next action...")
         
         listings_pending = len(state['listing_pages_queue'])
         if state['verbose']:
-            self.log.info(f"   📊 Listing pages remaining: {listings_pending}")
+            logger.info(f"   📊 Listing pages remaining: {listings_pending}")
         
         total_visited = len(state['listing_pages_visited']) + len(state['detail_pages_visited'])
         if state['verbose']:
-            self.log.info(f"   📊 Pages visited so far: {total_visited}/{state['max_pages']}")
+            logger.info(f"   📊 Pages visited so far: {total_visited}/{state['max_pages']}")
         
         if total_visited >= state['max_pages']:
             if state['verbose']:
-                self.log.info(f"   🛑 Reached max pages limit ({state['max_pages']})")
+                logger.info(f"   🛑 Reached max pages limit ({state['max_pages']})")
                 if listings_pending > 0:
-                    self.log.warning(f"   ⚠️  Stopped with {listings_pending} listings still queued")
+                    logger.warning(f"   ⚠️  Stopped with {listings_pending} listings still queued")
             state['next_action'] = 'finish'
             return state
         
@@ -653,18 +677,18 @@ class IRWebsiteCrawler:
             
             if next_listing in state['listing_pages_visited']:
                 if state['verbose']:
-                    self.log.info("   ⏭️  Skipping already visited listing")
+                    logger.info("   ⏭️  Skipping already visited listing")
                 return await self._decide_next_listing_node(state)
             
             state['url'] = next_listing
             state['next_action'] = 'next_listing'
             if state['verbose']:
-                self.log.info("   ➡️  Next: LISTING page")
-                self.log.info(f"      {next_listing[:80]}")
+                logger.info("   ➡️  Next: LISTING page")
+                logger.info(f"      {next_listing[:80]}")
             return state
         
         if state['verbose']:
-            self.log.info("   ✅ No more listing pages to visit")
+            logger.info("   ✅ No more listing pages to visit")
         state['next_action'] = 'finish'
         return state
     
@@ -697,10 +721,7 @@ class IRWebsiteCrawler:
             - visited_detail_urls: List of detail page URLs visited (for caching)
         """
         if verbose:
-            self.log.info("🚀 Starting IR Website Crawler", 
-                         start_url=start_url, 
-                         max_pages=max_pages,
-                         skip_urls_count=len(skip_urls) if skip_urls else 0)
+            logger.info("🚀 Starting IR Website Crawler")
         
         initial_state = ScraperState(
             url=start_url,
@@ -734,7 +755,8 @@ class IRWebsiteCrawler:
                 direct_pdfs = sum(1 for d in documents if d.get('extraction_method') == 'direct_link')
                 from_details = sum(1 for d in documents if d.get('extraction_method') == 'details_page')
                 
-                self.log.info("✅ Crawling Complete!", 
+                logger.info("✅ Crawling Complete!")
+                emit_metric('crawler_complete', 
                              listing_pages=len(final_state['listing_pages_visited']),
                              detail_pages=len(visited_detail_urls),
                              documents_found=len(documents),
@@ -747,14 +769,12 @@ class IRWebsiteCrawler:
                 unvisited_details = len(final_state['detail_pages_queue'])
                 unvisited_listings = len(final_state['listing_pages_queue'])
                 if unvisited_details > 0 or unvisited_listings > 0:
-                    self.log.warning(f"⚠️  Unvisited pages (increase max_pages to visit more)",
-                                   unvisited_details=unvisited_details,
-                                   unvisited_listings=unvisited_listings)
+                    logger.warning(f"⚠️  Unvisited pages (increase max_pages to visit more)")
             
             return (documents, visited_detail_urls)
             
         except Exception as e:
-            self.log.error(f"❌ Crawling failed: {e}", exc_info=True, start_url=start_url)
+            logger.error(f"❌ Crawling failed: {e}")
             import traceback
             traceback.print_exc()
             return ([], [])

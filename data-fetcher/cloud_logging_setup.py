@@ -24,11 +24,15 @@ import os
 import sys
 import logging
 from typing import Optional
-from dotenv import load_dotenv
+from contextvars import ContextVar
 
 # Global flag to track if Cloud Logging is initialized
 _cloud_logging_initialized = False
 
+
+mdc_execution_id = ContextVar("execution_id", default=None)
+mdc_ticker = ContextVar("message_id", default=None)
+mdc_operation_type = ContextVar("operation_type", default=None)
 
 def setup_cloud_logging() -> bool:
     """
@@ -62,6 +66,8 @@ def setup_cloud_logging() -> bool:
             
             _cloud_logging_initialized = True
             logging.info("Cloud Logging initialized with StructuredLogHandler")
+
+            _setup_mdc_context()
             return True
             
         except ImportError:
@@ -74,153 +80,49 @@ def setup_cloud_logging() -> bool:
     # Local dev or fallback: Configure standard logging
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format='%(message)s',
         handlers=[logging.StreamHandler(sys.stdout)],
         force=True  # Override any existing configuration
     )
+    _setup_mdc_context()
+
     
     _cloud_logging_initialized = True
     logging.info('Standard logging configured for local development' if not is_cloud_run else 'Standard logging configured (Cloud Logging unavailable)')
     return True
 
+import pprint
+def _setup_mdc_context():
+    old_factory = logging.getLogRecordFactory()
 
-class ContextLogger:
-    """
-    Logger wrapper that automatically adds context fields to all log messages.
-    
-    This provides a convenient way to add execution_id, ticker, and scan_type
-    to all logs without manually passing them in extra={} each time.
-    """
-    
-    def __init__(
-        self, 
-        name: str,
-        execution_id: Optional[str] = None,
-        ticker: Optional[str] = None,
-        scan_type: Optional[str] = None
-    ):
-        """
-        Initialize a context logger.
-        
-        Args:
-            name: Logger name (typically __name__)
-            execution_id: Execution/correlation ID
-            ticker: Stock ticker symbol
-            scan_type: Type of scan ('new' or 'update')
-        """
-        self.logger = logging.getLogger(name)
-        
-        # Try to get context from environment if not provided
-        self.execution_id = execution_id
-        self.ticker = ticker
-        self.scan_type = scan_type
+    def record_factory(*args, **kwargs):
+        record = old_factory(*args, **kwargs)
 
-    def set_scan_type(self, scan_type: str):
-        """Set the scan type."""
-        self.scan_type = scan_type
-    
+        # Pull MDC/contextvars safely (these should never raise, but keep it defensive)
+        execution_id = mdc_execution_id.get(None)
+        operation_type = mdc_operation_type.get(None)
+        ticker = mdc_ticker.get(None)
 
-    def dump_handlers(self,label):
-        root = logging.getLogger()
-        print(label,root)
-        for h in root.handlers:
-            print("  ", h, getattr(h, "formatter", None))
+        # Ensure json_fields is a dict (StructuredLogHandler only serializes json_fields / dict msg)
+        base_json_fields = getattr(record, "json_fields", None)
+        if not isinstance(base_json_fields, dict):
+            base_json_fields = {}
 
-    def _get_extra(self, **additional_fields):
-        """Build the extra fields dict with context labels and additional json_fields."""
-        extra = {}
-        
-        # Core context fields go in labels
-        labels = {}
-        if self.execution_id:
-            labels['execution_id'] = self.execution_id
-        if self.ticker:
-            labels['ticker'] = self.ticker
-        if self.scan_type:
-            labels['scan_type'] = self.scan_type
-        
-        if labels:
-            extra["labels"] = labels
-        
-        # Additional fields go in json_fields
-        if additional_fields:
-            extra["json_fields"] = additional_fields
-        
-        return extra
-    
-    def debug(self, message: str, **extra_fields):
-        """Log a debug message with context."""
-        self.logger.debug(message, extra=self._get_extra(**extra_fields))
-    
-    def info(self, message: str, **extra_fields):
-        """Log an info message with context."""
-        self.logger.info(message, extra=self._get_extra(**extra_fields))
-    
-    def warning(self, message: str, **extra_fields):
-        """Log a warning message with context."""
-        self.logger.warning(message, extra=self._get_extra(**extra_fields))
-    
-    def error(self, message: str, exc_info: bool = False, **extra_fields):
-        """Log an error message with context."""
-        self.logger.error(message, exc_info=exc_info, extra=self._get_extra(**extra_fields))
-    
-    def critical(self, message: str, exc_info: bool = False, **extra_fields):
-        """Log a critical message with context."""
-        self.logger.critical(message, exc_info=exc_info, extra=self._get_extra(**extra_fields))
-    
-    def metric(self, operation_type: str, severity: str = 'INFO', **metric_fields):
-        """Log a metric with unified format.
-        
-        Args:
-            operation_type: Type of metric operation (e.g., 'scan_start', 'gemini_api_call')
-            severity: Log severity level ('INFO', 'WARNING', 'ERROR') - defaults to 'INFO'
-            **metric_fields: Additional metric fields to include in json_fields
-        
-        Example:
-            logger.metric('scan_start', target_quarter='2024Q3', max_pages=50)
-            logger.metric('document_download', success=False, error='Download failed', severity='WARNING')
-        """
-        message = f'Metric: {operation_type}'
-        
-        # Include operation_type in metric_fields
-        metric_data = {
-            'operation_type': operation_type,
-            **metric_fields
-        }
-        
-        # Call appropriate log method based on severity
-        if severity == 'INFO':
-            self.logger.info(message, extra=self._get_extra(**metric_data))
-        elif severity == 'WARNING':
-            self.logger.warning(message, extra=self._get_extra(**metric_data))
-        elif severity == 'ERROR':
-            self.logger.error(message, extra=self._get_extra(**metric_data))
-        else:
-            # Default to INFO for unknown severity
-            self.logger.info(message, extra=self._get_extra(**metric_data))
+        # Only include non-None values; stringify for safety (Cloud Logging prefers JSON-serializable types)
+        mdc_fields = {}
+        if execution_id is not None:
+            mdc_fields["execution_id"] = str(execution_id)
+        if operation_type is not None:
+            mdc_fields["operation_type"] = str(operation_type)
+        if ticker is not None:
+            mdc_fields["ticker"] = str(ticker)
 
+        record.json_fields = {**base_json_fields, **mdc_fields}
 
-def get_logger(
-    name: str,
-    execution_id: Optional[str] = None,
-    ticker: Optional[str] = None,
-    scan_type: Optional[str] = None
-) -> ContextLogger:
-    """
-    Get a logger with automatic context fields.
-    
-    Args:
-        name: Logger name (typically __name__)
-        execution_id: Execution/correlation ID
-        ticker: Stock ticker symbol
-        scan_type: Type of scan ('new' or 'update')
-    
-    Returns:
-        ContextLogger instance with context fields
-    
-    Example:
-        logger = get_logger(__name__, execution_id='exec-123', ticker='AAPL')
-        logger.info('Processing started')
-    """
-    return ContextLogger(name, execution_id=execution_id, ticker=ticker, scan_type=scan_type)
+        return record
 
+    logging.setLogRecordFactory(record_factory)
+
+def emit_metric(metric_name: str, **metric_fields):
+    logging.info(f'Metric: {metric_name}', extra={**metric_fields, "metric_name": metric_name})
+    return

@@ -14,25 +14,21 @@ from typing import Dict, List, Optional, Any, Tuple, Set
 import yfinance as yf
 
 from services.ir_document_service import IRDocumentService
-from services.metrics_service import MetricsService
 from browser_pool_manager import BrowserPoolManager
 from cloud_logging_setup import ContextLogger
 
 class IRDocumentProcessor:
     """Processes and stores IR documents discovered by crawler."""
     
-    def __init__(self, browser_pool_manager: BrowserPoolManager = None, 
-                 metrics_service: MetricsService = None, logger: ContextLogger = None):
+    def __init__(self, browser_pool_manager: BrowserPoolManager = None, logger: ContextLogger = None):
         """Initialize document processor.
         
         Args:
             browser_pool_manager: Optional browser pool manager (creates new one if not provided)
-            metrics_service: Optional metrics service for logging
             logger: ContextLogger instance for structured logging (required)
         """
         self.browser_pool_manager = browser_pool_manager or BrowserPoolManager()
-        self.ir_document_service = IRDocumentService(logger = logger)
-        self.metrics_service = metrics_service
+        self.ir_document_service = IRDocumentService(logger=logger)
         self.log = logger
     
     def get_fiscal_year_end_month(self, ticker: str) -> int:
@@ -281,26 +277,26 @@ class IRDocumentProcessor:
                     if verbose:
                         self.log.warning(f'  Skipped: Could not download')
                     # Log failed download
-                    if self.metrics_service:
-                        self.metrics_service.log_document_download(
-                            url=release['url'],
-                            file_size_bytes=0,
-                            duration_ms=download_duration_ms,
-                            success=False,
-                            ticker=ticker,
-                            error='Download failed'
-                        )
+                    url_truncated = release['url'][:200] if release['url'] else None
+                    self.log.warning('Metric: document_download',
+                        operation_type='document_download',
+                        url=url_truncated,
+                        file_size_bytes=0,
+                        duration_ms=download_duration_ms,
+                        success=False,
+                        error='Download failed'
+                    )
                     continue
                 
                 # Log successful download
-                if self.metrics_service:
-                    self.metrics_service.log_document_download(
-                        url=release['url'],
-                        file_size_bytes=len(content),
-                        duration_ms=download_duration_ms,
-                        success=True,
-                        ticker=ticker
-                    )
+                url_truncated = release['url'][:200] if release['url'] else None
+                self.log.info('Metric: document_download',
+                    operation_type='document_download',
+                    url=url_truncated,
+                    file_size_bytes=len(content),
+                    duration_ms=download_duration_ms,
+                    success=True
+                )
                 
                 # Determine file type
                 url_lower = release['url'].lower()
@@ -360,13 +356,12 @@ class IRDocumentProcessor:
                 existing_urls.add(release['url'])  # Add to set to avoid re-processing
                 
                 # Log document storage
-                if self.metrics_service:
-                    self.metrics_service.log_document_storage(
-                        document_id=document_id,
-                        quarter_key=quarter_key,
-                        document_type=doc_type,
-                        ticker=ticker
-                    )
+                self.log.info('Metric: document_storage',
+                    operation_type='document_storage',
+                    document_id=document_id,
+                    quarter_key=quarter_key,
+                    document_type=doc_type
+                )
                 
                 if verbose:
                     self.log.info(f'  ✅ Stored: {document_id} ({quarter_key})')

@@ -33,7 +33,6 @@ from extraction_utils import (
     extract_json_from_llm_response,
     load_prompt_template
 )
-from services.metrics_service import MetricsService
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '.env.local')
@@ -75,13 +74,12 @@ class IRWebsiteCrawler:
     """LangGraph-based IR website crawler with intelligent navigation."""
     
     def __init__(self, model_name: str = "gemini-2.5-pro", browser_pool_manager: BrowserPoolManager = None, 
-                 metrics_service: MetricsService = None, ticker: Optional[str] = None, logger=None):
+                 ticker: Optional[str] = None, logger=None):
         """Initialize the crawler.
         
         Args:
             model_name: Gemini model to use (defaults to env var or 'gemini-2.5-pro')
             browser_pool_manager: Optional shared BrowserPoolManager instance (creates new one if not provided)
-            metrics_service: Optional metrics service for logging
             ticker: Optional ticker for metrics logging
             logger: ContextLogger instance for structured logging (required)
         """
@@ -91,13 +89,11 @@ class IRWebsiteCrawler:
         # Use provided browser manager or create new one
         self.browser_manager = browser_pool_manager or BrowserPoolManager()
         
-        # Store metrics service and ticker
-        self.metrics_service = metrics_service
+        # Store ticker
         self.ticker = ticker
         
         # Store the logger
         self.log = logger
-        self.log.info("Hello from IRWebsiteCrawler")
         
         # Override with specified model name if provided
         self.model = initialize_gemini_model(model_name, generation_config={
@@ -285,17 +281,17 @@ class IRWebsiteCrawler:
                     self.total_tokens += usage.total_token_count
                     
                     # Log metrics for this API call
-                    if self.metrics_service:
-                        duration_ms = (time.time() - start_time) * 1000
-                        self.metrics_service.log_gemini_api_call(
-                            operation='detail_page_extraction',
-                            url=url,
-                            prompt_tokens=usage.prompt_token_count,
-                            response_tokens=usage.candidates_token_count,
-                            total_tokens=usage.total_token_count,
-                            duration_ms=duration_ms,
-                            ticker=self.ticker
-                        )
+                    duration_ms = (time.time() - start_time) * 1000
+                    url_truncated = url[:200] if url else None
+                    self.log.info('Metric: gemini_api_call',
+                        operation_type='gemini_api_call',
+                        operation='detail_page_extraction',
+                        url=url_truncated,
+                        prompt_tokens=usage.prompt_token_count,
+                        response_tokens=usage.candidates_token_count,
+                        total_tokens=usage.total_token_count,
+                        duration_ms=duration_ms
+                    )
                 
                 doc_info = self._parse_json_response(response.text)
                 
@@ -407,17 +403,17 @@ class IRWebsiteCrawler:
                     self.total_tokens += usage.total_token_count
                     
                     # Log metrics for this API call
-                    if self.metrics_service:
-                        duration_ms = (time.time() - start_time) * 1000
-                        self.metrics_service.log_gemini_api_call(
-                            operation='listing_page_extraction',
-                            url=state['url'],
-                            prompt_tokens=usage.prompt_token_count,
-                            response_tokens=usage.candidates_token_count,
-                            total_tokens=usage.total_token_count,
-                            duration_ms=duration_ms,
-                            ticker=self.ticker
-                        )
+                    duration_ms = (time.time() - start_time) * 1000
+                    url_truncated = state['url'][:200] if state['url'] else None
+                    self.log.info('Metric: gemini_api_call',
+                        operation_type='gemini_api_call',
+                        operation='listing_page_extraction',
+                        url=url_truncated,
+                        prompt_tokens=usage.prompt_token_count,
+                        response_tokens=usage.candidates_token_count,
+                        total_tokens=usage.total_token_count,
+                        duration_ms=duration_ms
+                    )
                     
                     if usage.candidates_token_count >= 8190 and state['verbose']:
                         self.log.warning("      ⚠️  WARNING: Hit ~8,192 token output limit! (not a problem for pro models)")

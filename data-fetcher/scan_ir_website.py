@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 from cloud_logging_setup import ContextLogger, get_logger
 from services.ir_url_service import IRURLService
 from services.ir_document_service import IRDocumentService
-from services.metrics_service import MetricsService
 from ir_crawler import IRWebsiteCrawler
 from ir_document_processor import IRDocumentProcessor
 from browser_pool_manager import BrowserPoolManager
@@ -102,8 +101,6 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     # Use the passed logger
     log = logger
     
-    # Initialize metrics service with logger
-    metrics_service = MetricsService(execution_id=None, logger=logger)
     scan_start_time = time.time()
     
     # Validate quarter format if provided
@@ -120,12 +117,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         return
     
     # Log scan start
-    metrics_service.log_scan_start(
-        ticker=ticker,
-        target_quarter=target_quarter,
-        max_pages=50,
-        num_urls=len(ticker_urls)
-    )
+    logger.info('Metric: scan_start', operation_type='scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
     
     if len(ticker_urls) == 1:
         logger.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
@@ -134,22 +126,17 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         for i, url in enumerate(ticker_urls, 1):
             logger.info(f'  {i}. {url}')
     
-    logger.dump_handlers("Before crawler init")
-
     # Initialize services
-    ir_document_service = IRDocumentService(logger = logger)
-    logger.dump_handlers("After crawler init")
+    ir_document_service = IRDocumentService(logger=logger)
     ir_url_service = IRURLService()
-    # Initialize crawler and processor with metrics service (sharing browser pool manager)
-    # crawler = IRWebsiteCrawler(
-    #     browser_pool_manager=browser_pool_manager,
-    #     metrics_service=metrics_service,
-    #     ticker=ticker,
-    #     logger=logger
-    # )
+    # Initialize crawler and processor (sharing browser pool manager)
+    crawler = IRWebsiteCrawler(
+        browser_pool_manager=browser_pool_manager,
+        ticker=ticker,
+        logger=logger
+    )
     processor = IRDocumentProcessor(
         browser_pool_manager=browser_pool_manager,
-        metrics_service=metrics_service,
         logger=logger
     )
 
@@ -290,8 +277,9 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     scan_duration_seconds = time.time() - scan_start_time
     
     # Log scan complete with all metrics
-    metrics_service.log_scan_complete(
-        ticker=ticker,
+    estimated_cost_usd = (crawler.total_prompt_tokens * 0.075 + crawler.total_response_tokens * 0.30) / 1_000_000
+    logger.info('Metric: scan_complete',
+        operation_type='scan_complete',
         duration_seconds=scan_duration_seconds,
         total_documents=len(documents),
         documents_processed=processed_count,
@@ -299,7 +287,8 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         total_tokens=crawler.total_tokens,
         prompt_tokens=crawler.total_prompt_tokens,
         response_tokens=crawler.total_response_tokens,
-        target_quarter=target_quarter
+        target_quarter=target_quarter,
+        estimated_cost_usd=estimated_cost_usd
     )
     
     logger.info(f'✅ Scan complete!')

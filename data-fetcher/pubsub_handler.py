@@ -43,13 +43,19 @@ def handle_pubsub():
     
     if not envelope:
         msg = 'No Pub/Sub message received'
-        logger.error(msg, extra={'execution_id': execution_id})
+        logger.error(msg, extra={
+            "labels": {
+                "execution_id": execution_id
+            }
+        })
         return jsonify({'error': msg}), 400
     
     # Log the raw incoming message
     logger.info('Received Pub/Sub message', extra={
-        'execution_id': execution_id,
-        'operation': 'pubsub_receive'
+        "labels": {
+            "execution_id": execution_id,
+            "operation": "pubsub_receive"
+        }
     })
     
     # Pub/Sub sends message in 'message' field
@@ -59,7 +65,11 @@ def handle_pubsub():
     if 'data' in pubsub_message:
         try:
             data = base64.b64decode(pubsub_message['data']).decode('utf-8')
-            logger.info(f'Decoded message data: {data}', extra={'execution_id': execution_id})
+            logger.info(f'Decoded message data: {data}', extra={
+                "labels": {
+                    "execution_id": execution_id
+                }
+            })
             try:
                 message_data = json.loads(data)
             except json.JSONDecodeError:
@@ -67,27 +77,41 @@ def handle_pubsub():
                 message_data = {'ticker': data}
         except Exception as e:
             msg = f'Failed to decode message data: {e}'
-            logger.error(msg, extra={'execution_id': execution_id})
+            logger.error(msg, extra={
+                "labels": {
+                    "execution_id": execution_id
+                }
+            })
             return jsonify({'error': msg}), 400
     else:
         msg = 'No data in Pub/Sub message'
-        logger.error(msg, extra={'execution_id': execution_id})
+        logger.error(msg, extra={
+            "labels": {
+                "execution_id": execution_id
+            }
+        })
         return jsonify({'error': msg}), 400
     
     ticker = message_data.get('ticker')
     if not ticker:
         msg = 'No ticker in message'
-        logger.error(msg, extra={'execution_id': execution_id})
+        logger.error(msg, extra={
+            "labels": {
+                "execution_id": execution_id
+            }
+        })
         return jsonify({'error': msg}), 400
     
     quarter = message_data.get('quarter')
     verbose = message_data.get('verbose', False)
     
-    logger.info(f'Processing scan request for {ticker}', extra={
-        'execution_id': execution_id,
-        'ticker': ticker,
-        'quarter': quarter,
-        'operation': 'scan_start'
+    logger.info('scan_start', extra={
+        "labels": {
+            "execution_id": execution_id,
+            "ticker": ticker,
+            "quarter": quarter,
+            "operation": "scan_start"
+        }
     })
     
     try:
@@ -97,10 +121,12 @@ def handle_pubsub():
         # Run the scan
         scan_ir_website(ticker, quarter, verbose)
         
-        logger.info(f'Successfully completed scan for {ticker}', extra={
-            'execution_id': execution_id,
-            'ticker': ticker,
-            'operation': 'scan_complete'
+        logger.info('scan_complete', extra={
+            "labels": {
+                "execution_id": execution_id,
+                "ticker": ticker,
+                "operation": "scan_complete"
+            }
         })
         return jsonify({
             'status': 'success',
@@ -111,10 +137,12 @@ def handle_pubsub():
         
     except Exception as e:
         logger.error(f'Error scanning {ticker}: {e}', extra={
-            'execution_id': execution_id,
-            'ticker': ticker,
-            'operation': 'scan_error',
-            'error': str(e)
+            "labels": {
+                "execution_id": execution_id,
+                "ticker": ticker,
+                "operation": "scan_error",
+                "error": str(e)
+            }
         }, exc_info=True)
         # Return 500 so Pub/Sub retries
         return jsonify({

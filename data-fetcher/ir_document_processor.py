@@ -22,16 +22,18 @@ class IRDocumentProcessor:
     """Processes and stores IR documents discovered by crawler."""
     
     def __init__(self, browser_pool_manager: BrowserPoolManager = None, 
-                 metrics_service: MetricsService = None):
+                 metrics_service: MetricsService = None, logger=None):
         """Initialize document processor.
         
         Args:
             browser_pool_manager: Optional browser pool manager (creates new one if not provided)
             metrics_service: Optional metrics service for logging
+            logger: ContextLogger instance for structured logging (required)
         """
         self.browser_pool_manager = browser_pool_manager or BrowserPoolManager()
         self.ir_document_service = IRDocumentService()
         self.metrics_service = metrics_service
+        self.log = logger
     
     def get_fiscal_year_end_month(self, ticker: str) -> int:
         """Get fiscal year-end month for a ticker.
@@ -54,7 +56,7 @@ class IRDocumentProcessor:
             # Default to December
             return 12
         except Exception as e:
-            print(f'Warning: Could not get fiscal year-end for {ticker}, defaulting to December: {e}')
+            self.log.warning(f'Could not get fiscal year-end for {ticker}, defaulting to December: {e}')
             return 12
     
     def get_fiscal_quarter_from_date(self, date: datetime, fiscal_year_end_month: int) -> Tuple[int, int]:
@@ -232,7 +234,7 @@ class IRDocumentProcessor:
             all_existing_docs = self.ir_document_service.get_all_ir_documents(ticker)
             existing_urls = {doc.get('url') for doc in all_existing_docs if doc.get('url')}
             if existing_urls and verbose:
-                print(f'Found {len(existing_urls)} already-downloaded documents in database')
+                self.log.info(f'Found {len(existing_urls)} already-downloaded documents in database')
         
         for release in documents:
             try:
@@ -257,7 +259,7 @@ class IRDocumentProcessor:
                 is_downloadable = release.get('is_downloadable', True)  # Default to True for backward compatibility
                 if not is_downloadable:
                     if verbose:
-                        print(f'Skipping {release["title"]}: Not a downloadable link (likely HTML page or navigation)')
+                        self.log.info(f'Skipping {release["title"]}: Not a downloadable link (likely HTML page or navigation)')
                     skipped_count += 1
                     continue
                 
@@ -268,7 +270,7 @@ class IRDocumentProcessor:
                 
                 # Download document only if we have required fiscal info and match target quarter
                 if verbose:
-                    print(f'Downloading: {release["title"]}')
+                    self.log.info(f'Downloading: {release["title"]}')
                 
                 download_start = time.time()
                 # Use async download to stay in same event loop as crawler
@@ -277,7 +279,7 @@ class IRDocumentProcessor:
                 
                 if not content:
                     if verbose:
-                        print(f'  Skipped: Could not download')
+                        self.log.warning(f'  Skipped: Could not download')
                     # Log failed download
                     if self.metrics_service:
                         self.metrics_service.log_document_download(
@@ -315,7 +317,7 @@ class IRDocumentProcessor:
 
                 
                 if verbose:
-                    print(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
+                    self.log.info(f'  Using LLM-provided fiscal info: {fiscal_year}Q{fiscal_quarter}')
                     if release_date:
                         # Handle both string and datetime objects
                         if isinstance(release_date, str):
@@ -329,9 +331,9 @@ class IRDocumentProcessor:
                             date_str = release_date.strftime("%Y-%m-%d")
                         else:
                             date_str = str(release_date)
-                        print(f'  Release date: {date_str}')
+                        self.log.info(f'  Release date: {date_str}')
                     else:
-                        print(f'  Release date: not provided by LLM')
+                        self.log.info(f'  Release date: not provided by LLM')
                 
                 # Determine document type (use from Gemini if available, otherwise infer)
                 doc_type = release.get('document_type')
@@ -367,10 +369,10 @@ class IRDocumentProcessor:
                     )
                 
                 if verbose:
-                    print(f'  ✅ Stored: {document_id} ({quarter_key})')
+                    self.log.info(f'  ✅ Stored: {document_id} ({quarter_key})')
             
             except Exception as e:
-                print(f'Error processing release {release.get("title", "unknown")}: {e}')
+                self.log.error(f'Error processing release {release.get("title", "unknown")}: {e}')
                 if verbose:
                     import traceback
                     traceback.print_exc()

@@ -30,9 +30,6 @@ from browser_pool_manager import BrowserPoolManager
 # Load environment variables from .env.local
 load_dotenv('.env.local')
 
-# Get logger with context from environment
-log = get_logger(__name__)
-
 # Load IR URLs configuration
 # The ir_urls.json file uses arrays of URLs per ticker:
 #   "AAPL": ["https://investor.apple.com/...", "https://another-url.com/..."]
@@ -99,14 +96,18 @@ def get_ir_urls_for_ticker(ticker: str) -> List[str]:
     return []
 
 
-async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = None, verbose: bool = False) -> None:
+async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
     """Step 1: Scan IR website using LangGraph crawler and download documents.
     
     Args:
         ticker: Stock ticker symbol
         target_quarter: Optional quarter filter (format: YYYYQN, e.g., '2024Q3')
         verbose: Print verbose output
+        logger: ContextLogger instance for structured logging
     """
+    # Use the passed logger
+    log = logger
+    
     # Initialize metrics service and log scan start
     metrics_service = MetricsService()
     scan_start_time = time.time()
@@ -157,11 +158,13 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
     crawler = IRWebsiteCrawler(
         browser_pool_manager=browser_pool_manager,
         metrics_service=metrics_service,
-        ticker=ticker
+        ticker=ticker,
+        logger=log
     )
     processor = IRDocumentProcessor(
         browser_pool_manager=browser_pool_manager,
-        metrics_service=metrics_service
+        metrics_service=metrics_service,
+        logger=log
     )
     
     # Collect documents from all URLs
@@ -319,10 +322,13 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str] = Non
     log.info(f'  🆔 Execution ID: {metrics_service.get_execution_id()}')
 
 
-async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str] = None, verbose: bool = False) -> None:
+async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
     """Wrapper that ensures browser cleanup."""
+    # Use the passed logger
+    log = logger
+    
     try:
-        await scan_ir_website_async(ticker, target_quarter, verbose)
+        await scan_ir_website_async(ticker, target_quarter, verbose, logger)
     finally:
         # Cleanup browser resources
         if browser_pool_manager:
@@ -335,9 +341,9 @@ async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Option
                     log.warning(f'⚠️  Error closing browser: {e}')
 
 
-def scan_ir_website(ticker: str, target_quarter: Optional[str] = None, verbose: bool = False) -> None:
+def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool, logger) -> None:
     """Synchronous wrapper for scan_ir_website_async."""
-    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose))
+    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose, logger))
 
 
 def main():
@@ -364,25 +370,28 @@ Examples:
     
     args = parser.parse_args()
     
+    # Create logger for CLI usage
+    cli_logger = get_logger(__name__, ticker=args.ticker.upper())
+    
     # Initialize browser pool manager with headless setting
     headless = not args.no_headless
     browser_pool_manager = BrowserPoolManager(headless=headless)
     
     if not headless:
-        log.info('🖥️  Running in visible browser mode (debugging)')
+        cli_logger.info('🖥️  Running in visible browser mode (debugging)')
     
     # Validate quarter format if provided
     if args.quarter and not re.match(r'^\d{4}Q[1-4]$', args.quarter):
         parser.error(f'Invalid quarter format: {args.quarter}. Use YYYYQN (e.g., 2024Q2)')
     
     try:
-        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose)
+        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose, cli_logger)
     
     except KeyboardInterrupt:
-        log.info('\n\nInterrupted by user')
+        cli_logger.info('\n\nInterrupted by user')
         sys.exit(1)
     except Exception as e:
-        log.error(f'Error: {e}', exc_info=args.verbose)
+        cli_logger.error(f'Error: {e}', exc_info=args.verbose)
         sys.exit(1)
 
 

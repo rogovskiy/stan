@@ -105,29 +105,24 @@ def handle_pubsub():
     quarter = message_data.get('quarter')
     verbose = message_data.get('verbose', False)
     
-    logger.info('scan_start', extra={
-        "labels": {
-            "execution_id": execution_id,
-            "ticker": ticker,
-            "quarter": quarter,
-            "operation": "scan_start"
-        }
-    })
+    # Create context logger with execution_id and ticker
+    context_logger = get_logger(
+        __name__,
+        execution_id=execution_id,
+        ticker=ticker,
+        scan_type=None  # Will be set per URL in scan_ir_website
+    )
+    
+    context_logger.info('scan_start', quarter=quarter, operation='scan_start')
     
     try:
         # Set execution_id in environment for child processes
         os.environ['EXECUTION_ID'] = execution_id
         
-        # Run the scan
-        scan_ir_website(ticker, quarter, verbose)
+        # Run the scan with context logger
+        scan_ir_website(ticker, quarter, verbose, context_logger)
         
-        logger.info('scan_complete', extra={
-            "labels": {
-                "execution_id": execution_id,
-                "ticker": ticker,
-                "operation": "scan_complete"
-            }
-        })
+        context_logger.info('scan_complete', operation='scan_complete')
         return jsonify({
             'status': 'success',
             'ticker': ticker,
@@ -136,14 +131,7 @@ def handle_pubsub():
         }), 200
         
     except Exception as e:
-        logger.error(f'Error scanning {ticker}: {e}', extra={
-            "labels": {
-                "execution_id": execution_id,
-                "ticker": ticker,
-                "operation": "scan_error",
-                "error": str(e)
-            }
-        }, exc_info=True)
+        context_logger.error(f'Error scanning {ticker}: {e}', operation='scan_error', error=str(e), exc_info=True)
         # Return 500 so Pub/Sub retries
         return jsonify({
             'status': 'error',

@@ -28,7 +28,6 @@ from google.api_core.exceptions import ResourceExhausted, InvalidArgument
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from cloud_logging_setup import get_logger
 from browser_pool_manager import BrowserPoolManager
 from extraction_utils import (
     get_gemini_model,
@@ -81,7 +80,7 @@ class IRWebsiteCrawler:
     """LangGraph-based IR website crawler with intelligent navigation."""
     
     def __init__(self, model_name: str = "gemini-2.5-pro", browser_pool_manager: BrowserPoolManager = None, 
-                 metrics_service: MetricsService = None, ticker: Optional[str] = None):
+                 metrics_service: MetricsService = None, ticker: Optional[str] = None, logger=None):
         """Initialize the crawler.
         
         Args:
@@ -89,6 +88,7 @@ class IRWebsiteCrawler:
             browser_pool_manager: Optional shared BrowserPoolManager instance (creates new one if not provided)
             metrics_service: Optional metrics service for logging
             ticker: Optional ticker for metrics logging
+            logger: ContextLogger instance for structured logging (required)
         """
         # Use extraction_utils to get model name and initialize Gemini
         self.model_name = model_name or get_gemini_model()
@@ -100,10 +100,8 @@ class IRWebsiteCrawler:
         self.metrics_service = metrics_service
         self.ticker = ticker
         
-        # Initialize structured logger with execution context
-        execution_id = os.environ.get('EXECUTION_ID') or (metrics_service.get_execution_id() if metrics_service else None)
-        scan_type = os.environ.get('SCAN_TYPE')
-        self.log = get_logger(__name__, execution_id=execution_id, ticker=ticker, scan_type=scan_type)
+        # Store the logger
+        self.log = logger
         
         # Initialize Gemini model using extraction_utils
         # This handles API key configuration automatically

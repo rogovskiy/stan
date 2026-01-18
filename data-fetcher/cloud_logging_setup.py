@@ -33,8 +33,8 @@ def setup_cloud_logging() -> bool:
     """
     Initialize Google Cloud Logging for the application.
     
-    This should be called once at application startup. It configures the Python
-    logging system to send all logs to Google Cloud Logging with structured fields.
+    Only initializes when running in Cloud Run (detected by K_SERVICE env var).
+    For local development, use standard logging instead.
     
     Returns:
         bool: True if Cloud Logging was successfully initialized, False otherwise
@@ -44,56 +44,28 @@ def setup_cloud_logging() -> bool:
     if _cloud_logging_initialized:
         return True
     
+    # Only use Cloud Logging in Cloud Run
+    is_cloud_run = bool(os.environ.get('K_SERVICE'))
+    if not is_cloud_run:
+        logging.info("Not in Cloud Run, skipping Cloud Logging setup")
+        return False
+    
     try:
         import google.cloud.logging
-        from google.oauth2 import service_account
         
-        # Determine if we're in Cloud Run or local development
-        is_cloud_run = bool(os.environ.get('K_SERVICE'))
+        # Cloud Run: Use Application Default Credentials
+        project_id = os.environ.get('FIREBASE_PROJECT_ID')
+        if not project_id:
+            logging.warning("FIREBASE_PROJECT_ID not set, Cloud Logging disabled")
+            return False
         
-        if is_cloud_run:
-            # Cloud Run: Use Application Default Credentials
-            project_id = os.environ.get('FIREBASE_PROJECT_ID')
-            if not project_id:
-                logging.warning("FIREBASE_PROJECT_ID not set, Cloud Logging may not work")
-                return False
-            
-            client = google.cloud.logging.Client(project=project_id)
-            logging.info(f"Cloud Logging initialized with ADC for project: {project_id}")
-        else:
-            # Local development: Use credentials from .env.local
-            env_path = os.path.join(os.path.dirname(__file__), '.env.local')
-            if os.path.exists(env_path):
-                load_dotenv(env_path)
-            
-            project_id = os.getenv('FIREBASE_PROJECT_ID')
-            private_key = os.getenv("FIREBASE_PRIVATE_KEY")
-            
-            if not project_id or not private_key:
-                logging.warning("Firebase credentials not found, falling back to local logging")
-                return False
-            
-            private_key = private_key.replace('\\n', '\n')
-            
-            credentials_info = {
-                "type": "service_account",
-                "project_id": project_id,
-                "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-                "private_key": private_key,
-                "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-                "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-                "auth_uri": os.getenv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
-                "token_uri": os.getenv("FIREBASE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
-            }
-            
-            credentials = service_account.Credentials.from_service_account_info(credentials_info)
-            client = google.cloud.logging.Client(project=project_id, credentials=credentials)
-            logging.info(f"Cloud Logging initialized with explicit credentials for project: {project_id}")
+        client = google.cloud.logging.Client(project=project_id)
         
         # Set up Cloud Logging handler - this captures all logging output
         client.setup_logging()
         
         _cloud_logging_initialized = True
+        logging.info(f"Cloud Logging initialized for project: {project_id}")
         return True
         
     except ImportError:

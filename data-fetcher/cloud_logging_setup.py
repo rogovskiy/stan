@@ -109,7 +109,10 @@ class ContextLogger:
         self.scan_type = scan_type or os.environ.get('SCAN_TYPE')
     
     def _get_extra(self, **additional_fields):
-        """Build the extra fields dict with context, wrapped in labels."""
+        """Build the extra fields dict with context labels and additional json_fields."""
+        extra = {}
+        
+        # Core context fields go in labels
         labels = {}
         if self.execution_id:
             labels['execution_id'] = self.execution_id
@@ -118,11 +121,14 @@ class ContextLogger:
         if self.scan_type:
             labels['scan_type'] = self.scan_type
         
-        # Add any additional fields
-        labels.update(additional_fields)
+        if labels:
+            extra["labels"] = labels
         
-        # Wrap in labels key for Cloud Logging
-        return {"labels": labels} if labels else {}
+        # Additional fields go in json_fields
+        if additional_fields:
+            extra["json_fields"] = additional_fields
+        
+        return extra
     
     def debug(self, message: str, **extra_fields):
         """Log a debug message with context."""

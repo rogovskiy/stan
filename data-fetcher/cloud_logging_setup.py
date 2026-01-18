@@ -21,6 +21,7 @@ Usage:
 """
 
 import os
+import sys
 import logging
 from typing import Optional
 from dotenv import load_dotenv
@@ -32,6 +33,10 @@ _cloud_logging_initialized = False
 def setup_cloud_logging() -> bool:
     """
     Initialize Google Cloud Logging for the application.
+    
+    Uses StructuredLogHandler to write JSON logs to stdout, which Cloud Run
+    automatically ingests as jsonPayload. This approach is simpler and doesn't
+    require API calls.
     
     Only initializes when running in Cloud Run (detected by K_SERVICE env var).
     For local development, use standard logging instead.
@@ -51,21 +56,17 @@ def setup_cloud_logging() -> bool:
         return False
     
     try:
-        import google.cloud.logging
+        from google.cloud.logging.handlers import StructuredLogHandler
         
-        # Cloud Run: Use Application Default Credentials
-        project_id = os.environ.get('FIREBASE_PROJECT_ID')
-        if not project_id:
-            logging.warning("FIREBASE_PROJECT_ID not set, Cloud Logging disabled")
-            return False
+        # Structured JSON logs to stdout (Cloud Run ingests these as jsonPayload)
+        handler = StructuredLogHandler(stream=sys.stdout)
         
-        client = google.cloud.logging.Client(project=project_id)
-        
-        # Set up Cloud Logging handler - this captures all logging output
-        client.setup_logging()
+        root = logging.getLogger()
+        root.handlers = [handler]
+        root.setLevel(logging.INFO)
         
         _cloud_logging_initialized = True
-        logging.info(f"Cloud Logging initialized for project: {project_id}")
+        logging.info("Cloud Logging initialized with StructuredLogHandler")
         return True
         
     except ImportError:

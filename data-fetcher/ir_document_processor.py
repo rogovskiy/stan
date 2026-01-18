@@ -263,8 +263,6 @@ class IRDocumentProcessor:
                 
                 # Check if document already exists (by URL, which is the most reliable check)
                 if release['url'] in existing_urls:
-                    if verbose:
-                        print(f'  Skipped: Document already exists (URL: {release["url"][:60]}...)')
                     skipped_count += 1
                     continue
                 

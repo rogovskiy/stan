@@ -15,8 +15,17 @@ from services.firebase_base_service import FirebaseBaseService
 class PriceDataService(FirebaseBaseService):
     """Service for managing price data in Firebase"""
     
-    def cache_annual_price_data(self, ticker: str, year: int, price_data: Dict[str, Any], verbose: bool = True) -> None:
-        """Cache annual price data to Firebase Storage and update consolidated reference"""
+    def cache_annual_price_data(self, ticker: str, year: int, price_data: Dict[str, Any], 
+                                 actual_end_date: Optional[str] = None, verbose: bool = True) -> None:
+        """Cache annual price data to Firebase Storage and update consolidated reference
+        
+        Args:
+            ticker: Stock ticker symbol
+            year: Year for the price data
+            price_data: Price data dictionary with 'data' key containing date-indexed prices
+            actual_end_date: Optional actual end date (YYYY-MM-DD). If None, calculated from data or defaults to year-12-31
+            verbose: Show progress messages
+        """
         try:
             upper_ticker = ticker.upper()
             
@@ -38,10 +47,18 @@ class PriceDataService(FirebaseBaseService):
             prices = [data['c'] for _, data in data_entries]
             volumes = [data['v'] for _, data in data_entries]
             
+            # Determine actual end date
+            if actual_end_date is None:
+                dates = list(price_data['data'].keys())
+                if dates:
+                    actual_end_date = max(dates)  # Last date in data
+                else:
+                    actual_end_date = f'{year}-12-31'  # Fallback
+            
             year_reference = {
                 'year': year,
                 'start_date': f'{year}-01-01',
-                'end_date': f'{year}-12-31',
+                'end_date': actual_end_date,  # Use actual end date instead of hardcoded 12-31
                 'storage_ref': storage_path,
                 'download_url': download_url,
                 'metadata': {
@@ -91,17 +108,7 @@ class PriceDataService(FirebaseBaseService):
                 year_data = consolidated_data.get('years', {}).get(str(year))
                 
                 if year_data:
-                    # Check cache age
-                    current_year = datetime.now().year
-                    max_age = timedelta(hours=24) if year == current_year else timedelta(days=30)
-                    
-                    cache_age = datetime.now() - datetime.fromisoformat(year_data['last_updated'])
-                    
-                    if cache_age < max_age:
-                        print(f'Annual price reference cache hit for {ticker} {year}')
-                        return year_data
-                    
-                    print(f'Annual price reference cache expired for {ticker} {year}')
+                    return year_data
             
             return None
         except Exception as error:
@@ -195,6 +202,30 @@ class PriceDataService(FirebaseBaseService):
             
         except Exception as error:
             print(f'Error getting split history for {ticker}: {error}')
+            return None
+    
+    def get_split_history_with_metadata(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Get split history document with metadata from Firestore
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Document data with splits and metadata (including last_updated), or None if not found
+        """
+        try:
+            splits_ref = (self.db.collection('tickers')
+                         .document(ticker.upper())
+                         .collection('price')
+                         .document('splits'))
+            
+            doc = splits_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
+            
+        except Exception as error:
+            print(f'Error getting split history metadata for {ticker}: {error}')
             return None
     
     def _get_years_in_range(self, start_date: datetime, end_date: datetime) -> List[int]:

@@ -21,3 +21,4 @@ export async function getCompanySummary(ticker: string): Promise<any | null> {
 }
 
 
+

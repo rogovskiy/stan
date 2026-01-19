@@ -24,7 +24,7 @@ def save_filtered_sec_data(output_dir: str = './sec_data_cache'):
     output_path.mkdir(exist_ok=True)
     
     # Target tickers
-    tickers = ['AAPL', 'PG', 'GOOG', 'ARMN']
+    tickers = ['AAPL', 'PG', 'GOOG', 'ARMN', 'TEM']
     
     print(f"Extracting SEC data for: {', '.join(tickers)}")
     print(f"Output directory: {output_path.absolute()}")

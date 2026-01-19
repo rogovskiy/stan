@@ -79,6 +79,56 @@ class AnalystDataService(FirebaseBaseService):
             print(f'Error caching consolidated analyst data for {ticker}: {error}')
             raise error
     
+    def update_analyst_data_timestamp(self, ticker: str, timestamp: Optional[datetime] = None) -> None:
+        """Update the fetched_at timestamp on the latest analyst data document without creating a new snapshot
+        
+        This is used when no changes are detected in the data, so we just update the timestamp
+        to reflect that we checked for updates, without creating duplicate documents.
+        
+        Args:
+            ticker: Stock ticker symbol
+            timestamp: Optional timestamp (defaults to current time)
+        """
+        try:
+            if timestamp is None:
+                timestamp = datetime.now()
+            
+            upper_ticker = ticker.upper()
+            
+            # Get the latest document to find its timestamp
+            latest_ref = (self.db.collection('tickers')
+                         .document(upper_ticker)
+                         .collection('analyst')
+                         .document('latest'))
+            
+            latest_doc = latest_ref.get()
+            if not latest_doc.exists:
+                # No existing data, can't update timestamp
+                return
+            
+            latest_data = latest_doc.to_dict()
+            latest_timestamp_str = latest_data.get('latest_timestamp')
+            
+            # Update the 'latest' document's fetched_at
+            latest_ref.update({
+                'fetched_at': timestamp.isoformat()
+            })
+            
+            # Also update the actual timestamp document if it exists
+            if latest_timestamp_str:
+                timestamp_doc_ref = (self.db.collection('tickers')
+                                   .document(upper_ticker)
+                                   .collection('analyst')
+                                   .document(latest_timestamp_str))
+                
+                timestamp_doc_ref.update({
+                    'fetched_at': timestamp.isoformat()
+                })
+            
+        except Exception as error:
+            print(f'Error updating analyst data timestamp for {ticker}: {error}')
+            raise error
+    
     def get_latest_analyst_data(self, ticker: str, data_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get most recent analyst data snapshot
         

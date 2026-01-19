@@ -14,6 +14,7 @@ import uuid
 from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
+from yahoo.refresh_driver import refresh_yahoo_data
 
 # Initialize logging (Cloud Run or local dev)
 setup_cloud_logging()
@@ -87,6 +88,68 @@ def handle_pubsub():
         }), 500
 
 
+@app.route('/refresh-yahoo', methods=['POST'])
+def handle_yahoo_refresh():
+    """Handle Pub/Sub push messages for Yahoo Finance refresh"""    
+    envelope = request.get_json()
+    
+    if not envelope:
+        return render_error('No Pub/Sub message received')
+    
+    # Pub/Sub sends message in 'message' field
+    pubsub_message = envelope.get('message', {})
+
+    message_id = pubsub_message.get('messageId') or str(uuid.uuid4())
+    publish_time = pubsub_message.get("publishTime")
+    attributes = pubsub_message.get("attributes", {})
+
+    mdc_execution_id.set(message_id)
+    logger.info(f'Received Pub/Sub message for Yahoo refresh: {message_id} published at {publish_time} with attributes: {attributes}')
+
+    # Decode base64 data
+    if 'data' in pubsub_message:
+        try:
+            data = base64.b64decode(pubsub_message['data']).decode('utf-8')
+            logger.info(f'Decoded message data: {data}')
+            try:
+                message_data = json.loads(data)
+            except json.JSONDecodeError:
+                # If not JSON, treat as plain string ticker
+                message_data = {'ticker': data}
+        except Exception as e:
+            return render_error(f'Failed to decode message data: {e}')
+    else:
+        return render_error('No data in Pub/Sub message')
+    
+    ticker = message_data.get('ticker')
+    if not ticker:
+        return render_error('No ticker in message')
+    
+    verbose = True
+    mdc_ticker.set(ticker)
+    
+    try:        
+        # Run the refresh with context logger
+        results = refresh_yahoo_data(ticker, verbose)
+        
+        return jsonify({
+            'status': 'success' if results.get('success') else 'partial_success',
+            'ticker': ticker,
+            'execution_id': message_id,
+            'results': results.get('results', {})
+        }), 200
+        
+    except Exception as e:
+        logger.error(f'Error refreshing Yahoo data for {ticker}: {e}', operation='yahoo_refresh_error', error=str(e), exc_info=True)
+        # Return 500 so Pub/Sub retries
+        return jsonify({
+            'status': 'error',
+            'ticker': ticker,
+            'error': str(e),
+            'execution_id': message_id
+        }), 500
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -97,10 +160,11 @@ def health():
 def root():
     """Root endpoint with service info"""
     return jsonify({
-        'service': 'IR Scanner',
+        'service': 'IR Scanner & Yahoo Refresh',
         'version': '1.0',
         'endpoints': {
             '/scan': 'POST - Handle Pub/Sub scan requests',
+            '/refresh-yahoo': 'POST - Handle Pub/Sub Yahoo Finance refresh requests',
             '/health': 'GET - Health check'
         }
     }), 200

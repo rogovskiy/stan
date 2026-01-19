@@ -6,24 +6,16 @@ from firebase_functions import https_fn, scheduler_fn, pubsub_fn
 from firebase_functions.options import set_global_options
 from firebase_admin import initialize_app, firestore
 from google.cloud import pubsub_v1
-import google.cloud.logging
 import logging
 import os
 import json
-import base64
 
 # Configure logging level (can be set via environment variable)
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
 logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 
-# Setup Google Cloud Logging (only if credentials are available)
-try:
-    client = google.cloud.logging.Client()
-    client.setup_logging()
-except Exception:
-    # If credentials are not available (e.g., during local analysis), skip Cloud Logging setup
-    # Standard logging will still work
-    pass
+# Note: Firebase Functions automatically sends logs to Cloud Logging,
+# so explicit Cloud Logging setup is not needed and can cause deployment timeouts
 
 # For cost control, you can set the maximum number of containers that can be
 # running at the same time. This helps mitigate the impact of unexpected
@@ -37,7 +29,7 @@ initialize_app()
 # Scheduled function that runs daily at midnight UTC
 # Cron expression: 0 0 * * * (daily at 00:00 UTC)
 @scheduler_fn.on_schedule(schedule="0 0 * * *")
-def scheduled_task_minute(event: scheduler_fn.ScheduledEvent) -> None:
+def scheduled_daily_refresh(event: scheduler_fn.ScheduledEvent) -> None:
     """
     Scheduled function that runs every 1 minute.
     Fetches all tickers from Firebase and prints them.
@@ -52,79 +44,58 @@ def scheduled_task_minute(event: scheduler_fn.ScheduledEvent) -> None:
         tickers_ref = db.collection('tickers')
         docs = tickers_ref.stream()
         
-        # Extract ticker symbols (document IDs)
-        tickers = sorted([doc.id for doc in docs])
+        # Extract all tickers and filter by refresh_enabled
+        all_tickers = []
+        enabled_tickers = []
+        
+        for doc in docs:
+            ticker_id = doc.id
+            doc_data = doc.to_dict()
+            all_tickers.append(ticker_id)
+            
+            # Check if refresh_enabled is True
+            if doc_data.get('refresh_enabled') == True:
+                enabled_tickers.append(ticker_id)
+        
+        # Sort for consistent logging
+        all_tickers = sorted(all_tickers)
+        enabled_tickers = sorted(enabled_tickers)
         
         # Log all tickers on the same line
-        tickers_str = ", ".join(tickers)
-        logging.info(f"Tickers ({len(tickers)}): {tickers_str}")
+        tickers_str = ", ".join(all_tickers)
+        logging.info(f"Tickers ({len(all_tickers)}): {tickers_str}")
+        logging.info(f"Enabled tickers ({len(enabled_tickers)}): {', '.join(enabled_tickers) if enabled_tickers else 'none'}")
         
-        # Publish one message per ticker to Pub/Sub topic for refresh
-        topic_path = 'projects/stan-1464e/topics/stan-daily-refresh'
+        # Initialize Pub/Sub publisher
         publisher = pubsub_v1.PublisherClient()
         
-        timestamp = event.schedule_time.isoformat() if hasattr(event.schedule_time, 'isoformat') else str(event.schedule_time)
-        published_count = 0
+        # Topic paths for the two topics
+        ir_topic_path = 'projects/stan-1464e/topics/ir-scan-requests'
+        yf_topic_path = 'projects/stan-1464e/topics/yf-refresh-requests'
         
-        for ticker in tickers:
-            message_data = {
-                'ticker': ticker,
-                'timestamp': timestamp
-            }
-            
+        ir_published_count = 0
+        yf_published_count = 0
+        
+        # Publish messages to both topics for each enabled ticker
+        for ticker in enabled_tickers:
+            message_data = {'ticker': ticker}
             message_json = json.dumps(message_data).encode('utf-8')
-            future = publisher.publish(topic_path, message_json)
-            message_id = future.result()
-            published_count += 1
-            logging.info(f"Published refresh message for ticker {ticker} to {topic_path} with message ID: {message_id}")
+            
+            # Publish to ir-scan-requests topic
+            future_ir = publisher.publish(ir_topic_path, message_json)
+            message_id_ir = future_ir.result()
+            ir_published_count += 1
+            logging.info(f"Published refresh message for ticker {ticker} to {ir_topic_path} with message ID: {message_id_ir}")
+            
+            # Publish to yf-refresh-requests topic
+            future_yf = publisher.publish(yf_topic_path, message_json)
+            message_id_yf = future_yf.result()
+            yf_published_count += 1
+            logging.info(f"Published refresh message for ticker {ticker} to {yf_topic_path} with message ID: {message_id_yf}")
         
-        logging.info(f"Published {published_count} refresh messages (one per ticker) to {topic_path}")
+        logging.info(f"Published {ir_published_count} messages to {ir_topic_path} and {yf_published_count} messages to {yf_topic_path}")
         
     except Exception as e:
         error_msg = f"Error fetching tickers or publishing message: {e}"
         logging.error(error_msg)
 
-# Pub/Sub function that listens to refresh messages
-@pubsub_fn.on_message_published(topic="stan-daily-refresh")
-def handle_daily_refresh(event: pubsub_fn.CloudEvent[pubsub_fn.MessagePublishedData]) -> None:
-    """
-    Handles messages from the stan-daily-refresh Pub/Sub topic.
-    Logs the received message.
-    """
-    try:
-        # Decode the base64-encoded message data
-        message_data = event.data.message.data
-        if isinstance(message_data, str):
-            # Decode base64 string
-            decoded_bytes = base64.b64decode(message_data)
-        else:
-            # Already bytes, use as is
-            decoded_bytes = message_data
-        
-        # Try to decode as JSON
-        try:
-            decoded_str = decoded_bytes.decode('utf-8')
-            data = json.loads(decoded_str)
-            
-            # Log ticker-specific message if present
-            if 'ticker' in data:
-                logging.info(f"Received refresh message for ticker: {data['ticker']} at {data.get('timestamp', 'unknown time')}")
-            else:
-                logging.info(f"Received refresh message: {json.dumps(data, indent=2)}")
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            # If not JSON, log as string
-            logging.info(f"Received refresh message (raw): {decoded_bytes}")
-            logging.warning(f"Could not parse as JSON: {e}")
-        
-        logging.info("Daily refresh message processed successfully")
-        
-    except Exception as e:
-        error_msg = f"Error processing refresh message: {e}"
-        logging.error(error_msg)
-
-# initialize_app()
-#
-#
-# @https_fn.on_request()
-# def on_request_example(req: https_fn.Request) -> https_fn.Response:
-#     return https_fn.Response("Hello world!")

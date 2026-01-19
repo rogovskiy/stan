@@ -171,6 +171,19 @@ export interface TickerMetadata {
   exchange: string;
   sector: string;
   lastUpdated: string;
+  // Additional company information fields from Yahoo Finance
+  ticker?: string;
+  industry?: string;
+  longBusinessSummary?: string;
+  fiscalYearEndMonth?: number;
+  fiscalYearEndDate?: string;
+  lastFiscalYearEnd?: number;
+  longName?: string;
+  shortName?: string;
+  country?: string;
+  website?: string;
+  fullTimeEmployees?: number;
+  source?: string;
 }
 
 export class FirebaseCache {

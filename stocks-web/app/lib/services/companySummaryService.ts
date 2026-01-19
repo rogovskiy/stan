@@ -2,20 +2,21 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 /**
- * Get company summary for a ticker
+ * Get company information for a ticker from main ticker document
  */
 export async function getCompanySummary(ticker: string): Promise<any | null> {
   try {
-    const summaryRef = doc(db, 'tickers', ticker.toUpperCase(), 'company_summary', 'summary');
-    const summarySnap = await getDoc(summaryRef);
+    // Read from main ticker document instead of subcollection
+    const tickerRef = doc(db, 'tickers', ticker.toUpperCase());
+    const tickerSnap = await getDoc(tickerRef);
     
-    if (summarySnap.exists()) {
-      return summarySnap.data();
+    if (tickerSnap.exists()) {
+      return tickerSnap.data();
     }
     
     return null;
   } catch (error) {
-    console.error(`Error getting company summary for ${ticker}:`, error);
+    console.error(`Error getting company information for ${ticker}:`, error);
     return null;
   }
 }

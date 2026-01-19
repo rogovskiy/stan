@@ -17,7 +17,20 @@ export async function GET(request: Request) {
             symbol: ticker.toUpperCase(),
             name: metadata.name,
             sector: metadata.sector,
-            exchange: metadata.exchange
+            exchange: metadata.exchange,
+            // Include all additional company information fields for future display
+            industry: metadata.industry,
+            longBusinessSummary: metadata.longBusinessSummary,
+            fiscalYearEndMonth: metadata.fiscalYearEndMonth,
+            fiscalYearEndDate: metadata.fiscalYearEndDate,
+            lastFiscalYearEnd: metadata.lastFiscalYearEnd,
+            longName: metadata.longName,
+            shortName: metadata.shortName,
+            country: metadata.country,
+            website: metadata.website,
+            fullTimeEmployees: metadata.fullTimeEmployees,
+            source: metadata.source,
+            lastUpdated: metadata.lastUpdated
           }
         });
       } else {

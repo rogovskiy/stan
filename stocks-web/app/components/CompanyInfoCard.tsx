@@ -2,6 +2,23 @@
 
 import { useState, useEffect } from 'react';
 
+/**
+ * Truncate text to the first N sentences
+ */
+function truncateToSentences(text: string, maxSentences: number = 3): string {
+  if (!text) return text;
+  
+  // Split by sentence endings (. ! ?)
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  
+  if (sentences.length <= maxSentences) {
+    return text;
+  }
+  
+  // Take first N sentences and join them
+  return sentences.slice(0, maxSentences).join(' ').trim();
+}
+
 interface CompanyInfoCardProps {
   ticker: string;
   showPrice?: boolean;
@@ -18,7 +35,7 @@ interface CompanyData {
   name: string | null;
   exchange: string | null;
   sector: string | null;
-  summary: string | null;
+  longBusinessSummary: string | null;
   stockPrice: number | null;
   priceChange: number | null;
   priceChangePercent: number | null;
@@ -41,7 +58,7 @@ export default function CompanyInfoCard({
     name: null,
     exchange: null,
     sector: null,
-    summary: null,
+    longBusinessSummary: null,
     stockPrice: propStockPrice ?? null,
     priceChange: propPriceChange ?? null,
     priceChangePercent: propPriceChangePercent ?? null,
@@ -72,7 +89,7 @@ export default function CompanyInfoCard({
           name: tickerResult.success && tickerResult.data ? tickerResult.data.name || null : null,
           exchange: tickerResult.success && tickerResult.data ? tickerResult.data.exchange || null : null,
           sector: tickerResult.success && tickerResult.data ? tickerResult.data.sector || null : null,
-          summary: null,
+          longBusinessSummary: null,
           stockPrice: null,
           priceChange: null,
           priceChangePercent: null,
@@ -82,8 +99,8 @@ export default function CompanyInfoCard({
         };
         
         const summaryResult = await summaryResponse.json();
-        if (summaryResult.success && summaryResult.data?.summary) {
-          companyData.summary = summaryResult.data.summary;
+        if (summaryResult.success && summaryResult.data?.longBusinessSummary) {
+          companyData.longBusinessSummary = summaryResult.data.longBusinessSummary;
         }
         
         // Fetch price data if needed and not provided as props
@@ -219,9 +236,9 @@ export default function CompanyInfoCard({
       </div>
       
       {/* Company Summary */}
-      {data.summary && (
+      {data.longBusinessSummary && (
         <p className="text-sm text-gray-600 leading-relaxed">
-          {data.summary}
+          {truncateToSentences(data.longBusinessSummary, 3)}
         </p>
       )}
     </div>

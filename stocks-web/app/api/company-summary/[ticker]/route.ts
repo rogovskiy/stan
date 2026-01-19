@@ -17,24 +17,41 @@ export async function GET(
 
     console.log(`Company Summary API Request: ${ticker}`);
 
-    // Get company summary data
-    const summaryData = await getCompanySummary(ticker);
+    // Get company information data from main ticker document
+    const companyData = await getCompanySummary(ticker);
 
-    if (!summaryData) {
+    if (!companyData) {
       return NextResponse.json(
         { 
-          error: 'Company summary not found',
-          message: `No company summary found for ${ticker}. Run the company summary generator script first.`,
+          error: 'Company information not found',
+          message: `No company information found for ${ticker}. Run the company info generator script first.`,
           suggestion: `python generate_company_summary.py ${ticker}`
         },
         { status: 404 }
       );
     }
 
+    // Return all company information fields, including longBusinessSummary
     return NextResponse.json({
       success: true,
       ticker: ticker.toUpperCase(),
-      data: summaryData
+      data: {
+        longBusinessSummary: companyData.longBusinessSummary,
+        // Include all other fields for future display purposes
+        industry: companyData.industry,
+        sector: companyData.sector,
+        exchange: companyData.exchange,
+        fiscalYearEndMonth: companyData.fiscalYearEndMonth,
+        fiscalYearEndDate: companyData.fiscalYearEndDate,
+        longName: companyData.longName,
+        shortName: companyData.shortName,
+        name: companyData.name,
+        country: companyData.country,
+        website: companyData.website,
+        fullTimeEmployees: companyData.fullTimeEmployees,
+        source: companyData.source,
+        lastUpdated: companyData.lastUpdated
+      }
     });
     
   } catch (error) {

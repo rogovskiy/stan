@@ -69,7 +69,8 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         logger.error(f'Error in price refresh: {e}', exc_info=True)
         results['results']['price'] = {
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
         results['success'] = False
     
@@ -85,7 +86,8 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         logger.error(f'Error in earnings refresh: {e}', exc_info=True)
         results['results']['earnings'] = {
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
         results['success'] = False
     
@@ -101,7 +103,8 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         logger.error(f'Error in analyst refresh: {e}', exc_info=True)
         results['results']['analyst'] = {
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
         results['success'] = False
     
@@ -117,7 +120,8 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         logger.error(f'Error in split history refresh: {e}', exc_info=True)
         results['results']['splits'] = {
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
         results['success'] = False
     

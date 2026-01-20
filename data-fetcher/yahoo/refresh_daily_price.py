@@ -267,6 +267,7 @@ def refresh_daily_price(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         return {
             'success': False,
             'updated': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
 

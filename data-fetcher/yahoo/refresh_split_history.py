@@ -132,6 +132,7 @@ def refresh_split_history(ticker: str, verbose: bool = False, force_refresh: boo
         return {
             'success': False,
             'updated': False,
-            'error': str(e)
+            'error': str(e),
+            'error_type': type(e).__name__
         }
 

@@ -121,6 +121,7 @@ def refresh_earnings_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
             'success': False,
             'updated': False,
             'error': str(e),
+            'error_type': type(e).__name__,
             'quarters_cached': 0
         }
 

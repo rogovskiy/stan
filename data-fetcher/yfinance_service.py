@@ -12,7 +12,19 @@ from typing import Dict, List, Optional, Any
 import json
 import argparse
 import sys
+import logging
+from urllib.error import HTTPError
 from financial_data_validator import validate_financial_data_format
+
+# Try to import cloud_logging_setup for metrics (optional, may not be available in all contexts)
+try:
+    from cloud_logging_setup import emit_metric
+except ImportError:
+    # Fallback if cloud_logging_setup is not available
+    def emit_metric(*args, **kwargs):
+        pass
+
+logger = logging.getLogger(__name__)
 
 class YFinanceService:
     """Service for fetching data from Yahoo Finance"""
@@ -262,6 +274,10 @@ class YFinanceService:
             return quarterly_data
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_quarterly_earnings')
+            # For other errors, log and return empty list
             print(f"Error fetching quarterly financial data: {e}")
             return []
     
@@ -326,6 +342,10 @@ class YFinanceService:
             return split_history
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_split_history')
+            # For other errors, log and return empty list
             print(f"Error fetching split history for {ticker}: {e}")
             return []
     
@@ -385,6 +405,10 @@ class YFinanceService:
             return None
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_analyst_price_targets')
+            # For other errors, log and return None
             print(f"Error fetching analyst price targets for {ticker}: {e}")
             return None
     
@@ -453,6 +477,10 @@ class YFinanceService:
             return None
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_analyst_recommendations')
+            # For other errors, log and return None
             print(f"Error fetching analyst recommendations for {ticker}: {e}")
             return None
     
@@ -516,6 +544,10 @@ class YFinanceService:
             return None
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_growth_estimates')
+            # For other errors, log and return None
             print(f"Error fetching growth estimates for {ticker}: {e}")
             return None
     
@@ -591,6 +623,10 @@ class YFinanceService:
             return None
             
         except Exception as e:
+            # Handle rate limit errors: log, emit metric, then raise
+            if is_rate_limit_error(e):
+                _handle_rate_limit_error(e, ticker, 'fetch_earnings_trend')
+            # For other errors, log and return None
             print(f"Error fetching earnings trend for {ticker}: {e}")
             return None
 
@@ -681,6 +717,74 @@ Examples:
         else:
             print(json.dumps(error_result))
         sys.exit(1)
+
+
+def is_rate_limit_error(error: Exception) -> bool:
+    """Check if an exception is a 429 rate limit error from Yahoo Finance
+    
+    Args:
+        error: Exception to check
+        
+    Returns:
+        True if the error is a 429 rate limit error, False otherwise
+    """
+    error_str = str(error).lower()
+    error_repr = repr(error).lower()
+    
+    # Check for 429 in error message
+    if '429' in error_str or '429' in error_repr:
+        return True
+    
+    # Check for rate limit keywords
+    rate_limit_keywords = ['rate limit', 'rate_limit', 'too many requests', 'quota', 'throttle']
+    if any(keyword in error_str or keyword in error_repr for keyword in rate_limit_keywords):
+        return True
+    
+    # Check for HTTPError with 429 status code
+    if isinstance(error, HTTPError) and error.code == 429:
+        return True
+    
+    # Check error attributes
+    if hasattr(error, 'code') and error.code == 429:
+        return True
+    if hasattr(error, 'status') and error.status == 429:
+        return True
+    if hasattr(error, 'status_code') and error.status_code == 429:
+        return True
+    
+    return False
+
+
+def _handle_rate_limit_error(error: Exception, ticker: str, operation: str) -> None:
+    """Handle 429 rate limit errors: log, emit metric, then raise the error
+    
+    Args:
+        error: The rate limit exception
+        ticker: Stock ticker symbol
+        operation: Description of the operation that failed
+        
+    Raises:
+        The original exception after logging and emitting metrics
+    """
+    error_msg = str(error)
+    error_type = type(error).__name__
+    
+    logger.warning(
+        f'⚠️  Rate limit (429) error for {ticker} during {operation}: {error_msg}',
+        extra={
+            'ticker': ticker,
+            'operation': operation,
+            'error_type': error_type,
+            'is_rate_limit': True
+        }
+    )
+    emit_metric('yahoo_rate_limit_error', 
+               ticker=ticker, 
+               operation=operation,
+               error_type=error_type)
+    
+    # Re-raise the exception so callers can handle it as a failure
+    raise
 
 
 if __name__ == '__main__':

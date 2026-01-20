@@ -184,6 +184,9 @@ export interface TickerMetadata {
   website?: string;
   fullTimeEmployees?: number;
   source?: string;
+  // Price fields for fresh daily price tracking
+  lastPrice?: number;
+  lastPriceTimestamp?: string;
 }
 
 export class FirebaseCache {

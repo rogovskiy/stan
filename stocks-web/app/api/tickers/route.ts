@@ -30,7 +30,10 @@ export async function GET(request: Request) {
             website: metadata.website,
             fullTimeEmployees: metadata.fullTimeEmployees,
             source: metadata.source,
-            lastUpdated: metadata.lastUpdated
+            lastUpdated: metadata.lastUpdated,
+            // Include price fields
+            lastPrice: metadata.lastPrice,
+            lastPriceTimestamp: metadata.lastPriceTimestamp
           }
         });
       } else {

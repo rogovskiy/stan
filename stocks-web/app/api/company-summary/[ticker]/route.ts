@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCompanySummary } from '../../../lib/services/companySummaryService';
+import { getTickerMetadata } from '../../../lib/services/tickerMetadataService';
 
 export async function GET(
   request: NextRequest,
@@ -17,8 +17,8 @@ export async function GET(
 
     console.log(`Company Summary API Request: ${ticker}`);
 
-    // Get company information data from main ticker document
-    const companyData = await getCompanySummary(ticker);
+    // Get company information data from main ticker document with price refresh
+    const companyData = await getTickerMetadata(ticker, true);
 
     if (!companyData) {
       return NextResponse.json(
@@ -31,7 +31,7 @@ export async function GET(
       );
     }
 
-    // Return all company information fields, including longBusinessSummary
+    // Return all company information fields, including longBusinessSummary and price
     return NextResponse.json({
       success: true,
       ticker: ticker.toUpperCase(),
@@ -50,7 +50,10 @@ export async function GET(
         website: companyData.website,
         fullTimeEmployees: companyData.fullTimeEmployees,
         source: companyData.source,
-        lastUpdated: companyData.lastUpdated
+        lastUpdated: companyData.lastUpdated,
+        // Include price fields
+        lastPrice: companyData.lastPrice,
+        lastPriceTimestamp: companyData.lastPriceTimestamp
       }
     });
     

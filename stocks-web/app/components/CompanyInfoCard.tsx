@@ -77,19 +77,20 @@ export default function CompanyInfoCard({
 
       setLoading(true);
       try {
-        // Fetch company metadata
-        const [tickerResponse, summaryResponse, priceResponse] = await Promise.all([
+        // Fetch company metadata and summary (summary includes fresh price)
+        const [tickerResponse, summaryResponse] = await Promise.all([
           fetch(`/api/tickers?ticker=${ticker}`),
-          fetch(`/api/company-summary/${ticker}`),
-          showPrice ? fetch(`/api/daily-prices/${ticker}?period=1d`) : Promise.resolve(null)
+          fetch(`/api/company-summary/${ticker}`)
         ]);
         
         const tickerResult = await tickerResponse.json();
+        const summaryResult = await summaryResponse.json();
+        
         const companyData: CompanyData = {
           name: tickerResult.success && tickerResult.data ? tickerResult.data.name || null : null,
           exchange: tickerResult.success && tickerResult.data ? tickerResult.data.exchange || null : null,
           sector: tickerResult.success && tickerResult.data ? tickerResult.data.sector || null : null,
-          longBusinessSummary: null,
+          longBusinessSummary: summaryResult.success && summaryResult.data?.longBusinessSummary ? summaryResult.data.longBusinessSummary : null,
           stockPrice: null,
           priceChange: null,
           priceChangePercent: null,
@@ -98,31 +99,13 @@ export default function CompanyInfoCard({
           dividend: null
         };
         
-        const summaryResult = await summaryResponse.json();
-        if (summaryResult.success && summaryResult.data?.longBusinessSummary) {
-          companyData.longBusinessSummary = summaryResult.data.longBusinessSummary;
-        }
-        
-        // Fetch price data if needed and not provided as props
-        if (showPrice && priceResponse && propStockPrice === undefined) {
-          const priceResult = await priceResponse.json();
-          if (priceResult.data && priceResult.data.length > 0) {
-            const priceData = priceResult.data;
-            const currentPrice = priceData[priceData.length - 1]?.price;
-            const previousPrice = priceData[priceData.length - 2]?.price;
-            
-            if (currentPrice && previousPrice) {
-              companyData.stockPrice = currentPrice;
-              companyData.priceChange = currentPrice - previousPrice;
-              companyData.priceChangePercent = previousPrice !== 0 
-                ? ((companyData.priceChange / previousPrice) * 100) 
-                : 0;
-            } else if (currentPrice) {
-              companyData.stockPrice = currentPrice;
-              companyData.priceChange = 0;
-              companyData.priceChangePercent = 0;
-            }
-          }
+        // Use price from company summary (fresh daily price)
+        if (showPrice && propStockPrice === undefined && summaryResult.success && summaryResult.data?.lastPrice !== undefined) {
+          companyData.stockPrice = summaryResult.data.lastPrice;
+          // Price change calculation requires historical data, so set to 0 for now
+          // Could be enhanced later to calculate from previous day's close
+          companyData.priceChange = 0;
+          companyData.priceChangePercent = 0;
         }
         
         // Use props if provided, otherwise use fetched data

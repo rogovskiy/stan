@@ -18,9 +18,6 @@ export * from './quarterlyTextAnalysisService';
 // Analyst data service
 export * from './analystDataService';
 
-// Company summary service
-export * from './companySummaryService';
-
 // KPI definition service
 export * from './kpiDefinitionService';
 

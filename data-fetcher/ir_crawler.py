@@ -70,6 +70,7 @@ class ScraperState(TypedDict):
     error: Optional[str]
     max_pages: int
     verbose: bool
+    rescan: bool  # If True, only first listing page (no pagination)
     
     # Context
     _current_listing_url: Optional[str]
@@ -513,15 +514,16 @@ class IRWebsiteCrawler:
                         state['detail_pages_queue'].append(doc_url)
                         detail_pages += 1
             
-            # ALWAYS add pagination listing pages (never skip them)
-            for listing in listing_pages:
-                listing_url = listing['url']
-                if not listing_url.startswith('http'):
-                    listing_url = urljoin(state['url'], listing_url)
-                    listing['url'] = listing_url
-                
-                if listing_url not in state['listing_pages_queue'] and listing_url not in state['listing_pages_visited']:
-                    state['listing_pages_queue'].append(listing_url)
+            # Add pagination listing pages (skip in rescan mode - only first page)
+            if not state.get('rescan', False):
+                for listing in listing_pages:
+                    listing_url = listing['url']
+                    if not listing_url.startswith('http'):
+                        listing_url = urljoin(state['url'], listing_url)
+                        listing['url'] = listing_url
+                    
+                    if listing_url not in state['listing_pages_queue'] and listing_url not in state['listing_pages_visited']:
+                        state['listing_pages_queue'].append(listing_url)
             
             if state['verbose']:
                 logger.info(f"   ✅ Direct PDFs: {direct_pdfs}")
@@ -702,7 +704,8 @@ class IRWebsiteCrawler:
         ticker: str,
         skip_urls: Set[str] = None,
         max_pages: int = 50,
-        verbose: bool = False
+        verbose: bool = False,
+        rescan: bool = False
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Crawl IR website and return discovered documents.
         
@@ -712,6 +715,7 @@ class IRWebsiteCrawler:
             skip_urls: Set of URLs to skip (cached detail pages + existing docs)
             max_pages: Maximum pages to visit
             verbose: Print progress (logging handled internally)
+            rescan: If True, only load first listing page (no pagination)
         
         Returns tuple of:
             (documents, visited_detail_urls)
@@ -738,6 +742,7 @@ class IRWebsiteCrawler:
             error=None,
             max_pages=max_pages,
             verbose=verbose,
+            rescan=rescan,
             _current_listing_url=None
         )
         

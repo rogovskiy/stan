@@ -93,13 +93,14 @@ def get_ir_urls_for_ticker(ticker: str) -> List[str]:
     
     return []
 
-async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
+async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verbose: bool, rescan: bool = False) -> None:
     """Step 1: Scan IR website using LangGraph crawler and download documents.
     
     Args:
         ticker: Stock ticker symbol
         target_quarter: Optional quarter filter (format: YYYYQN, e.g., '2024Q3')
         verbose: Print verbose output
+        rescan: If True, only load first listing page (no pagination). Used by pubsub_handler.
     """
 
     scan_start_time = time.time()
@@ -118,7 +119,7 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
         return
     
     # Log scan start
-    emit_metric('scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls))
+    emit_metric('scan_start', target_quarter=target_quarter, max_pages=50, num_urls=len(ticker_urls), rescan=rescan)
     
     if len(ticker_urls) == 1:
         logger.info(f'Scanning IR website for {ticker}: {ticker_urls[0]}')
@@ -175,7 +176,8 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
                 ticker=ticker,
                 skip_urls=skip_urls,
                 max_pages=50,
-                verbose=verbose
+                verbose=verbose,
+                rescan=rescan
             )
             
             # Count how many NEW documents (not already in database) were found
@@ -292,14 +294,18 @@ async def scan_ir_website_async(ticker: str, target_quarter: Optional[str], verb
     if all_detail_urls_visited:
         logger.info(f'  🔖 Detail pages cached: {len(all_detail_urls_visited)} (for future optimization)')
     logger.info(f'  ⏱️  Duration: {scan_duration_seconds:.1f} seconds')
-    logger.info(f'  🔢 Total tokens: {crawler.total_tokens:,}')
+    other_tokens = crawler.total_tokens - (crawler.total_prompt_tokens + crawler.total_response_tokens)
+    if other_tokens > 0:
+        logger.info(f'  🔢 Tokens: {crawler.total_tokens:,} total ({crawler.total_prompt_tokens:,} input / {crawler.total_response_tokens:,} output / {other_tokens:,} thinking)')
+    else:
+        logger.info(f'  🔢 Tokens: {crawler.total_tokens:,} total ({crawler.total_prompt_tokens:,} input / {crawler.total_response_tokens:,} output)')
 
 
-async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
+async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Optional[str], verbose: bool, rescan: bool = False) -> None:
     """Wrapper that ensures browser cleanup."""
     
     try:
-        await scan_ir_website_async(ticker, target_quarter, verbose)
+        await scan_ir_website_async(ticker, target_quarter, verbose, rescan)
     finally:
         # Cleanup browser resources
         if browser_pool_manager:
@@ -312,9 +318,13 @@ async def scan_ir_website_async_with_cleanup(ticker: str, target_quarter: Option
                     logger.warning(f'⚠️  Error closing browser: {e}')
 
 
-def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool) -> None:
-    """Synchronous wrapper for scan_ir_website_async."""
-    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose))
+def scan_ir_website(ticker: str, target_quarter: Optional[str], verbose: bool, rescan: bool = False) -> None:
+    """Synchronous wrapper for scan_ir_website_async.
+    
+    Args:
+        rescan: If True, only load first listing page (no pagination). Default False = full scan.
+    """
+    asyncio.run(scan_ir_website_async_with_cleanup(ticker, target_quarter, verbose, rescan))
 
 
 def main():
@@ -325,9 +335,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  # Scan and download documents
+  # Full scan (all listing pages)
   python scan_ir_website.py AAPL
   python scan_ir_website.py AAPL --quarter 2024Q3 --verbose
+  
+  # Rescan (first listing page only)
+  python scan_ir_website.py AAPL --rescan
   
   # Debug with visible browser
   python scan_ir_website.py AAPL --no-headless --verbose
@@ -338,6 +351,7 @@ Examples:
     parser.add_argument('--quarter', metavar='QUARTER', help='Filter scan to specific quarter (format: YYYYQN)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--no-headless', action='store_true', help='Run browser in visible mode (for debugging)')
+    parser.add_argument('--rescan', action='store_true', help='Rescan mode: only first listing page (no pagination)')
     
     args = parser.parse_args()
     
@@ -355,7 +369,7 @@ Examples:
     try:
         mdc_ticker.set(args.ticker.upper())
         mdc_execution_id.set("local")
-        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose)
+        scan_ir_website(args.ticker.upper(), args.quarter, args.verbose, rescan=args.rescan)
     
     except KeyboardInterrupt:
         logger.info('\n\nInterrupted by user')

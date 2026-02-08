@@ -11,10 +11,12 @@ import base64
 import logging
 import re
 import uuid
+from datetime import datetime
 from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
 from yahoo.refresh_driver import refresh_yahoo_data
+from services.pubsub_message_service import PubSubMessageService
 
 # Initialize logging (Cloud Run or local dev)
 setup_cloud_logging()
@@ -29,6 +31,8 @@ def handle_pubsub():
     """Handle Pub/Sub push messages"""    
     envelope = request.get_json()
     
+    logger.info(f'Received Pub/Sub message: with payload: {envelope}')
+
     if not envelope:
         return render_error('No Pub/Sub message received')
 
@@ -67,9 +71,29 @@ def handle_pubsub():
     
     mdc_ticker.set(ticker)
     
+    # Initialize Pub/Sub message service
+    pubsub_service = PubSubMessageService()
+    
+    # Check if message is already being processed
+    if pubsub_service.check_scan_message_exists(ticker, message_id):
+        logger.info(f'Scan message {message_id} for {ticker} already exists - returning 200 to prevent duplicate processing')
+        return jsonify({
+            'status': 'already_processing',
+            'ticker': ticker,
+            'execution_id': message_id,
+            'message': 'Scan is already in progress for this message'
+        }), 200
+    
+    # Store message before processing to prevent duplicates
+    try:
+        pubsub_service.store_scan_message(ticker, message_id, datetime.now())
+        logger.info(f'Stored scan message {message_id} for {ticker} before starting processing')
+    except Exception as e:
+        logger.warning(f'Failed to store scan message {message_id} for {ticker}: {e}. Continuing with scan anyway.')
+    
     try:        
-        # Run the scan with context logger
-        scan_ir_website(ticker, quarter, verbose)
+        # Run the scan with context logger (rescan mode: first listing page only)
+        scan_ir_website(ticker, quarter, verbose, rescan=True)
         
         return jsonify({
             'status': 'success',

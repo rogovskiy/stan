@@ -12,6 +12,15 @@ import {
   ReferenceLine,
 } from 'recharts';
 import type { PortfolioPerformanceResponse, BenchmarkTicker } from '../types/api';
+import {
+  getForecastDatesDaily,
+  projectCone,
+  PORTFOLIO_CONE_PARAMS,
+  BENCHMARK_CONE_PARAMS,
+} from '../lib/portfolioForecast';
+
+/** 2 years in days so forecast has daily resolution and cone lines render as one segment. */
+const FORECAST_DAYS = 365 * 2;
 
 interface PortfolioBenchmarkChartProps {
   portfolioId: string;
@@ -59,6 +68,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
   const [period, setPeriod] = useState('5y');
   const [benchmark, setBenchmark] = useState<Lowercase<BenchmarkTicker>>('spy');
   const [viewMode, setViewMode] = useState<ViewMode>('absolute');
+  const [showForecast, setShowForecast] = useState(true);
   const [data, setData] = useState<PortfolioPerformanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -102,36 +112,78 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
 
   const chartData = useMemo(() => {
     if (!data) return [];
+    const toTimestamp = (dateStr: string) => new Date(dateStr).getTime();
+
     if (viewMode === 'absolute') {
-      return data.dates.map((date, i) => ({
+      const historical = data.dates.map((date, i) => ({
         date,
+        timestamp: toTimestamp(date),
         portfolio: data.series.portfolio[i],
         benchmark: data.series.benchmark[i],
       }));
+      if (!showForecast || data.dates.length === 0) return historical;
+
+      const lastDate = data.dates[data.dates.length - 1];
+      const p0 = data.series.portfolio[data.series.portfolio.length - 1];
+      const b0 = data.series.benchmark[data.series.benchmark.length - 1];
+
+      const forecastDates = getForecastDatesDaily(lastDate, FORECAST_DAYS);
+      const portfolioCone = projectCone(p0, PORTFOLIO_CONE_PARAMS, FORECAST_DAYS, 365);
+      const benchmarkCone = projectCone(b0, BENCHMARK_CONE_PARAMS, FORECAST_DAYS, 365);
+
+      // Merge cone start into last historical point so cone attaches to vertical line with a single point (no duplicate timestamp = single segment)
+      const lastWithConeStart = {
+        ...historical[historical.length - 1],
+        portfolioTop: p0,
+        portfolioBottom: p0,
+        benchmarkTop: b0,
+        benchmarkBottom: b0,
+      };
+      const forecastRows = forecastDates.map((date, i) => ({
+        date,
+        timestamp: toTimestamp(date),
+        portfolioTop: portfolioCone[i].top,
+        portfolioBottom: portfolioCone[i].bottom,
+        benchmarkTop: benchmarkCone[i].top,
+        benchmarkBottom: benchmarkCone[i].bottom,
+      }));
+      return [...historical.slice(0, -1), lastWithConeStart, ...forecastRows];
     }
     return data.dates.map((date, i) => {
       const rel = data.series.portfolio[i] - data.series.benchmark[i];
       return {
         date,
+        timestamp: toTimestamp(date),
         benchmark: 0,
         relative: rel,
         above: rel >= 0 ? rel : null,
         below: rel < 0 ? rel : null,
       };
     });
-  }, [data, viewMode]);
+  }, [data, viewMode, showForecast]);
 
-  /** X-axis ticks ~every 3 months (≈63 trading days) to avoid crowding. */
+  /** X-axis ticks: timestamps for time-scaled axis, spread across range. */
   const xAxisTicks = useMemo(() => {
     if (chartData.length === 0) return undefined;
-    const step = 63; // ~3 months in trading days
-    const ticks: string[] = [chartData[0].date];
-    for (let i = step; i < chartData.length - 1; i += step) {
-      ticks.push(chartData[i].date);
+    const timestamps = chartData.map((d) => (d as { timestamp?: number }).timestamp).filter((t): t is number => typeof t === 'number');
+    if (timestamps.length === 0) return undefined;
+    const min = Math.min(...timestamps);
+    const max = Math.max(...timestamps);
+    const count = 6;
+    const ticks: number[] = [];
+    for (let i = 0; i <= count; i++) {
+      ticks.push(min + (i / count) * (max - min));
     }
-    if (chartData.length > 1) ticks.push(chartData[chartData.length - 1].date);
     return ticks;
   }, [chartData]);
+
+  /** Timestamp at end of history / start of forecast (for ReferenceLine). */
+  const forecastStartTimestamp = useMemo(() => {
+    if (!data || !showForecast || viewMode !== 'absolute' || data.dates.length === 0)
+      return null;
+    const lastDate = data.dates[data.dates.length - 1];
+    return new Date(lastDate).getTime();
+  }, [data, showForecast, viewMode]);
 
   if (loading && !data) {
     return (
@@ -212,6 +264,22 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               ))}
             </div>
           </div>
+          {viewMode === 'absolute' && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">2Y forecast:</span>
+              <button
+                type="button"
+                onClick={() => setShowForecast((v) => !v)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  showForecast
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {showForecast ? 'On' : 'Off'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -223,7 +291,9 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
             <XAxis
-              dataKey="date"
+              dataKey="timestamp"
+              type="number"
+              domain={['dataMin', 'dataMax']}
               ticks={xAxisTicks}
               tick={{ fontSize: 11 }}
               tickFormatter={(v) => {
@@ -259,6 +329,58 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               }
             />
             {viewMode === 'relative' && <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />}
+            {viewMode === 'absolute' && showForecast && forecastStartTimestamp != null && (
+              <ReferenceLine
+                x={forecastStartTimestamp}
+                stroke="#9ca3af"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+              />
+            )}
+            {viewMode === 'absolute' && showForecast && (
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="portfolioTop"
+                  name="Portfolio 2Y range (optimistic)"
+                  stroke="#2563eb"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="portfolioBottom"
+                  name="Portfolio 2Y range (max drawdown)"
+                  stroke="#2563eb"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="benchmarkTop"
+                  name={`${data?.benchmark ?? 'Benchmark'} 2Y range (optimistic)`}
+                  stroke="#6b7280"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="benchmarkBottom"
+                  name={`${data?.benchmark ?? 'Benchmark'} 2Y range (max drawdown)`}
+                  stroke="#6b7280"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  connectNulls={false}
+                />
+              </>
+            )}
             <Tooltip
               labelFormatter={(label) => formatDate(label)}
               formatter={(value: number) => [`${value.toFixed(1)}`, '']}
@@ -277,19 +399,45 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                     </div>
                   );
                 }
+                const hasForecast =
+                  p?.portfolioTop != null &&
+                  p?.portfolioBottom != null &&
+                  p?.benchmarkTop != null &&
+                  p?.benchmarkBottom != null;
                 return (
                   <div className="bg-white rounded-lg shadow-lg border border-gray-200 px-4 py-2">
                     <p className="text-sm font-medium text-gray-700 mb-2">{formatDate(label)}</p>
-                    <div className="space-y-1">
-                      <p className="text-sm">
-                        <span className="text-blue-600 font-medium">Portfolio:</span>{' '}
-                        {(p?.portfolio as number ?? 0).toFixed(1)}
-                      </p>
-                      <p className="text-sm">
-                        <span className="text-gray-600 font-medium">{data?.benchmark}:</span>{' '}
-                        {(p?.benchmark as number ?? 0).toFixed(1)}
-                      </p>
-                    </div>
+                    {hasForecast ? (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-gray-600">Portfolio (2Y range)</p>
+                        <p className="text-sm text-blue-600">
+                          Optimistic: {(p.portfolioTop as number).toFixed(1)}
+                        </p>
+                        <p className="text-sm text-blue-600">
+                          Pessimistic: {(p.portfolioBottom as number).toFixed(1)}
+                        </p>
+                        <p className="text-sm font-medium text-gray-600 mt-1">
+                          {data?.benchmark} (2Y range)
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Optimistic: {(p.benchmarkTop as number).toFixed(1)}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Pessimistic: {(p.benchmarkBottom as number).toFixed(1)}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-sm">
+                          <span className="text-blue-600 font-medium">Portfolio:</span>{' '}
+                          {(p?.portfolio as number ?? 0).toFixed(1)}
+                        </p>
+                        <p className="text-sm">
+                          <span className="text-gray-600 font-medium">{data?.benchmark}:</span>{' '}
+                          {(p?.benchmark as number ?? 0).toFixed(1)}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               }}

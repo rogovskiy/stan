@@ -18,6 +18,7 @@ import {
   PORTFOLIO_CONE_PARAMS,
   BENCHMARK_CONE_PARAMS,
 } from '../lib/portfolioForecast';
+import { computePortfolioKpis } from '../lib/portfolioKpis';
 
 /** 2 years in days so forecast has daily resolution and cone lines render as one segment. */
 const FORECAST_DAYS = 365 * 2;
@@ -184,6 +185,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     const lastDate = data.dates[data.dates.length - 1];
     return new Date(lastDate).getTime();
   }, [data, showForecast, viewMode]);
+
+  const kpis = useMemo(() => {
+    if (!data || data.dates.length < 2) return null;
+    return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
+  }, [data]);
 
   if (loading && !data) {
     return (
@@ -494,6 +500,49 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
             )}
           </LineChart>
         </ResponsiveContainer>
+      )}
+
+      {kpis && (
+        <div className="mt-6 border-t border-gray-200 pt-4">
+          <div className="grid grid-cols-6 gap-3">
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Average return</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.averageReturn != null ? `${kpis.averageReturn.toFixed(1)}%` : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Beta</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.beta != null ? kpis.beta.toFixed(2) : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Sharpe</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.sharpe != null ? kpis.sharpe.toFixed(2) : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Max historical drawdown</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.maxDrawdown != null ? `${kpis.maxDrawdown.toFixed(1)}%` : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Expected return</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.expectedReturn != null ? `${kpis.expectedReturn.toFixed(1)}%` : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Stress drawdown</p>
+              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+                {kpis.stressDrawdown != null ? `${kpis.stressDrawdown.toFixed(1)}%` : '—'}
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

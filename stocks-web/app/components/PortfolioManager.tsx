@@ -661,10 +661,12 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         <tr className="border-b border-gray-200 bg-gray-50">
                           <th className="text-left py-3 px-4 font-medium text-gray-700">Ticker</th>
                           <th className="text-right py-3 px-4 font-medium text-gray-700">Shares</th>
-                          <th className="text-right py-3 px-4 font-medium text-gray-700">Avg cost</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Weight %</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Return (since buy)</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Drawdown Impact %</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">Thesis Status</th>
                           <th className="text-right py-3 px-4 font-medium text-gray-700">Total value</th>
-                          <th className="text-right py-3 px-4 font-medium text-gray-700">Total return</th>
-                          <th className="w-24 py-3 px-4" />
+                          <th className="w-28 py-3 px-4">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -673,9 +675,13 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                           const currentPrice = positionPrices[tickerKey];
                           const avgCost = position.purchasePrice ?? null;
                           const totalValue = currentPrice != null ? position.quantity * currentPrice : null;
-                          const totalReturnPct =
+                          const returnSinceBuy =
                             avgCost != null && avgCost > 0 && currentPrice != null
                               ? ((currentPrice - avgCost) / avgCost) * 100
+                              : null;
+                          const weightPct =
+                            totalPortfolioValue != null && totalPortfolioValue > 0 && totalValue != null
+                              ? (totalValue / totalPortfolioValue) * 100
                               : null;
                           return (
                             <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
@@ -684,19 +690,23 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                                 {position.quantity.toLocaleString()}
                               </td>
                               <td className="py-3 px-4 text-right text-gray-700">
-                                {avgCost != null ? `$${avgCost.toFixed(2)}` : '—'}
-                              </td>
-                              <td className="py-3 px-4 text-right text-gray-700">
-                                {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                                {weightPct != null ? `${weightPct.toFixed(1)}%` : ''}
                               </td>
                               <td className="py-3 px-4 text-right">
-                                {totalReturnPct != null ? (
-                                  <span className={totalReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                    {totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(1)}%
+                                {returnSinceBuy != null ? (
+                                  <span className={returnSinceBuy >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                    {returnSinceBuy >= 0 ? '+' : ''}{returnSinceBuy.toFixed(1)}%
                                   </span>
                                 ) : (
-                                  <span className="text-gray-400">—</span>
+                                  ''
                                 )}
+                              </td>
+                              <td className="py-3 px-4 text-right text-gray-700" />
+                              <td className="py-3 px-4 text-gray-700">
+                                {position.thesisId ? 'Linked' : ''}
+                              </td>
+                              <td className="py-3 px-4 text-right text-gray-700">
+                                {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                               </td>
                               <td className="py-3 px-4">
                                 <div className="flex gap-2">

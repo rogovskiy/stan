@@ -49,9 +49,9 @@ export async function PUT(
   try {
     const { portfolioId } = await params;
     const body = await request.json();
-    const { name, description } = body;
+    const { name, description, accountType } = body;
     
-    const updates: any = {};
+    const updates: Record<string, unknown> = {};
     if (name !== undefined) {
       if (typeof name !== 'string' || name.trim().length === 0) {
         return NextResponse.json(
@@ -66,6 +66,15 @@ export async function PUT(
     }
     if (description !== undefined) {
       updates.description = description?.trim() || '';
+    }
+    if (accountType !== undefined) {
+      if (accountType !== 'taxable' && accountType !== 'ira') {
+        return NextResponse.json(
+          { success: false, error: 'accountType must be taxable or ira' },
+          { status: 400 }
+        );
+      }
+      updates.accountType = accountType;
     }
     
     await updatePortfolio(portfolioId, updates);

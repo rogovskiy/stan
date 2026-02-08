@@ -65,6 +65,17 @@ function getRelativeYAxisTicks(min: number, max: number, count = 6): number[] {
   return ticks.length > 0 ? ticks : [min, 0, max];
 }
 
+/** Stress scenario parameters (configurable via gear panel). */
+interface StressParams {
+  marketDropPct: number;
+  betaMultiplier: number;
+}
+
+const DEFAULT_STRESS_PARAMS: StressParams = {
+  marketDropPct: 20,
+  betaMultiplier: 1,
+};
+
 export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchmarkChartProps) {
   const [period, setPeriod] = useState('5y');
   const [benchmark, setBenchmark] = useState<Lowercase<BenchmarkTicker>>('spy');
@@ -73,6 +84,8 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
   const [data, setData] = useState<PortfolioPerformanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stressPanelOpen, setStressPanelOpen] = useState(false);
+  const [stressParams, setStressParams] = useState<StressParams>(DEFAULT_STRESS_PARAMS);
 
   useEffect(() => {
     let cancelled = false;
@@ -539,13 +552,69 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                 {kpis.expectedReturn != null ? `${kpis.expectedReturn.toFixed(1)}%` : '—'}
               </p>
             </div>
-            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Stress drawdown</p>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col">
+              <div className="flex items-center justify-between gap-1">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Stress drawdown</p>
+                <button
+                  type="button"
+                  onClick={() => setStressPanelOpen((v) => !v)}
+                  className="p-1 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-200 transition-colors"
+                  title="Configure stress parameters"
+                  aria-label="Configure stress parameters"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+              </div>
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.stressDrawdown != null ? `${kpis.stressDrawdown.toFixed(1)}%` : '—'}
               </p>
             </div>
           </div>
+          {stressPanelOpen && (
+            <div className="mt-4 p-4 rounded-lg border border-gray-200 bg-gray-50">
+              <h4 className="text-sm font-semibold text-gray-800 mb-3">Stress scenario parameters</h4>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Market drop %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={stressParams.marketDropPct}
+                    onChange={(e) =>
+                      setStressParams((p) => ({ ...p, marketDropPct: Number(e.target.value) || 0 }))
+                    }
+                    className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </label>
+                <label className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Beta multiplier</span>
+                  <input
+                    type="number"
+                    min={0.1}
+                    max={3}
+                    step={0.1}
+                    value={stressParams.betaMultiplier}
+                    onChange={(e) =>
+                      setStressParams((p) => ({ ...p, betaMultiplier: Number(e.target.value) || 1 }))
+                    }
+                    className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setStressParams(DEFAULT_STRESS_PARAMS)}
+                  className="text-sm text-gray-600 hover:text-gray-900 underline"
+                >
+                  Reset to default
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

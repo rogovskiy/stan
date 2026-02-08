@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Position, Portfolio } from '../lib/services/portfolioService';
+import { Position, Portfolio, type PortfolioAccountType } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
@@ -43,6 +43,11 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [watchlistTargetPrice, setWatchlistTargetPrice] = useState('');
   const [watchlistPriority, setWatchlistPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [positionPrices, setPositionPrices] = useState<Record<string, number>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsName, setSettingsName] = useState('');
+  const [settingsDescription, setSettingsDescription] = useState('');
+  const [settingsAccountType, setSettingsAccountType] = useState<PortfolioAccountType>('taxable');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Fetch data on mount and when view mode changes
   useEffect(() => {
@@ -192,6 +197,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       const result = await response.json();
       
       if (result.success) {
+        setSettingsOpen(false);
         await fetchPortfolios();
         setSelectedPortfolio(null);
       } else {
@@ -199,6 +205,43 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete portfolio');
+    }
+  };
+
+  const openSettings = () => {
+    if (selectedPortfolio) {
+      setSettingsName(selectedPortfolio.name);
+      setSettingsDescription(selectedPortfolio.description || '');
+      setSettingsAccountType(selectedPortfolio.accountType || 'taxable');
+      setSettingsOpen(true);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    if (!selectedPortfolio?.id || !settingsName.trim()) return;
+    setSavingSettings(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/portfolios/${selectedPortfolio.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: settingsName.trim(),
+          description: settingsDescription.trim(),
+          accountType: settingsAccountType,
+        }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        setSelectedPortfolio(result.data);
+        setSettingsOpen(false);
+      } else {
+        setError(result.error || 'Failed to update portfolio');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update portfolio');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -513,7 +556,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                 setPortfolioName('');
                 setPortfolioDescription('');
               }}
-              className="w-full px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+              className="w-full px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
             >
               + New Portfolio
             </button>
@@ -626,26 +669,94 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         Total value: ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
                     )}
-                    <div className="flex gap-2">
                     <button
-                      onClick={() => {
-                        setEditingPosition(null);
-                        resetPositionForm();
-                        setShowAddPosition(true);
-                      }}
-                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                      type="button"
+                      onClick={openSettings}
+                      className="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                      title="Portfolio settings"
+                      aria-label="Portfolio settings"
                     >
-                      + Add Position
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
                     </button>
-                    <button
-                      onClick={() => handleDeletePortfolio(selectedPortfolio.id!)}
-                      className="px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-                    >
-                      Delete Portfolio
-                    </button>
-                    </div>
                   </div>
                 </div>
+                {settingsOpen && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <h3 className="text-sm font-semibold text-gray-800 mb-3">Portfolio settings</h3>
+                    <div className="grid gap-3 max-w-xl">
+                      <label className="block">
+                        <span className="text-sm text-gray-600">Name</span>
+                        <input
+                          type="text"
+                          value={settingsName}
+                          onChange={(e) => setSettingsName(e.target.value)}
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-sm text-gray-600">Description</span>
+                        <textarea
+                          value={settingsDescription}
+                          onChange={(e) => setSettingsDescription(e.target.value)}
+                          rows={2}
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </label>
+                      <div>
+                        <span className="text-sm text-gray-600 block mb-1">Account type</span>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="accountType"
+                              checked={settingsAccountType === 'taxable'}
+                              onChange={() => setSettingsAccountType('taxable')}
+                              className="text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm">Taxable</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="accountType"
+                              checked={settingsAccountType === 'ira'}
+                              onChange={() => setSettingsAccountType('ira')}
+                              className="text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm">IRA</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={handleSaveSettings}
+                          disabled={savingSettings || !settingsName.trim()}
+                          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                        >
+                          {savingSettings ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSettingsOpen(false)}
+                          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectedPortfolio?.id && handleDeletePortfolio(selectedPortfolio.id)}
+                          className="ml-auto px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md"
+                        >
+                          Delete portfolio
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
@@ -655,7 +766,20 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   </div>
                 )}
                 {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
-                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                  <div>
+                    <div className="flex justify-end mb-3">
+                      <button
+                        onClick={() => {
+                          setEditingPosition(null);
+                          resetPositionForm();
+                          setShowAddPosition(true);
+                        }}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 hover:border-gray-300"
+                      >
+                        + Add Position
+                      </button>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-200 bg-gray-50">
@@ -709,25 +833,40 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                                 {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                               </td>
                               <td className="py-3 px-4">
-                                <div className="flex gap-2">
+                                <div className="flex items-center gap-1">
                                   <button
+                                    type="button"
                                     onClick={() => startEditPosition(position)}
-                                    className="text-gray-600 hover:text-gray-900 text-xs font-medium"
+                                    title="Edit position"
+                                    aria-label="Edit position"
+                                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
                                   >
-                                    Edit
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                    </svg>
                                   </button>
                                   <button
+                                    type="button"
                                     onClick={() => handleDeletePosition(position.id!)}
-                                    className="text-red-600 hover:text-red-700 text-xs font-medium"
+                                    title="Delete position"
+                                    aria-label="Delete position"
+                                    className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
                                   >
-                                    Delete
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
                                   </button>
                                   {position.thesisId && (
                                     <button
+                                      type="button"
                                       onClick={() => router.push(`/${position.ticker}/thesis`)}
-                                      className="text-blue-600 hover:text-blue-700 text-xs font-medium"
+                                      title="View thesis"
+                                      aria-label="View thesis"
+                                      className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                                     >
-                                      Thesis
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                      </svg>
                                     </button>
                                   )}
                                 </div>
@@ -738,6 +877,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       </tbody>
                     </table>
                   </div>
+                  </div>
                 ) : (
                   <div className="text-center py-12">
                     <p className="text-gray-500 mb-4">No positions in this portfolio yet.</p>
@@ -747,7 +887,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         resetPositionForm();
                         setShowAddPosition(true);
                       }}
-                      className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-colors"
+                      className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200"
                     >
                       Add Your First Position
                     </button>
@@ -765,7 +905,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     setPortfolioName('');
                     setPortfolioDescription('');
                   }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200"
                 >
                   Create Portfolio
                 </button>

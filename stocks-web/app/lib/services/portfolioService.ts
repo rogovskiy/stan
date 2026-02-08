@@ -25,10 +25,13 @@ export interface Position {
   updatedAt?: string;
 }
 
+export type PortfolioAccountType = 'taxable' | 'ira';
+
 export interface Portfolio {
   id?: string;
   name: string;
   description?: string;
+  accountType?: PortfolioAccountType;
   positions?: Position[];
   createdAt?: string;
   updatedAt?: string;
@@ -51,6 +54,7 @@ export async function getAllPortfolios(userId?: string): Promise<Portfolio[]> {
         id: doc.id,
         name: data.name,
         description: data.description,
+        accountType: data.accountType === 'ira' ? 'ira' : 'taxable',
         createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
         updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
         userId: data.userId,
@@ -102,6 +106,7 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       id: portfolioSnap.id,
       name: portfolioData.name,
       description: portfolioData.description,
+      accountType: portfolioData.accountType === 'ira' ? 'ira' : 'taxable',
       positions: positions.sort((a, b) => a.ticker.localeCompare(b.ticker)),
       createdAt: portfolioData.createdAt?.toDate?.()?.toISOString() || portfolioData.createdAt,
       updatedAt: portfolioData.updatedAt?.toDate?.()?.toISOString() || portfolioData.updatedAt,
@@ -122,6 +127,7 @@ export async function createPortfolio(portfolio: Omit<Portfolio, 'id' | 'created
     const docRef = await addDoc(portfoliosRef, {
       name: portfolio.name,
       description: portfolio.description || '',
+      accountType: portfolio.accountType || 'taxable',
       userId: portfolio.userId || null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),

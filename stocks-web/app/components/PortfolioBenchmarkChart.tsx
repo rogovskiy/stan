@@ -354,6 +354,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                   strokeDasharray="4 2"
                   dot={false}
                   connectNulls={false}
+                  legendType="none"
                 />
                 <Line
                   type="monotone"
@@ -364,6 +365,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                   strokeDasharray="4 2"
                   dot={false}
                   connectNulls={false}
+                  legendType="none"
                 />
                 <Line
                   type="monotone"
@@ -374,6 +376,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                   strokeDasharray="4 2"
                   dot={false}
                   connectNulls={false}
+                  legendType="none"
                 />
                 <Line
                   type="monotone"
@@ -384,6 +387,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                   strokeDasharray="4 2"
                   dot={false}
                   connectNulls={false}
+                  legendType="none"
                 />
               </>
             )}

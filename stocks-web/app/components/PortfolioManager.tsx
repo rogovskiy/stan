@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Position, Portfolio } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
@@ -42,6 +42,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [watchlistThesisId, setWatchlistThesisId] = useState('');
   const [watchlistTargetPrice, setWatchlistTargetPrice] = useState('');
   const [watchlistPriority, setWatchlistPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [positionPrices, setPositionPrices] = useState<Record<string, number>>({});
 
   // Fetch data on mount and when view mode changes
   useEffect(() => {
@@ -61,6 +62,49 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       }
     }
   }, [initialPortfolioId, portfolios]);
+
+  // Fetch latest price for each position ticker (for total value / total return)
+  useEffect(() => {
+    const positions = selectedPortfolio?.positions;
+    if (!positions?.length) {
+      setPositionPrices({});
+      return;
+    }
+    let cancelled = false;
+    const tickers = [...new Set(positions.map((p) => p.ticker.toUpperCase()))];
+    const prices: Record<string, number> = {};
+    Promise.all(
+      tickers.map(async (ticker) => {
+        try {
+          const res = await fetch(`/api/daily-prices/${ticker}?period=1y`);
+          if (cancelled) return;
+          const json = await res.json();
+          const data = json?.data;
+          if (Array.isArray(data) && data.length > 0 && data[data.length - 1]?.price != null) {
+            prices[ticker] = data[data.length - 1].price;
+          }
+        } catch {
+          // leave price undefined for this ticker
+        }
+      })
+    ).then(() => {
+      if (!cancelled) setPositionPrices(prices);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio?.positions]);
+
+  const totalPortfolioValue = useMemo(() => {
+    const positions = selectedPortfolio?.positions;
+    if (!positions?.length) return null;
+    let total = 0;
+    for (const p of positions) {
+      const price = positionPrices[p.ticker.toUpperCase()];
+      if (price != null) total += p.quantity * price;
+    }
+    return total > 0 ? total : null;
+  }, [selectedPortfolio?.positions, positionPrices]);
 
   const fetchPortfolios = async () => {
     try {
@@ -576,7 +620,13 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       <p className="text-sm text-gray-600 mt-1">{selectedPortfolio.description}</p>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-6">
+                    {totalPortfolioValue != null && (
+                      <p className="text-lg font-semibold text-gray-900">
+                        Total value: ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    )}
+                    <div className="flex gap-2">
                     <button
                       onClick={() => {
                         setEditingPosition(null);
@@ -593,6 +643,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     >
                       Delete Portfolio
                     </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -604,77 +655,78 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   </div>
                 )}
                 {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
-                  <div className="space-y-4">
-                    {selectedPortfolio.positions.map((position) => (
-                      <div
-                        key={position.id}
-                        className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3">
-                              <h3 className="text-lg font-semibold text-gray-900">
-                                {position.ticker}
-                              </h3>
-                              <span className="text-sm text-gray-600">
-                                {position.quantity.toLocaleString()} shares
-                              </span>
-                            </div>
-                            
-                            <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
-                              {position.purchaseDate && (
-                                <div>
-                                  <span className="text-gray-500">Purchase Date:</span>
-                                  <span className="ml-2 text-gray-900">
-                                    {new Date(position.purchaseDate).toLocaleDateString()}
+                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50">
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">Ticker</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Shares</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Avg cost</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Total value</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Total return</th>
+                          <th className="w-24 py-3 px-4" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedPortfolio.positions.map((position) => {
+                          const tickerKey = position.ticker.toUpperCase();
+                          const currentPrice = positionPrices[tickerKey];
+                          const avgCost = position.purchasePrice ?? null;
+                          const totalValue = currentPrice != null ? position.quantity * currentPrice : null;
+                          const totalReturnPct =
+                            avgCost != null && avgCost > 0 && currentPrice != null
+                              ? ((currentPrice - avgCost) / avgCost) * 100
+                              : null;
+                          return (
+                            <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-3 px-4 font-medium text-gray-900">{position.ticker}</td>
+                              <td className="py-3 px-4 text-right text-gray-700">
+                                {position.quantity.toLocaleString()}
+                              </td>
+                              <td className="py-3 px-4 text-right text-gray-700">
+                                {avgCost != null ? `$${avgCost.toFixed(2)}` : '—'}
+                              </td>
+                              <td className="py-3 px-4 text-right text-gray-700">
+                                {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                {totalReturnPct != null ? (
+                                  <span className={totalReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                    {totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(1)}%
                                   </span>
-                                </div>
-                              )}
-                              {position.purchasePrice !== undefined && position.purchasePrice !== null && (
-                                <div>
-                                  <span className="text-gray-500">Purchase Price:</span>
-                                  <span className="ml-2 text-gray-900">
-                                    ${position.purchasePrice.toFixed(2)}
-                                  </span>
-                                </div>
-                              )}
-                              {position.thesisId && (
-                                <div className="col-span-2">
-                                  <span className="text-gray-500">Thesis:</span>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex gap-2">
                                   <button
-                                    onClick={() => router.push(`/${position.ticker}/thesis`)}
-                                    className="ml-2 text-blue-600 hover:text-blue-700 hover:underline"
+                                    onClick={() => startEditPosition(position)}
+                                    className="text-gray-600 hover:text-gray-900 text-xs font-medium"
                                   >
-                                    View Thesis →
+                                    Edit
                                   </button>
+                                  <button
+                                    onClick={() => handleDeletePosition(position.id!)}
+                                    className="text-red-600 hover:text-red-700 text-xs font-medium"
+                                  >
+                                    Delete
+                                  </button>
+                                  {position.thesisId && (
+                                    <button
+                                      onClick={() => router.push(`/${position.ticker}/thesis`)}
+                                      className="text-blue-600 hover:text-blue-700 text-xs font-medium"
+                                    >
+                                      Thesis
+                                    </button>
+                                  )}
                                 </div>
-                              )}
-                              {position.notes && (
-                                <div className="col-span-2">
-                                  <span className="text-gray-500">Notes:</span>
-                                  <p className="mt-1 text-gray-700">{position.notes}</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex gap-2 ml-4">
-                            <button
-                              onClick={() => startEditPosition(position)}
-                              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeletePosition(position.id!)}
-                              className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
                   <div className="text-center py-12">

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Position, Portfolio } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
+import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
 interface PortfolioManagerProps {
   initialPortfolioId?: string;
@@ -597,6 +598,11 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
+                {selectedPortfolio.id && (
+                  <div className="mb-6">
+                    <PortfolioBenchmarkChart portfolioId={selectedPortfolio.id} />
+                  </div>
+                )}
                 {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
                   <div className="space-y-4">
                     {selectedPortfolio.positions.map((position) => (

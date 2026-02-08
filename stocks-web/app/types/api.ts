@@ -99,6 +99,17 @@ export interface QuarterlyDataPoint {
   estimated: boolean;
 }
 
+export type BenchmarkTicker = 'SPY' | 'QQQ' | 'GLD';
+
+export interface PortfolioPerformanceResponse {
+  dates: string[];
+  series: {
+    portfolio: number[];
+    benchmark: number[];
+  };
+  benchmark: BenchmarkTicker;
+}
+
 // Legacy interface for backwards compatibility
 export interface APIResponse {
   symbol: string;

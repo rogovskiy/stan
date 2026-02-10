@@ -19,6 +19,7 @@ import type { PortfolioPerformanceResponse, BenchmarkTicker } from '../types/api
 import {
   getForecastDatesDaily,
   projectCone,
+  coneParamsFromMaxDrawdown,
   PORTFOLIO_CONE_PARAMS,
   BENCHMARK_CONE_PARAMS,
 } from '../lib/portfolioForecast';
@@ -128,6 +129,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     };
   }, [portfolioId, period, benchmark]);
 
+  const kpis = useMemo(() => {
+    if (!data || data.dates.length < 2) return null;
+    return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
+  }, [data]);
+
   const chartData = useMemo(() => {
     if (!data) return [];
     const toTimestamp = (dateStr: string) => new Date(dateStr).getTime();
@@ -145,9 +151,22 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
       const p0 = data.series.portfolio[data.series.portfolio.length - 1];
       const b0 = data.series.benchmark[data.series.benchmark.length - 1];
 
+      const portfolioOpt =
+        data.expectedReturn && (data.expectedReturn.minPct !== 0 || data.expectedReturn.maxPct !== 0)
+          ? (data.expectedReturn.minPct + data.expectedReturn.maxPct) / 2 / 100
+          : PORTFOLIO_CONE_PARAMS.annualGrowthOpt;
+      const portfolioConeParams =
+        kpis && kpis.maxDrawdown != null && kpis.maxDrawdown > 0
+          ? coneParamsFromMaxDrawdown(kpis.maxDrawdown, portfolioOpt)
+          : { ...PORTFOLIO_CONE_PARAMS, annualGrowthOpt: portfolioOpt };
+      const benchmarkConeParams =
+        kpis && kpis.benchmarkMaxDrawdown != null && kpis.benchmarkMaxDrawdown > 0
+          ? coneParamsFromMaxDrawdown(kpis.benchmarkMaxDrawdown, 0.08)
+          : BENCHMARK_CONE_PARAMS;
+
       const forecastDates = getForecastDatesDaily(lastDate, FORECAST_DAYS);
-      const portfolioCone = projectCone(p0, PORTFOLIO_CONE_PARAMS, FORECAST_DAYS, 365);
-      const benchmarkCone = projectCone(b0, BENCHMARK_CONE_PARAMS, FORECAST_DAYS, 365);
+      const portfolioCone = projectCone(p0, portfolioConeParams, FORECAST_DAYS, 365);
+      const benchmarkCone = projectCone(b0, benchmarkConeParams, FORECAST_DAYS, 365);
 
       // Merge cone start into last historical point so cone attaches to vertical line with a single point (no duplicate timestamp = single segment)
       const lastWithConeStart = {
@@ -178,7 +197,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
         below: rel < 0 ? rel : null,
       };
     });
-  }, [data, viewMode, showForecast]);
+  }, [data, viewMode, showForecast, kpis]);
 
   /** X-axis ticks: timestamps for time-scaled axis, spread across range. */
   const xAxisTicks = useMemo(() => {
@@ -203,10 +222,24 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     return new Date(lastDate).getTime();
   }, [data, showForecast, viewMode]);
 
-  const kpis = useMemo(() => {
-    if (!data || data.dates.length < 2) return null;
-    return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
-  }, [data]);
+  /** Expected return and drawdown used for forecast cone (for tooltip). */
+  const forecastLegend = useMemo(() => {
+    const portfolioExpectedStr =
+      data?.expectedReturn && (data.expectedReturn.minPct !== 0 || data.expectedReturn.maxPct !== 0)
+        ? `${data.expectedReturn.minPct.toFixed(1)}–${data.expectedReturn.maxPct.toFixed(1)}`
+        : '+10';
+    const benchmarkExpected = 8;
+    const portfolioDrawdown =
+      kpis?.maxDrawdown != null && kpis.maxDrawdown > 0 ? kpis.maxDrawdown : 10;
+    const benchmarkDrawdown =
+      kpis?.benchmarkMaxDrawdown != null && kpis.benchmarkMaxDrawdown > 0
+        ? kpis.benchmarkMaxDrawdown
+        : 5;
+    return {
+      portfolioTop: `Portfolio 2Y (expected ${portfolioExpectedStr}%, drawdown ${Math.round(portfolioDrawdown)}%)`,
+      benchmarkTop: `Benchmark 2Y (expected +${benchmarkExpected}%, drawdown ${Math.round(benchmarkDrawdown)}%)`,
+    };
+  }, [data?.expectedReturn, kpis?.maxDrawdown, kpis?.benchmarkMaxDrawdown]);
 
   /** Recovery period for max drawdown (for ReferenceArea highlight). Only in absolute view. */
   const maxDrawdownRecoveryRange = useMemo(() => {
@@ -474,21 +507,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                     <p className="text-sm font-medium text-gray-700 mb-2">{formatDate(label)}</p>
                     {hasForecast ? (
                       <div className="space-y-2">
-                        <p className="text-sm font-medium text-gray-600">Portfolio (2Y range)</p>
-                        <p className="text-sm text-blue-600">
-                          Optimistic: {(p.portfolioTop as number).toFixed(1)}
+                        <p className="text-sm font-medium text-gray-600">
+                          {forecastLegend.portfolioTop}
                         </p>
-                        <p className="text-sm text-blue-600">
-                          Pessimistic: {(p.portfolioBottom as number).toFixed(1)}
-                        </p>
-                        <p className="text-sm font-medium text-gray-600 mt-1">
-                          {data?.benchmark} (2Y range)
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Optimistic: {(p.benchmarkTop as number).toFixed(1)}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Pessimistic: {(p.benchmarkBottom as number).toFixed(1)}
+                        <p className="text-sm font-medium text-gray-600">
+                          {forecastLegend.benchmarkTop}
                         </p>
                       </div>
                     ) : (

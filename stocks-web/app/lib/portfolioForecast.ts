@@ -52,6 +52,27 @@ export const BENCHMARK_CONE_PARAMS: ConeParams = {
   annualGrowthPessimistic: -0.05,
 };
 
+/** Forecast horizon in years used to derive pessimistic growth from max drawdown. */
+const FORECAST_HORIZON_YEARS = 2;
+
+/**
+ * Build cone params from max historical drawdown (%). Pessimistic path is set so that
+ * at the end of the forecast horizon (2y) the bottom equals lastValue * (1 - maxDrawdownPct/100).
+ * Optimistic path uses the provided default. Use PORTFOLIO_CONE_PARAMS / BENCHMARK_CONE_PARAMS
+ * when maxDrawdownPct is null or <= 0.
+ */
+export function coneParamsFromMaxDrawdown(
+  maxDrawdownPct: number,
+  defaultOpt: number = 0.1
+): ConeParams {
+  const d = Math.max(0, Math.min(1, maxDrawdownPct / 100));
+  const annualGrowthPessimistic = Math.pow(1 - d, 1 / FORECAST_HORIZON_YEARS) - 1;
+  return {
+    annualGrowthOpt: defaultOpt,
+    annualGrowthPessimistic,
+  };
+}
+
 export interface ConePoint {
   top: number;
   bottom: number;

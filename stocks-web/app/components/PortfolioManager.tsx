@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Position, Portfolio, type PortfolioAccountType } from '../lib/services/portfolioService';
+import { Position, Portfolio, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
@@ -22,8 +22,13 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [error, setError] = useState<string | null>(null);
   const [showCreatePortfolio, setShowCreatePortfolio] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
+  const [showAddTransaction, setShowAddTransaction] = useState(false);
   const [showAddWatchlistItem, setShowAddWatchlistItem] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
+  const [editingPositionMetadata, setEditingPositionMetadata] = useState<Position | null>(null);
+  const [transactionHistoryTicker, setTransactionHistoryTicker] = useState<string | null>(null);
+  const [transactionsForTicker, setTransactionsForTicker] = useState<Transaction[]>([]);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editingWatchlistItem, setEditingWatchlistItem] = useState<WatchlistItem | null>(null);
   
   // Form states
@@ -35,7 +40,15 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [positionPurchasePrice, setPositionPurchasePrice] = useState('');
   const [positionThesisId, setPositionThesisId] = useState('');
   const [positionNotes, setPositionNotes] = useState('');
-  
+  // Transaction form state (for Add Transaction / Edit Transaction)
+  const [transactionType, setTransactionType] = useState<'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash'>('buy');
+  const [transactionTicker, setTransactionTicker] = useState('');
+  const [transactionDate, setTransactionDate] = useState('');
+  const [transactionQuantity, setTransactionQuantity] = useState('');
+  const [transactionPrice, setTransactionPrice] = useState('');
+  const [transactionAmount, setTransactionAmount] = useState('');
+  const [transactionNotes, setTransactionNotes] = useState('');
+
   // Watchlist form states
   const [watchlistTicker, setWatchlistTicker] = useState('');
   const [watchlistNotes, setWatchlistNotes] = useState('');
@@ -360,22 +373,183 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     setPositionNotes('');
   };
 
-  const startEditPosition = (position: Position) => {
-    setEditingPosition(position);
-    setPositionTicker(position.ticker);
-    setPositionQuantity(position.quantity.toString());
-    setPositionPurchaseDate(position.purchaseDate || '');
-    setPositionPurchasePrice(position.purchasePrice?.toString() || '');
+  const startEditPositionMetadata = (position: Position) => {
+    setEditingPositionMetadata(position);
     setPositionThesisId(position.thesisId || '');
     setPositionNotes(position.notes || '');
-    setShowAddPosition(true);
+  };
+
+  const loadTransactionsForTicker = async (ticker: string) => {
+    if (!selectedPortfolio?.id) return;
+    try {
+      const res = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions?ticker=${encodeURIComponent(ticker)}`);
+      const result = await res.json();
+      if (result.success) setTransactionsForTicker(result.data);
+      else setTransactionsForTicker([]);
+    } catch {
+      setTransactionsForTicker([]);
+    }
+  };
+
+  const openTransactionHistory = (ticker: string) => {
+    setTransactionHistoryTicker(ticker);
+    setEditingTransaction(null);
+    loadTransactionsForTicker(ticker);
+  };
+
+  const handleSavePositionMetadata = async () => {
+    if (!selectedPortfolio?.id || !editingPositionMetadata?.id) return;
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/portfolios/${selectedPortfolio.id}/positions/${editingPositionMetadata.id}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thesisId: positionThesisId || null, notes: positionNotes || '' }),
+        }
+      );
+      const result = await response.json();
+      if (result.success) {
+        setSelectedPortfolio(result.data);
+        setEditingPositionMetadata(null);
+      } else {
+        setError(result.error || 'Failed to update position');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update position');
+    }
+  };
+
+  const handleAddTransaction = async () => {
+    if (!selectedPortfolio?.id) return;
+    const type = transactionType;
+    const ticker = transactionTicker.trim().toUpperCase() || null;
+    if (type !== 'cash' && !ticker) {
+      setError('Ticker is required for non-cash transactions');
+      return;
+    }
+    const date = transactionDate || new Date().toISOString().slice(0, 10);
+    const quantity = type === 'cash' || type === 'dividend' ? 0 : parseFloat(transactionQuantity) || 0;
+    const price = transactionPrice ? parseFloat(transactionPrice) : null;
+    let amount = transactionAmount ? parseFloat(transactionAmount) : 0;
+    if (type === 'buy' || type === 'dividend_reinvest') {
+      if (quantity > 0 && price != null) amount = -(quantity * price);
+    } else if (type === 'sell') {
+      if (quantity < 0 && price != null) amount = Math.abs(quantity) * price;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          ticker,
+          date,
+          quantity,
+          price,
+          amount,
+          notes: transactionNotes || '',
+        }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        setSelectedPortfolio(result.portfolio);
+        setShowAddTransaction(false);
+        setTransactionTicker('');
+        setTransactionQuantity('');
+        setTransactionPrice('');
+        setTransactionAmount('');
+        setTransactionNotes('');
+      } else {
+        setError(result.error || 'Failed to add transaction');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add transaction');
+    }
+  };
+
+  const handleUpdateTransaction = async () => {
+    if (!selectedPortfolio?.id || !editingTransaction?.id) return;
+    const type = (editingTransaction.type || transactionType) as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash';
+    const ticker = transactionTicker.trim().toUpperCase() || null;
+    if (type !== 'cash' && !ticker) {
+      setError('Ticker is required for non-cash transactions');
+      return;
+    }
+    const date = transactionDate || editingTransaction.date;
+    const quantity = type === 'cash' || type === 'dividend' ? 0 : parseFloat(transactionQuantity) || 0;
+    const price = transactionPrice ? parseFloat(transactionPrice) : null;
+    let amount = transactionAmount ? parseFloat(transactionAmount) : editingTransaction.amount;
+    if (type === 'buy' || type === 'dividend_reinvest') {
+      if (quantity > 0 && price != null) amount = -(quantity * price);
+    } else if (type === 'sell') {
+      if (quantity < 0 && price != null) amount = Math.abs(quantity) * price;
+    }
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/portfolios/${selectedPortfolio.id}/transactions/${editingTransaction.id}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, ticker, date, quantity, price, amount, notes: transactionNotes || '' }),
+        }
+      );
+      const result = await response.json();
+      if (result.success) {
+        setSelectedPortfolio(result.portfolio);
+        setEditingTransaction(null);
+        if (transactionHistoryTicker) loadTransactionsForTicker(transactionHistoryTicker);
+      } else {
+        setError(result.error || 'Failed to update transaction');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update transaction');
+    }
+  };
+
+  const handleDeleteTransaction = async (transactionId: string) => {
+    if (!selectedPortfolio?.id) return;
+    if (!confirm('Delete this transaction? Position will be recomputed.')) return;
+    try {
+      const response = await fetch(
+        `/api/portfolios/${selectedPortfolio.id}/transactions/${transactionId}`,
+        { method: 'DELETE' }
+      );
+      const result = await response.json();
+      if (result.success) {
+        setSelectedPortfolio(result.portfolio);
+        if (transactionHistoryTicker) loadTransactionsForTicker(transactionHistoryTicker);
+      } else {
+        setError(result.error || 'Failed to delete transaction');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete transaction');
+    }
+  };
+
+  const startEditTransaction = (tx: Transaction) => {
+    setEditingTransaction(tx);
+    setTransactionType(tx.type as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash');
+    setTransactionTicker(tx.ticker || '');
+    setTransactionDate(tx.date || '');
+    setTransactionQuantity(tx.quantity.toString());
+    setTransactionPrice(tx.price != null ? String(tx.price) : '');
+    setTransactionAmount(String(tx.amount));
+    setTransactionNotes(tx.notes || '');
   };
 
   const cancelEdit = () => {
     setEditingPosition(null);
+    setEditingPositionMetadata(null);
+    setEditingTransaction(null);
     setEditingWatchlistItem(null);
     setShowAddPosition(false);
+    setShowAddTransaction(false);
     setShowAddWatchlistItem(false);
+    setTransactionHistoryTicker(null);
     resetPositionForm();
     resetWatchlistForm();
   };
@@ -674,6 +848,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     )}
                   </div>
                   <div className="flex items-center gap-6">
+                    <p className="text-lg font-semibold text-gray-900">
+                      Cash: ${((selectedPortfolio.cashBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
                     {totalPortfolioValue != null && (
                       <p className="text-lg font-semibold text-gray-900">
                         Total value: ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -780,13 +957,18 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     <div className="flex justify-end mb-3">
                       <button
                         onClick={() => {
-                          setEditingPosition(null);
-                          resetPositionForm();
-                          setShowAddPosition(true);
+                          setTransactionType('buy');
+                          setTransactionTicker('');
+                          setTransactionDate(new Date().toISOString().slice(0, 10));
+                          setTransactionQuantity('');
+                          setTransactionPrice('');
+                          setTransactionAmount('');
+                          setTransactionNotes('');
+                          setShowAddTransaction(true);
                         }}
                         className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 hover:border-gray-300"
                       >
-                        + Add Position
+                        + Add Transaction
                       </button>
                     </div>
                     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -846,13 +1028,24 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                                 <div className="flex items-center gap-1">
                                   <button
                                     type="button"
-                                    onClick={() => startEditPosition(position)}
-                                    title="Edit position"
-                                    aria-label="Edit position"
+                                    onClick={() => startEditPositionMetadata(position)}
+                                    title="Edit thesis and notes"
+                                    aria-label="Edit position metadata"
                                     className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
                                   >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openTransactionHistory(position.ticker)}
+                                    title="Transaction history"
+                                    aria-label="Transaction history"
+                                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
                                   </button>
                                   <button
@@ -890,16 +1083,21 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   </div>
                 ) : (
                   <div className="text-center py-12">
-                    <p className="text-gray-500 mb-4">No positions in this portfolio yet.</p>
+                    <p className="text-gray-500 mb-4">No positions in this portfolio yet. Add a transaction to get started.</p>
                     <button
                       onClick={() => {
-                        setEditingPosition(null);
-                        resetPositionForm();
-                        setShowAddPosition(true);
+                        setTransactionType('buy');
+                        setTransactionTicker('');
+                        setTransactionDate(new Date().toISOString().slice(0, 10));
+                        setTransactionQuantity('');
+                        setTransactionPrice('');
+                        setTransactionAmount('');
+                        setTransactionNotes('');
+                        setShowAddTransaction(true);
                       }}
                       className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200"
                     >
-                      Add Your First Position
+                      Add Your First Transaction
                     </button>
                   </div>
                 )}
@@ -1106,121 +1304,327 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         </div>
       )}
 
-      {/* Add/Edit Position Modal */}
-      {showAddPosition && (
+      {/* Edit position metadata (thesisId, notes only) */}
+      {editingPositionMetadata && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-gray-900">
-                  {editingPosition ? 'Edit Position' : 'Add Position'}
-                </h3>
-                <button
-                  onClick={cancelEdit}
-                  className="text-gray-600 hover:text-gray-900"
-                >
+                <h3 className="text-xl font-bold text-gray-900">Edit position – {editingPositionMetadata.ticker}</h3>
+                <button onClick={() => setEditingPositionMetadata(null)} className="text-gray-600 hover:text-gray-900">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Ticker *
-                  </label>
-                  <input
-                    type="text"
-                    value={positionTicker}
-                    onChange={(e) => setPositionTicker(e.target.value.toUpperCase())}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g., AAPL"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Quantity *
-                  </label>
-                  <input
-                    type="number"
-                    value={positionQuantity}
-                    onChange={(e) => setPositionQuantity(e.target.value)}
-                    min="0"
-                    step="0.01"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g., 100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Purchase Date
-                  </label>
-                  <input
-                    type="date"
-                    value={positionPurchaseDate}
-                    onChange={(e) => setPositionPurchaseDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Purchase Price
-                  </label>
-                  <input
-                    type="number"
-                    value={positionPurchasePrice}
-                    onChange={(e) => setPositionPurchasePrice(e.target.value)}
-                    min="0"
-                    step="0.01"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g., 150.00"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Thesis ID (optional)
-                  </label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Thesis ID (optional)</label>
                   <input
                     type="text"
                     value={positionThesisId}
                     onChange={(e) => setPositionThesisId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     placeholder="Link to investment thesis"
                   />
-                  <p className="text-xs text-gray-600 mt-1">
-                    You can link this position to an investment thesis
-                  </p>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-900 mb-2">
-                    Notes
-                  </label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Notes</label>
                   <textarea
                     value={positionNotes}
                     onChange={(e) => setPositionNotes(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Optional notes about this position..."
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="Position notes..."
                   />
                 </div>
               </div>
-
               <div className="flex gap-3 mt-6">
                 <button
-                  onClick={editingPosition ? handleUpdatePosition : handleAddPosition}
-                  disabled={!positionTicker.trim() || !positionQuantity}
-                  className="flex-1 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  onClick={handleSavePositionMetadata}
+                  className="flex-1 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
                 >
-                  {editingPosition ? 'Update' : 'Add'} Position
+                  Save
                 </button>
-                <button
-                  onClick={cancelEdit}
-                  className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium"
-                >
+                <button onClick={() => setEditingPositionMetadata(null)} className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Transaction Modal */}
+      {showAddTransaction && !editingTransaction && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-gray-900">Add Transaction</h3>
+                <button onClick={() => { setShowAddTransaction(false); cancelEdit(); }} className="text-gray-600 hover:text-gray-900">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Type</label>
+                  <select
+                    value={transactionType}
+                    onChange={(e) => setTransactionType(e.target.value as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash')}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                    <option value="dividend">Dividend</option>
+                    <option value="dividend_reinvest">Dividend reinvest</option>
+                    <option value="cash">Cash</option>
+                  </select>
+                </div>
+                {transactionType !== 'cash' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Ticker *</label>
+                    <input
+                      type="text"
+                      value={transactionTicker}
+                      onChange={(e) => setTransactionTicker(e.target.value.toUpperCase())}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="e.g., AAPL"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Date *</label>
+                  <input
+                    type="date"
+                    value={transactionDate}
+                    onChange={(e) => setTransactionDate(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                {(transactionType === 'buy' || transactionType === 'sell' || transactionType === 'dividend_reinvest') && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Quantity * ({transactionType === 'sell' ? 'negative' : 'positive'})
+                      </label>
+                      <input
+                        type="number"
+                        value={transactionQuantity}
+                        onChange={(e) => setTransactionQuantity(e.target.value)}
+                        step="0.0001"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder={transactionType === 'sell' ? 'e.g., -10' : 'e.g., 100'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Price per share</label>
+                      <input
+                        type="number"
+                        value={transactionPrice}
+                        onChange={(e) => setTransactionPrice(e.target.value)}
+                        min="0"
+                        step="0.01"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., 150.00"
+                      />
+                    </div>
+                  </>
+                )}
+                {(transactionType === 'dividend' || transactionType === 'cash') && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Amount (cash impact) *</label>
+                    <input
+                      type="number"
+                      value={transactionAmount}
+                      onChange={(e) => setTransactionAmount(e.target.value)}
+                      step="0.01"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder={transactionType === 'dividend' ? 'e.g., 25.00' : 'e.g., 1000 or -500'}
+                    />
+                  </div>
+                )}
+                {(transactionType === 'buy' || transactionType === 'sell' || transactionType === 'dividend_reinvest') && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Amount (optional; auto from qty × price)</label>
+                    <input
+                      type="number"
+                      value={transactionAmount}
+                      onChange={(e) => setTransactionAmount(e.target.value)}
+                      step="0.01"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="Leave blank to use quantity × price"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+                  <input
+                    type="text"
+                    value={transactionNotes}
+                    onChange={(e) => setTransactionNotes(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="Per-transaction memo"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleAddTransaction}
+                  disabled={transactionType !== 'cash' && !transactionTicker.trim()}
+                  className="flex-1 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Transaction
+                </button>
+                <button onClick={() => { setShowAddTransaction(false); cancelEdit(); }} className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction history drawer */}
+      {transactionHistoryTicker && (
+        <div className="fixed inset-0 flex justify-end z-50 pointer-events-none">
+          <div className="pointer-events-auto bg-white w-full max-w-lg shadow-2xl border-l border-gray-200 overflow-y-auto h-full" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-900">Transactions – {transactionHistoryTicker}</h3>
+                <button onClick={() => setTransactionHistoryTicker(null)} className="text-gray-600 hover:text-gray-900 p-1">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              {!editingTransaction ? (
+                <ul className="space-y-0">
+                  {transactionsForTicker.length === 0 && <p className="text-sm text-gray-700 py-4">No transactions yet.</p>}
+                  {transactionsForTicker.map((tx) => (
+                    <li key={tx.id} className="flex items-center justify-between py-3 px-2 border-b border-gray-200 hover:bg-gray-50 rounded">
+                      <span className="text-sm font-medium text-gray-900">
+                        {tx.date} {tx.type} {tx.quantity !== 0 ? tx.quantity : ''} {tx.amount !== 0 ? `$${tx.amount.toFixed(2)}` : ''}
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEditTransaction(tx)}
+                          className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
+                          aria-label="Edit transaction"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => tx.id && handleDeleteTransaction(tx.id)}
+                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                          aria-label="Delete transaction"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-800">Edit transaction</h4>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Type</label>
+                    <select
+                      value={transactionType}
+                      onChange={(e) => setTransactionType(e.target.value as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash')}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    >
+                      <option value="buy">Buy</option>
+                      <option value="sell">Sell</option>
+                      <option value="dividend">Dividend</option>
+                      <option value="dividend_reinvest">Dividend reinvest</option>
+                      <option value="cash">Cash</option>
+                    </select>
+                  </div>
+                  {transactionType !== 'cash' && (
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1">Ticker</label>
+                      <input
+                        type="text"
+                        value={transactionTicker}
+                        onChange={(e) => setTransactionTicker(e.target.value.toUpperCase())}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={transactionDate}
+                      onChange={(e) => setTransactionDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      value={transactionQuantity}
+                      onChange={(e) => setTransactionQuantity(e.target.value)}
+                      step="0.0001"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Price</label>
+                    <input
+                      type="number"
+                      value={transactionPrice}
+                      onChange={(e) => setTransactionPrice(e.target.value)}
+                      step="0.01"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Amount</label>
+                    <input
+                      type="number"
+                      value={transactionAmount}
+                      onChange={(e) => setTransactionAmount(e.target.value)}
+                      step="0.01"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Notes</label>
+                    <input
+                      type="text"
+                      value={transactionNotes}
+                      onChange={(e) => setTransactionNotes(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleUpdateTransaction}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingTransaction(null)}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

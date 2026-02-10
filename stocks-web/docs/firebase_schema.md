@@ -193,8 +193,9 @@ Portfolios are top-level collections that contain investment portfolios with pos
 
 **Structure:**
 ```
-/portfolios/{portfolioId}                    (Portfolio document)
-/portfolios/{portfolioId}/positions/{positionId}  (Position subcollection)
+/portfolios/{portfolioId}                              (Portfolio document)
+/portfolios/{portfolioId}/positions/{positionId}       (Position subcollection – stored aggregates)
+/portfolios/{portfolioId}/transactions/{transactionId} (Transaction subcollection – source of truth for changes)
 ```
 
 **Example: `/portfolios/abc123`**
@@ -202,13 +203,14 @@ Portfolios are top-level collections that contain investment portfolios with pos
 {
   "name": "Growth Portfolio",
   "description": "Long-term growth investments",
+  "cashBalance": 1250.00,
   "userId": null,
   "createdAt": "2024-11-20T10:00:00Z",
   "updatedAt": "2024-11-20T15:30:00Z"
 }
 ```
 
-**Example: `/portfolios/abc123/positions/xyz789`**
+**Example: `/portfolios/abc123/positions/xyz789`** (stored aggregate, one doc per ticker)
 ```json
 {
   "ticker": "AAPL",
@@ -222,28 +224,55 @@ Portfolios are top-level collections that contain investment portfolios with pos
 }
 ```
 
-**Fields:**
+**Example: `/portfolios/abc123/transactions/tx001`**
+```json
+{
+  "type": "buy",
+  "ticker": "AAPL",
+  "date": "2024-01-15",
+  "quantity": 100,
+  "price": 185.50,
+  "amount": -18550.00,
+  "notes": "",
+  "createdAt": "2024-11-20T10:15:00Z",
+  "updatedAt": "2024-11-20T10:15:00Z"
+}
+```
+
+**Portfolio document fields:**
 - `name` (string, required): Portfolio name
 - `description` (string, optional): Portfolio description
+- `cashBalance` (number, optional): Stored cash balance; updated when transactions are applied (sum of transaction amounts). Default 0.
 - `userId` (string, optional): User ID for multi-user support (future)
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
-**Position Fields:**
+**Position document (stored aggregate):** Positions are written/updated by `recomputeAndWriteAggregates` when transactions change. Only aggregate fields are derived from transactions; thesisId and notes are position-level and preserved.
 - `ticker` (string, required): Stock ticker symbol (uppercase)
-- `quantity` (number, required): Number of shares
-- `purchaseDate` (string, optional): ISO date string of purchase
-- `purchasePrice` (number, optional): Purchase price per share
-- `thesisId` (string, optional): Reference to investment thesis document
-- `notes` (string, optional): Additional notes about the position
+- `quantity` (number, required): Total position size in shares (aggregate)
+- `purchaseDate` (string, optional): Earliest transaction date for this ticker
+- `purchasePrice` (number, optional): Average price / cost basis (aggregate)
+- `thesisId` (string, optional): Position-level; link to investment thesis (editable on position, not from transactions)
+- `notes` (string, optional): Position-level notes (editable on position, not from transactions)
+- `createdAt` (timestamp): Creation timestamp
+- `updatedAt` (timestamp): Last update timestamp
+
+**Transaction document:** Source of truth for changes. Creating, updating, or deleting a transaction triggers recompute of affected position(s) and portfolio cashBalance.
+- `type` (string, required): One of `buy`, `sell`, `dividend`, `dividend_reinvest`, `cash`
+- `ticker` (string, optional): Ticker (null for type `cash` only)
+- `date` (string, required): ISO date (YYYY-MM-DD)
+- `quantity` (number): Shares; positive for buy/dividend_reinvest, negative for sell, 0 for dividend/cash
+- `price` (number, optional): Per-share price when applicable
+- `amount` (number, required): Cash impact in USD (+ in, - out)
+- `notes` (string, optional): Per-transaction memo
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
 **Benefits:**
-- ✅ Organized portfolio management with positions as subcollections
-- ✅ Optional linking to investment theses for tracking investment rationale
-- ✅ Flexible position tracking with optional date/price information
-- ✅ Supports multiple portfolios per user (when userId is implemented)
+- ✅ Transactions drive position and cash aggregates; positions are stored for fast reads
+- ✅ Cash balance and per-ticker position size / average price derived from transactions
+- ✅ Position-level thesisId and notes for display; transaction history available per ticker
+- ✅ Supports dividends, dividend reinvestment, and cash in/out (e.g. options as cash)
 
 ---
 

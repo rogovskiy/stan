@@ -5,6 +5,9 @@ import {
   getPortfolio
 } from '../../../../../lib/services/portfolioService';
 
+/**
+ * PUT position: metadata only (thesisId, notes). Quantity and cost come from transactions via recomputeAndWriteAggregates.
+ */
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ portfolioId: string; positionId: string }> }
@@ -12,78 +15,24 @@ export async function PUT(
   try {
     const { portfolioId, positionId } = await params;
     const body = await request.json();
-    const { ticker, quantity, purchaseDate, purchasePrice, thesisId, notes } = body;
-    
-    const updates: any = {};
-    
-    if (ticker !== undefined) {
-      if (typeof ticker !== 'string' || ticker.trim().length === 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Ticker cannot be empty',
-          },
-          { status: 400 }
-        );
-      }
-      updates.ticker = ticker.trim().toUpperCase();
-    }
-    
-    if (quantity !== undefined) {
-      if (typeof quantity !== 'number' || quantity <= 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Quantity must be a positive number',
-          },
-          { status: 400 }
-        );
-      }
-      updates.quantity = quantity;
-    }
-    
-    if (purchaseDate !== undefined) {
-      if (purchaseDate !== null && isNaN(Date.parse(purchaseDate))) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Invalid purchase date format',
-          },
-          { status: 400 }
-        );
-      }
-      updates.purchaseDate = purchaseDate || null;
-    }
-    
-    if (purchasePrice !== undefined) {
-      if (purchasePrice !== null && (typeof purchasePrice !== 'number' || purchasePrice < 0)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Purchase price must be a non-negative number',
-          },
-          { status: 400 }
-        );
-      }
-      updates.purchasePrice = purchasePrice || null;
-    }
-    
+    const { thesisId, notes } = body;
+
+    const updates: Record<string, string | null> = {};
     if (thesisId !== undefined) {
-      updates.thesisId = thesisId || null;
+      updates.thesisId = thesisId === null || thesisId === '' ? null : String(thesisId);
     }
-    
     if (notes !== undefined) {
-      updates.notes = notes || '';
+      updates.notes = typeof notes === 'string' ? notes : '';
     }
-    
+
+    if (Object.keys(updates).length === 0) {
+      const updatedPortfolio = await getPortfolio(portfolioId);
+      return NextResponse.json({ success: true, data: updatedPortfolio });
+    }
+
     await updatePosition(portfolioId, positionId, updates);
-    
     const updatedPortfolio = await getPortfolio(portfolioId);
-    
-    return NextResponse.json({
-      success: true,
-      data: updatedPortfolio,
-    });
+    return NextResponse.json({ success: true, data: updatedPortfolio });
   } catch (error) {
     console.error('API Error:', error);
     return NextResponse.json(

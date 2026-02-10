@@ -578,12 +578,32 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.beta != null ? kpis.beta.toFixed(2) : '—'}
               </p>
+              {kpis.beta != null && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {kpis.beta < 0.8
+                    ? 'Portfolio tends to move less than the market.'
+                    : kpis.beta <= 1.2
+                      ? 'Portfolio moves roughly in line with the market.'
+                      : 'Portfolio is more volatile than the market.'}
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Sharpe</p>
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.sharpe != null ? kpis.sharpe.toFixed(2) : '—'}
               </p>
+              {kpis.sharpe != null && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {kpis.sharpe < 0
+                    ? 'Return is below the risk-free rate for the volatility taken.'
+                    : kpis.sharpe < 1
+                      ? 'Modest risk-adjusted return.'
+                      : kpis.sharpe < 2
+                        ? 'Good risk-adjusted return per unit of risk.'
+                        : 'Strong risk-adjusted return per unit of risk.'}
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Max historical drawdown</p>

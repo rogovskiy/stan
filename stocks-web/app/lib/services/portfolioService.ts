@@ -13,6 +13,20 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
+/** Risk band: portfolio size range and limits (defined in portfolio settings). */
+export interface Band {
+  id: string;
+  name: string;
+  /** Min portfolio size % (e.g. 10 for 10%). */
+  sizeMinPct: number;
+  /** Max portfolio size % (e.g. 20 for 20%). */
+  sizeMaxPct: number;
+  /** Max single position size as % of portfolio (optional). */
+  maxPositionSizePct?: number;
+  /** Max drawdown % (optional). */
+  maxDrawdownPct?: number;
+}
+
 export interface Position {
   id?: string;
   ticker: string;
@@ -21,6 +35,8 @@ export interface Position {
   purchasePrice?: number;
   thesisId?: string; // Reference to investment thesis document (position-level)
   notes?: string; // Position-level notes
+  /** Id of band from portfolio.bands (risk management). */
+  bandId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -48,6 +64,8 @@ export interface Portfolio {
   description?: string;
   accountType?: PortfolioAccountType;
   cashBalance?: number; // Stored aggregate; updated by recomputeAndWriteAggregates
+  /** Risk bands (portfolio size ranges and limits), defined in portfolio settings. */
+  bands?: Band[];
   positions?: Position[];
   createdAt?: string;
   updatedAt?: string;
@@ -113,12 +131,23 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
         purchasePrice: posData.purchasePrice,
         thesisId: posData.thesisId,
         notes: posData.notes,
+        bandId: posData.bandId ?? null,
         createdAt: posData.createdAt?.toDate?.()?.toISOString() || posData.createdAt,
         updatedAt: posData.updatedAt?.toDate?.()?.toISOString() || posData.updatedAt,
       });
     });
     
     const cashBalance = typeof portfolioData.cashBalance === 'number' ? portfolioData.cashBalance : 0;
+    const bands: Band[] = Array.isArray(portfolioData.bands)
+      ? portfolioData.bands.map((b: { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number }) => ({
+          id: b.id,
+          name: b.name,
+          sizeMinPct: Number(b.sizeMinPct),
+          sizeMaxPct: Number(b.sizeMaxPct),
+          maxPositionSizePct: b.maxPositionSizePct != null ? Number(b.maxPositionSizePct) : undefined,
+          maxDrawdownPct: b.maxDrawdownPct != null ? Number(b.maxDrawdownPct) : undefined,
+        }))
+      : [];
 
     return {
       id: portfolioSnap.id,
@@ -126,6 +155,7 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       description: portfolioData.description,
       accountType: portfolioData.accountType === 'ira' ? 'ira' : 'taxable',
       cashBalance,
+      bands,
       positions: positions.sort((a, b) => a.ticker.localeCompare(b.ticker)),
       createdAt: portfolioData.createdAt?.toDate?.()?.toISOString() || portfolioData.createdAt,
       updatedAt: portfolioData.updatedAt?.toDate?.()?.toISOString() || portfolioData.updatedAt,
@@ -148,6 +178,7 @@ export async function createPortfolio(portfolio: Omit<Portfolio, 'id' | 'created
       description: portfolio.description || '',
       accountType: portfolio.accountType || 'taxable',
       cashBalance: 0,
+      bands: portfolio.bands ?? [],
       userId: portfolio.userId || null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -169,10 +200,12 @@ export async function updatePortfolio(
 ): Promise<void> {
   try {
     const portfolioRef = doc(db, 'portfolios', portfolioId);
-    await updateDoc(portfolioRef, {
-      ...updates,
-      updatedAt: serverTimestamp(),
-    });
+    const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.description !== undefined) payload.description = updates.description;
+    if (updates.accountType !== undefined) payload.accountType = updates.accountType;
+    if (updates.bands !== undefined) payload.bands = updates.bands;
+    await updateDoc(portfolioRef, payload);
   } catch (error) {
     console.error(`Error updating portfolio ${portfolioId}:`, error);
     throw new Error('Failed to update portfolio in Firebase');
@@ -224,6 +257,7 @@ export async function addPosition(portfolioId: string, position: Omit<Position, 
       purchasePrice: position.purchasePrice || null,
       thesisId: position.thesisId || null,
       notes: position.notes || '',
+      bandId: position.bandId ?? null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -248,11 +282,15 @@ export async function updatePosition(
 ): Promise<void> {
   try {
     const positionRef = doc(db, 'portfolios', portfolioId, 'positions', positionId);
-    await updateDoc(positionRef, {
-      ...updates,
-      ticker: updates.ticker ? updates.ticker.toUpperCase() : undefined,
-      updatedAt: serverTimestamp(),
-    });
+    const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    if (updates.ticker !== undefined) payload.ticker = updates.ticker.toUpperCase();
+    if (updates.quantity !== undefined) payload.quantity = updates.quantity;
+    if (updates.purchaseDate !== undefined) payload.purchaseDate = updates.purchaseDate;
+    if (updates.purchasePrice !== undefined) payload.purchasePrice = updates.purchasePrice;
+    if (updates.thesisId !== undefined) payload.thesisId = updates.thesisId;
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+    if (updates.bandId !== undefined) payload.bandId = updates.bandId;
+    await updateDoc(positionRef, payload);
     
     // Update portfolio's updatedAt timestamp
     await updatePortfolio(portfolioId, {});

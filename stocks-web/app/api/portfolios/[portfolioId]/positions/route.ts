@@ -13,7 +13,7 @@ export async function POST(
   try {
     const { portfolioId } = await params;
     const body = await request.json();
-    const { ticker, quantity, purchaseDate, purchasePrice, thesisId, notes } = body;
+    const { ticker, quantity, purchaseDate, purchasePrice, thesisId, notes, bandId } = body;
     
     if (!ticker || typeof ticker !== 'string' || ticker.trim().length === 0) {
       return NextResponse.json(
@@ -64,6 +64,7 @@ export async function POST(
       purchasePrice: purchasePrice || undefined,
       thesisId: thesisId || undefined,
       notes: notes || '',
+      bandId: bandId === null || bandId === '' ? undefined : String(bandId),
     });
     
     const updatedPortfolio = await getPortfolio(portfolioId);
@@ -78,6 +79,7 @@ export async function POST(
         purchasePrice: purchasePrice || undefined,
         thesisId: thesisId || undefined,
         notes: notes || '',
+        bandId: bandId === null || bandId === '' ? null : String(bandId),
       },
       portfolio: updatedPortfolio,
     });

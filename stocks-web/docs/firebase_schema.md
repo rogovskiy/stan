@@ -204,6 +204,16 @@ Portfolios are top-level collections that contain investment portfolios with pos
   "name": "Growth Portfolio",
   "description": "Long-term growth investments",
   "cashBalance": 1250.00,
+  "bands": [
+    {
+      "id": "band-uuid-1",
+      "name": "Core",
+      "sizeMinPct": 10,
+      "sizeMaxPct": 20,
+      "maxPositionSizePct": 5,
+      "maxDrawdownPct": 15
+    }
+  ],
   "userId": null,
   "createdAt": "2024-11-20T10:00:00Z",
   "updatedAt": "2024-11-20T15:30:00Z"
@@ -219,6 +229,7 @@ Portfolios are top-level collections that contain investment portfolios with pos
   "purchasePrice": 185.50,
   "thesisId": "thesis-123",
   "notes": "Bought on iPhone launch thesis",
+  "bandId": "band-uuid-1",
   "createdAt": "2024-11-20T10:15:00Z",
   "updatedAt": "2024-11-20T10:15:00Z"
 }
@@ -243,17 +254,19 @@ Portfolios are top-level collections that contain investment portfolios with pos
 - `name` (string, required): Portfolio name
 - `description` (string, optional): Portfolio description
 - `cashBalance` (number, optional): Stored cash balance; updated when transactions are applied (sum of transaction amounts). Default 0.
+- `bands` (array, optional): Risk bands for this portfolio. Each band has: `id`, `name`, `sizeMinPct`, `sizeMaxPct`, and optionally `maxPositionSizePct`, `maxDrawdownPct`. Defined in portfolio settings; positions can reference a band via `bandId`.
 - `userId` (string, optional): User ID for multi-user support (future)
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
-**Position document (stored aggregate):** Positions are written/updated by `recomputeAndWriteAggregates` when transactions change. Only aggregate fields are derived from transactions; thesisId and notes are position-level and preserved.
+**Position document (stored aggregate):** Positions are written/updated by `recomputeAndWriteAggregates` when transactions change. Only aggregate fields are derived from transactions; thesisId, notes, and bandId are position-level and preserved.
 - `ticker` (string, required): Stock ticker symbol (uppercase)
 - `quantity` (number, required): Total position size in shares (aggregate)
 - `purchaseDate` (string, optional): Earliest transaction date for this ticker
 - `purchasePrice` (number, optional): Average price / cost basis (aggregate)
 - `thesisId` (string, optional): Position-level; link to investment thesis (editable on position, not from transactions)
 - `notes` (string, optional): Position-level notes (editable on position, not from transactions)
+- `bandId` (string, optional): Id of a band from this portfolio's `bands` array (risk management; assign in position edit dialog)
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 

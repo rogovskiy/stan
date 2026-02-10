@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
-import { Position, Portfolio, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
+import { Position, Portfolio, type Band, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
@@ -60,7 +60,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [settingsName, setSettingsName] = useState('');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsAccountType, setSettingsAccountType] = useState<PortfolioAccountType>('taxable');
+  const [settingsBands, setSettingsBands] = useState<Band[]>([]);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [positionBandId, setPositionBandId] = useState('');
   const [importInProgress, setImportInProgress] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [cashTransactions, setCashTransactions] = useState<Transaction[]>([]);
@@ -239,8 +241,33 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       setSettingsName(selectedPortfolio.name);
       setSettingsDescription(selectedPortfolio.description || '');
       setSettingsAccountType(selectedPortfolio.accountType || 'taxable');
+      setSettingsBands(selectedPortfolio.bands ?? []);
       setSettingsOpen(true);
     }
+  };
+
+  const addBand = () => {
+    setSettingsBands((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        name: '',
+        sizeMinPct: 0,
+        sizeMaxPct: 10,
+        maxPositionSizePct: undefined,
+        maxDrawdownPct: undefined,
+      },
+    ]);
+  };
+
+  const updateBand = (id: string, updates: Partial<Band>) => {
+    setSettingsBands((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, ...updates } : b))
+    );
+  };
+
+  const removeBand = (id: string) => {
+    setSettingsBands((prev) => prev.filter((b) => b.id !== id));
   };
 
   const handleSaveSettings = async () => {
@@ -255,6 +282,14 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
           name: settingsName.trim(),
           description: settingsDescription.trim(),
           accountType: settingsAccountType,
+          bands: settingsBands.map((b) => ({
+            id: b.id,
+            name: b.name.trim(),
+            sizeMinPct: b.sizeMinPct,
+            sizeMaxPct: b.sizeMaxPct,
+            maxPositionSizePct: b.maxPositionSizePct,
+            maxDrawdownPct: b.maxDrawdownPct,
+          })),
         }),
       });
       const result = await response.json();
@@ -384,12 +419,14 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     setPositionPurchasePrice('');
     setPositionThesisId('');
     setPositionNotes('');
+    setPositionBandId('');
   };
 
   const startEditPositionMetadata = (position: Position) => {
     setEditingPositionMetadata(position);
     setPositionThesisId(position.thesisId || '');
     setPositionNotes(position.notes || '');
+    setPositionBandId(position.bandId ?? '');
   };
 
   const loadTransactionsForTicker = async (ticker: string) => {
@@ -433,7 +470,11 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ thesisId: positionThesisId || null, notes: positionNotes || '' }),
+          body: JSON.stringify({
+            thesisId: positionThesisId || null,
+            notes: positionNotes || '',
+            bandId: positionBandId || null,
+          }),
         }
       );
       const result = await response.json();
@@ -953,7 +994,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                           type="text"
                           value={settingsName}
                           onChange={(e) => setSettingsName(e.target.value)}
-                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="mt-1 block w-full px-3 py-2 text-black border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         />
                       </label>
                       <label className="block">
@@ -962,7 +1003,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                           value={settingsDescription}
                           onChange={(e) => setSettingsDescription(e.target.value)}
                           rows={2}
-                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="mt-1 block w-full px-3 py-2 text-black border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         />
                       </label>
                       <div>
@@ -989,6 +1030,112 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                             <span className="text-sm">IRA</span>
                           </label>
                         </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-gray-600">Risk bands</span>
+                          <button
+                            type="button"
+                            onClick={addBand}
+                            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                          >
+                            + Add band
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-2">
+                          Bands define portfolio size ranges (e.g. 10–20%) and optional limits (max position size, max drawdown). Assign bands to positions in the position edit dialog.
+                        </p>
+                        {settingsBands.length === 0 ? (
+                          <p className="text-sm text-gray-400 italic">No bands defined.</p>
+                        ) : (
+                          <ul className="space-y-3">
+                            {settingsBands.map((band) => (
+                              <li
+                                key={band.id}
+                                className="border border-gray-200 rounded-lg p-3 bg-gray-50/50 space-y-2"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <input
+                                    type="text"
+                                    value={band.name}
+                                    onChange={(e) => updateBand(band.id, { name: e.target.value })}
+                                    placeholder="Band name"
+                                    className="flex-1 min-w-0 px-2 py-1.5 text-sm text-black border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => removeBand(band.id)}
+                                    className="p-1.5 text-gray-400 hover:text-red-600 rounded"
+                                    title="Remove band"
+                                    aria-label="Remove band"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                  <label className="flex flex-col gap-0.5">
+                                    <span className="text-gray-500">Size range %</span>
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={100}
+                                        step={0.5}
+                                        value={band.sizeMinPct}
+                                        onChange={(e) => updateBand(band.id, { sizeMinPct: parseFloat(e.target.value) || 0 })}
+                                        className="w-16 px-2 py-1 text-black border border-gray-300 rounded"
+                                      />
+                                      <span className="text-gray-400">–</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={100}
+                                        step={0.5}
+                                        value={band.sizeMaxPct}
+                                        onChange={(e) => updateBand(band.id, { sizeMaxPct: parseFloat(e.target.value) || 0 })}
+                                        className="w-16 px-2 py-1 text-black border border-gray-300 rounded"
+                                      />
+                                    </div>
+                                  </label>
+                                  <label className="flex flex-col gap-0.5">
+                                    <span className="text-gray-500">Max position %</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step={0.5}
+                                      placeholder="—"
+                                      value={band.maxPositionSizePct ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        updateBand(band.id, { maxPositionSizePct: v === '' ? undefined : parseFloat(v) || 0 });
+                                      }}
+                                      className="w-full px-2 py-1 text-black border border-gray-300 rounded"
+                                    />
+                                  </label>
+                                  <label className="flex flex-col gap-0.5 col-span-2">
+                                    <span className="text-gray-500">Max drawdown %</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step={0.5}
+                                      placeholder="—"
+                                      value={band.maxDrawdownPct ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        updateBand(band.id, { maxDrawdownPct: v === '' ? undefined : parseFloat(v) || 0 });
+                                      }}
+                                      className="w-full max-w-[8rem] px-2 py-1 text-black border border-gray-300 rounded"
+                                    />
+                                  </label>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 pt-2">
                         <button
@@ -1077,97 +1224,169 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedPortfolio.positions.map((position) => {
-                          const tickerKey = position.ticker.toUpperCase();
-                          const currentPrice = positionPrices[tickerKey];
-                          const avgCost = position.purchasePrice ?? null;
-                          const totalValue = currentPrice != null ? position.quantity * currentPrice : null;
-                          const returnSinceBuy =
-                            avgCost != null && avgCost > 0 && currentPrice != null
-                              ? ((currentPrice - avgCost) / avgCost) * 100
+                        {(() => {
+                          const bands = selectedPortfolio.bands ?? [];
+                          const positions = selectedPortfolio.positions ?? [];
+                          type Section = { bandId: string | null; bandLabel: string; band: Band | null; positions: Position[] };
+                          const sections: Section[] = [];
+                          for (const band of bands) {
+                            const bandPositions = positions.filter((p) => p.bandId === band.id);
+                            if (bandPositions.length > 0) {
+                              sections.push({
+                                bandId: band.id,
+                                bandLabel: band.name || `${band.sizeMinPct}–${band.sizeMaxPct}%`,
+                                band,
+                                positions: bandPositions,
+                              });
+                            }
+                          }
+                          const unassigned = positions.filter((p) => !p.bandId);
+                          if (unassigned.length > 0) {
+                            sections.push({ bandId: null, bandLabel: 'No band', band: null, positions: unassigned });
+                          }
+                          if (sections.length === 0 && positions.length > 0) {
+                            sections.push({ bandId: null, bandLabel: 'No band', band: null, positions });
+                          }
+                          return sections.map((section) => {
+                            const bandTotalValue = totalPortfolioValue != null && totalPortfolioValue > 0
+                              ? section.positions.reduce((sum, p) => {
+                                  const price = positionPrices[p.ticker.toUpperCase()];
+                                  return sum + (price != null ? p.quantity * price : 0);
+                                }, 0)
                               : null;
-                          const weightPct =
-                            totalPortfolioValue != null && totalPortfolioValue > 0 && totalValue != null
-                              ? (totalValue / totalPortfolioValue) * 100
+                            const actualPct = bandTotalValue != null && totalPortfolioValue != null && totalPortfolioValue > 0
+                              ? (bandTotalValue / totalPortfolioValue) * 100
                               : null;
-                          return (
-                            <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-3 px-4 font-medium text-gray-900">{position.ticker}</td>
-                              <td className="py-3 px-4 text-right text-gray-700">
-                                {position.quantity.toLocaleString()}
-                              </td>
-                              <td className="py-3 px-4 text-right text-gray-700">
-                                {weightPct != null ? `${weightPct.toFixed(1)}%` : ''}
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                {returnSinceBuy != null ? (
-                                  <span className={returnSinceBuy >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                    {returnSinceBuy >= 0 ? '+' : ''}{returnSinceBuy.toFixed(1)}%
-                                  </span>
-                                ) : (
-                                  ''
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-right text-gray-700" />
-                              <td className="py-3 px-4 text-gray-700">
-                                {position.thesisId ? 'Linked' : ''}
-                              </td>
-                              <td className="py-3 px-4 text-right text-gray-700">
-                                {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => startEditPositionMetadata(position)}
-                                    title="Edit thesis and notes"
-                                    aria-label="Edit position metadata"
-                                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                    </svg>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => openTransactionHistory(position.ticker)}
-                                    title="Transaction history"
-                                    aria-label="Transaction history"
-                                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeletePosition(position.id!)}
-                                    title="Delete position"
-                                    aria-label="Delete position"
-                                    className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                  </button>
-                                  {position.thesisId && (
-                                    <button
-                                      type="button"
-                                      onClick={() => router.push(`/${position.ticker}/thesis`)}
-                                      title="View thesis"
-                                      aria-label="View thesis"
-                                      className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                    >
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                      </svg>
-                                    </button>
+                            const targetRange = section.band
+                              ? `${section.band.sizeMinPct}–${section.band.sizeMaxPct}%`
+                              : null;
+                            const isViolation = section.band != null && actualPct != null &&
+                              (actualPct < section.band.sizeMinPct || actualPct > section.band.sizeMaxPct);
+                            return (
+                            <Fragment key={section.bandId ?? 'none'}>
+                              <tr className={`border-b border-gray-200 ${isViolation ? 'bg-red-50 border-l-4 border-l-red-500' : 'bg-gray-100'}`}>
+                                <td colSpan={8} className="py-2 px-4 font-semibold text-gray-800">
+                                  {section.bandLabel}
+                                  {isViolation && (
+                                    <span className="ml-2 text-red-700 font-medium text-xs uppercase tracking-wide">Violation</span>
                                   )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                                  {actualPct != null && (
+                                    <span className={`font-normal ml-2 ${isViolation ? 'text-red-800' : 'text-gray-600'}`}>
+                                      — {actualPct.toFixed(1)}% of portfolio
+                                      {targetRange != null && (
+                                        <span> (target {targetRange})</span>
+                                      )}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                              {section.positions.map((position) => {
+                                const tickerKey = position.ticker.toUpperCase();
+                                const currentPrice = positionPrices[tickerKey];
+                                const avgCost = position.purchasePrice ?? null;
+                                const totalValue = currentPrice != null ? position.quantity * currentPrice : null;
+                                const returnSinceBuy =
+                                  avgCost != null && avgCost > 0 && currentPrice != null
+                                    ? ((currentPrice - avgCost) / avgCost) * 100
+                                    : null;
+                                const weightPct =
+                                  totalPortfolioValue != null && totalPortfolioValue > 0 && totalValue != null
+                                    ? (totalValue / totalPortfolioValue) * 100
+                                    : null;
+                                const maxPositionPct = section.band?.maxPositionSizePct;
+                                const isOversized = maxPositionPct != null && weightPct != null && weightPct > maxPositionPct;
+                                return (
+                                  <tr
+                                    key={position.id}
+                                    className={`border-b border-gray-100 hover:bg-gray-50 ${isOversized ? 'bg-amber-50' : ''}`}
+                                  >
+                                    <td className="py-3 px-4 font-medium text-gray-900">
+                                      {position.ticker}
+                                      {isOversized && (
+                                        <span className="ml-2 text-amber-700 font-normal text-xs" title={`Position is ${weightPct?.toFixed(1)}% of portfolio; max for this band is ${maxPositionPct}%`}>
+                                          Oversized
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-gray-700">
+                                      {position.quantity.toLocaleString()}
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-gray-700">
+                                      {weightPct != null ? `${weightPct.toFixed(1)}%` : ''}
+                                    </td>
+                                    <td className="py-3 px-4 text-right">
+                                      {returnSinceBuy != null ? (
+                                        <span className={returnSinceBuy >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                          {returnSinceBuy >= 0 ? '+' : ''}{returnSinceBuy.toFixed(1)}%
+                                        </span>
+                                      ) : (
+                                        ''
+                                      )}
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-gray-700" />
+                                    <td className="py-3 px-4 text-gray-700">
+                                      {position.thesisId ? 'Linked' : ''}
+                                    </td>
+                                    <td className="py-3 px-4 text-right text-gray-700">
+                                      {totalValue != null ? `$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                                    </td>
+                                    <td className="py-3 px-4">
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => startEditPositionMetadata(position)}
+                                          title="Edit thesis and notes"
+                                          aria-label="Edit position metadata"
+                                          className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                        >
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => openTransactionHistory(position.ticker)}
+                                          title="Transaction history"
+                                          aria-label="Transaction history"
+                                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                        >
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeletePosition(position.id!)}
+                                          title="Delete position"
+                                          aria-label="Delete position"
+                                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                        >
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                          </svg>
+                                        </button>
+                                        {position.thesisId && (
+                                          <button
+                                            type="button"
+                                            onClick={() => router.push(`/${position.ticker}/thesis`)}
+                                            title="View thesis"
+                                            aria-label="View thesis"
+                                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                          >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                            </svg>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </Fragment>
+                            );
+                          });
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -1402,7 +1621,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     type="text"
                     value={portfolioName}
                     onChange={(e) => setPortfolioName(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., Growth Portfolio"
                   />
                 </div>
@@ -1414,7 +1633,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     value={portfolioDescription}
                     onChange={(e) => setPortfolioDescription(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Optional description..."
                   />
                 </div>
@@ -1459,12 +1678,27 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
               </div>
               <div className="space-y-4">
                 <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Band (optional)</label>
+                  <select
+                    value={positionBandId}
+                    onChange={(e) => setPositionBandId(e.target.value)}
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">None</option>
+                    {(selectedPortfolio?.bands ?? []).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name || `Band ${b.sizeMinPct}–${b.sizeMaxPct}%`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Thesis ID (optional)</label>
                   <input
                     type="text"
                     value={positionThesisId}
                     onChange={(e) => setPositionThesisId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     placeholder="Link to investment thesis"
                   />
                 </div>
@@ -1474,7 +1708,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     value={positionNotes}
                     onChange={(e) => setPositionNotes(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     placeholder="Position notes..."
                   />
                 </div>
@@ -1514,7 +1748,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   <select
                     value={transactionType}
                     onChange={(e) => setTransactionType(e.target.value as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="buy">Buy</option>
                     <option value="sell">Sell</option>
@@ -1530,7 +1764,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       type="text"
                       value={transactionTicker}
                       onChange={(e) => setTransactionTicker(e.target.value.toUpperCase())}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       placeholder="e.g., AAPL"
                     />
                   </div>
@@ -1541,7 +1775,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     type="date"
                     value={transactionDate}
                     onChange={(e) => setTransactionDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 {(transactionType === 'buy' || transactionType === 'sell' || transactionType === 'dividend_reinvest') && (
@@ -1555,7 +1789,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         value={transactionQuantity}
                         onChange={(e) => setTransactionQuantity(e.target.value)}
                         step="0.0001"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                         placeholder={transactionType === 'sell' ? 'e.g., -10' : 'e.g., 100'}
                       />
                     </div>
@@ -1567,7 +1801,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         onChange={(e) => setTransactionPrice(e.target.value)}
                         min="0"
                         step="0.01"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                         placeholder="e.g., 150.00"
                       />
                     </div>
@@ -1581,7 +1815,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       value={transactionAmount}
                       onChange={(e) => setTransactionAmount(e.target.value)}
                       step="0.01"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       placeholder={transactionType === 'dividend' ? 'e.g., 25.00' : 'e.g., 1000 or -500'}
                     />
                   </div>
@@ -1594,7 +1828,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       value={transactionAmount}
                       onChange={(e) => setTransactionAmount(e.target.value)}
                       step="0.01"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       placeholder="Leave blank to use quantity × price"
                     />
                   </div>
@@ -1605,7 +1839,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     type="text"
                     value={transactionNotes}
                     onChange={(e) => setTransactionNotes(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     placeholder="Per-transaction memo"
                   />
                 </div>
@@ -1681,7 +1915,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     <select
                       value={transactionType}
                       onChange={(e) => setTransactionType(e.target.value as 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash')}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     >
                       <option value="buy">Buy</option>
                       <option value="sell">Sell</option>
@@ -1697,7 +1931,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         type="text"
                         value={transactionTicker}
                         onChange={(e) => setTransactionTicker(e.target.value.toUpperCase())}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                        className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                       />
                     </div>
                   )}
@@ -1707,7 +1941,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       type="date"
                       value={transactionDate}
                       onChange={(e) => setTransactionDate(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     />
                   </div>
                   <div>
@@ -1717,7 +1951,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       value={transactionQuantity}
                       onChange={(e) => setTransactionQuantity(e.target.value)}
                       step="0.0001"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     />
                   </div>
                   <div>
@@ -1727,7 +1961,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       value={transactionPrice}
                       onChange={(e) => setTransactionPrice(e.target.value)}
                       step="0.01"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     />
                   </div>
                   <div>
@@ -1737,7 +1971,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       value={transactionAmount}
                       onChange={(e) => setTransactionAmount(e.target.value)}
                       step="0.01"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     />
                   </div>
                   <div>
@@ -1746,7 +1980,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       type="text"
                       value={transactionNotes}
                       onChange={(e) => setTransactionNotes(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg text-sm bg-white"
                     />
                   </div>
                   <div className="flex gap-2">
@@ -1798,7 +2032,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     type="text"
                     value={watchlistTicker}
                     onChange={(e) => setWatchlistTicker(e.target.value.toUpperCase())}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., AAPL"
                   />
                 </div>
@@ -1809,7 +2043,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   <select
                     value={watchlistPriority}
                     onChange={(e) => setWatchlistPriority(e.target.value as 'low' | 'medium' | 'high')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
@@ -1826,7 +2060,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     onChange={(e) => setWatchlistTargetPrice(e.target.value)}
                     min="0"
                     step="0.01"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., 150.00"
                   />
                   <p className="text-xs text-gray-500 mt-1">
@@ -1841,7 +2075,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     type="text"
                     value={watchlistThesisId}
                     onChange={(e) => setWatchlistThesisId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Link to investment thesis"
                   />
                   <p className="text-xs text-gray-500 mt-1">
@@ -1856,7 +2090,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     value={watchlistNotes}
                     onChange={(e) => setWatchlistNotes(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Optional notes about this stock..."
                   />
                 </div>

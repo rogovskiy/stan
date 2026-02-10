@@ -3,9 +3,7 @@ import {
   getPortfolio, 
   updatePortfolio, 
   deletePortfolio,
-  addPosition,
-  updatePosition,
-  deletePosition
+  type Band
 } from '../../../lib/services/portfolioService';
 
 export async function GET(
@@ -49,7 +47,7 @@ export async function PUT(
   try {
     const { portfolioId } = await params;
     const body = await request.json();
-    const { name, description, accountType } = body;
+    const { name, description, accountType, bands } = body;
     
     const updates: Record<string, unknown> = {};
     if (name !== undefined) {
@@ -75,6 +73,32 @@ export async function PUT(
         );
       }
       updates.accountType = accountType;
+    }
+    if (bands !== undefined) {
+      if (!Array.isArray(bands)) {
+        return NextResponse.json(
+          { success: false, error: 'bands must be an array' },
+          { status: 400 }
+        );
+      }
+      const validated: Band[] = bands.map((b: unknown, i: number) => {
+        if (!b || typeof b !== 'object' || !('id' in b) || !('name' in b) || !('sizeMinPct' in b) || !('sizeMaxPct' in b)) {
+          throw new Error(`bands[${i}] must have id, name, sizeMinPct, sizeMaxPct`);
+        }
+        const x = b as { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number };
+        if (typeof x.sizeMinPct !== 'number' || typeof x.sizeMaxPct !== 'number' || x.sizeMinPct < 0 || x.sizeMaxPct > 100 || x.sizeMinPct > x.sizeMaxPct) {
+          throw new Error(`bands[${i}]: sizeMinPct/sizeMaxPct must be 0-100 with min <= max`);
+        }
+        return {
+          id: String(x.id),
+          name: String(x.name).trim(),
+          sizeMinPct: x.sizeMinPct,
+          sizeMaxPct: x.sizeMaxPct,
+          maxPositionSizePct: x.maxPositionSizePct != null ? Number(x.maxPositionSizePct) : undefined,
+          maxDrawdownPct: x.maxDrawdownPct != null ? Number(x.maxDrawdownPct) : undefined,
+        };
+      });
+      updates.bands = validated;
     }
     
     await updatePortfolio(portfolioId, updates);

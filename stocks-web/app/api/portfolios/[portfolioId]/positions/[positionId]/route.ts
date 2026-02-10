@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { 
   updatePosition,
   deletePosition,
-  getPortfolio
+  getPortfolio,
+  type Position
 } from '../../../../../lib/services/portfolioService';
 
 /**
- * PUT position: metadata only (thesisId, notes). Quantity and cost come from transactions via recomputeAndWriteAggregates.
+ * PUT position: metadata only (thesisId, notes, bandId). Quantity and cost come from transactions via recomputeAndWriteAggregates.
  */
 export async function PUT(
   request: Request,
@@ -15,14 +16,17 @@ export async function PUT(
   try {
     const { portfolioId, positionId } = await params;
     const body = await request.json();
-    const { thesisId, notes } = body;
+    const { thesisId, notes, bandId } = body;
 
-    const updates: Record<string, string | null> = {};
+    const updates: Partial<Position> = {};
     if (thesisId !== undefined) {
       updates.thesisId = thesisId === null || thesisId === '' ? null : String(thesisId);
     }
     if (notes !== undefined) {
       updates.notes = typeof notes === 'string' ? notes : '';
+    }
+    if (bandId !== undefined) {
+      updates.bandId = bandId === null || bandId === '' ? null : String(bandId);
     }
 
     if (Object.keys(updates).length === 0) {

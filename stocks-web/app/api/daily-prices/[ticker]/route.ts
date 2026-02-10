@@ -56,14 +56,10 @@ export async function GET(
       );
     }
 
-    console.log(`Daily Prices API Request: ${ticker}, period: ${period}`);
-
     try {
       // Calculate start date based on period
       const startDate = getStartDateFromPeriod(period);
       const startYear = startDate.getFullYear();
-      
-      console.log(`Start date: ${startDate.toISOString().split('T')[0]} (year: ${startYear})`);
 
       // Get consolidated price data document from Firebase
       const priceDataRef = doc(db, 'tickers', ticker.toUpperCase(), 'price', 'consolidated');
@@ -89,8 +85,6 @@ export async function GET(
       });
       yearsToFetch.sort((a, b) => a - b);
 
-      console.log(`Found ${yearsToFetch.length} years to fetch: ${yearsToFetch.join(', ')}`);
-
       // Fetch price data from storage for each year
       const allPriceData: Record<string, any> = {};
       const normalizedStartDate = new Date(startDate);
@@ -102,21 +96,13 @@ export async function GET(
 
         // Handle both camelCase and snake_case field names
         const downloadUrl = yearData.downloadUrl || yearData.download_url;
-        if (!downloadUrl) {
-          console.log(`No download URL for year ${year}, skipping`);
-          continue;
-        }
+        if (!downloadUrl) continue;
 
         try {
-          console.log(`Fetching data for year ${year} from ${downloadUrl}`);
           const response = await fetch(downloadUrl);
-          if (!response.ok) {
-            console.error(`Failed to fetch data for year ${year}: ${response.statusText}`);
-            continue;
-          }
+          if (!response.ok) continue;
 
           const annualData = await response.json();
-          
           // Filter by start date and add to allPriceData
           Object.entries(annualData.data || {}).forEach(([dateStr, dayData]: [string, any]) => {
             const date = new Date(dateStr);
@@ -125,8 +111,8 @@ export async function GET(
               allPriceData[dateStr] = dayData;
             }
           });
-        } catch (error) {
-          console.error(`Error fetching data for year ${year}:`, error);
+        } catch {
+          // Skip year on fetch/parse error
         }
       }
 
@@ -145,8 +131,6 @@ export async function GET(
         }))
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      console.log(`Retrieved ${dailyPriceData.length} data points from ${dailyPriceData[0]?.date || 'N/A'} to ${dailyPriceData[dailyPriceData.length - 1]?.date || 'N/A'}`);
-
       const response: DailyPriceResponse = {
         symbol: ticker.toUpperCase(),
         companyName: companyName,
@@ -164,15 +148,13 @@ export async function GET(
       return NextResponse.json(response);
 
     } catch (error) {
-      console.error(`Failed to fetch daily price data for ${ticker}:`, error);
       return NextResponse.json(
         { error: 'Failed to fetch daily price data', details: error instanceof Error ? error.message : 'Unknown error' },
         { status: 500 }
       );
     }
 
-  } catch (error) {
-    console.error('Unexpected error in daily prices API:', error);
+  } catch {
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

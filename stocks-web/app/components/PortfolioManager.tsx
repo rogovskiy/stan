@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Position, Portfolio, type Band, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
+import PortfolioConcerns from './PortfolioConcerns';
+import TodoPopover from './TodoPopover';
 
 interface PortfolioManagerProps {
   initialPortfolioId?: string;
@@ -963,7 +965,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       <p className="text-sm text-gray-600 mt-1">{selectedPortfolio.description}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-4">
                     <p className="text-lg font-semibold text-gray-900">
                       Cash: ${((selectedPortfolio.cashBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
@@ -972,6 +974,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         Total value: ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
                     )}
+                    <TodoPopover />
                     <button
                       type="button"
                       onClick={openSettings}
@@ -1202,9 +1205,17 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
 
               <div className="flex-1 overflow-y-auto p-6">
                 {selectedPortfolio.id && (
-                  <div className="mb-6">
-                    <PortfolioBenchmarkChart portfolioId={selectedPortfolio.id} />
-                  </div>
+                  <>
+                    <div className="mb-6">
+                      <PortfolioConcerns
+                        portfolioId={selectedPortfolio.id}
+                        onTickerClick={(ticker) => router.push(`/${ticker}/value`)}
+                      />
+                    </div>
+                    <div className="mb-6">
+                      <PortfolioBenchmarkChart portfolioId={selectedPortfolio.id} />
+                    </div>
+                  </>
                 )}
                 {selectedPortfolio.id && (() => {
                   const systematicRisks: { label: string; level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' }[] = [

@@ -634,6 +634,14 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                   Recovery: {kpis.maxDrawdownRecovery.recoveryDays} day{kpis.maxDrawdownRecovery.recoveryDays !== 1 ? 's' : ''}
                 </p>
               )}
+              {kpis.benchmarkMaxDrawdown != null && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {data?.benchmark ?? 'Benchmark'}: {kpis.benchmarkMaxDrawdown.toFixed(1)}%
+                  {kpis.benchmarkMaxDrawdownRecovery != null && (
+                    <> · {kpis.benchmarkMaxDrawdownRecovery.recoveryDays} day{kpis.benchmarkMaxDrawdownRecovery.recoveryDays !== 1 ? 's' : ''}</>
+                  )}
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col">
               <div className="flex items-center justify-between gap-1">

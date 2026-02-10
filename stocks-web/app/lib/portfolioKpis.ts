@@ -52,6 +52,10 @@ export interface PortfolioKpis {
   maxDrawdown: number | null;
   /** Recovery period of the max drawdown (trough to recovery); null if no drawdown or not yet recovered. */
   maxDrawdownRecovery: MaxDrawdownRecoveryRange | null;
+  /** Max drawdown of the benchmark over the same period (%). */
+  benchmarkMaxDrawdown: number | null;
+  /** Recovery period of the benchmark's max drawdown; null if no drawdown or not yet recovered. */
+  benchmarkMaxDrawdownRecovery: MaxDrawdownRecoveryRange | null;
   expectedReturn: number | null;
   stressDrawdown: number | null;
 }
@@ -80,6 +84,8 @@ export function computePortfolioKpis(
       sharpe: null,
       maxDrawdown: null,
       maxDrawdownRecovery: null,
+      benchmarkMaxDrawdown: null,
+      benchmarkMaxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
       stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
     };
@@ -120,6 +126,8 @@ export function computePortfolioKpis(
       sharpe: null,
       maxDrawdown: null,
       maxDrawdownRecovery: null,
+      benchmarkMaxDrawdown: null,
+      benchmarkMaxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
       stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
     };
@@ -151,6 +159,45 @@ export function computePortfolioKpis(
   }
   const maxDrawdown = minDrawdown <= 0 ? Math.abs(minDrawdown) * 100 : 0;
 
+  // Benchmark max drawdown and recovery over same period
+  let benchRunningMax = benchmark[0];
+  let benchPeakIdx = 0;
+  let benchMinDrawdown = 0;
+  let benchTroughIdx = 0;
+  let benchPeakIdxAtTrough = 0;
+  for (let i = 1; i < benchmark.length; i++) {
+    if (benchmark[i] > benchRunningMax) {
+      benchRunningMax = benchmark[i];
+      benchPeakIdx = i;
+    }
+    const dd = benchRunningMax > 0 ? (benchmark[i] - benchRunningMax) / benchRunningMax : 0;
+    if (dd < benchMinDrawdown) {
+      benchMinDrawdown = dd;
+      benchTroughIdx = i;
+      benchPeakIdxAtTrough = benchPeakIdx;
+    }
+  }
+  const benchmarkMaxDrawdown = benchMinDrawdown <= 0 ? Math.abs(benchMinDrawdown) * 100 : 0;
+
+  let benchmarkMaxDrawdownRecovery: MaxDrawdownRecoveryRange | null = null;
+  if (benchmarkMaxDrawdown > 0 && benchPeakIdxAtTrough < n && benchTroughIdx < n) {
+    const benchPeakValue = benchmark[benchPeakIdxAtTrough];
+    let benchRecoveryIdx: number | null = null;
+    for (let j = benchTroughIdx + 1; j < n; j++) {
+      if (benchmark[j] >= benchPeakValue) {
+        benchRecoveryIdx = j;
+        break;
+      }
+    }
+    if (benchRecoveryIdx != null) {
+      benchmarkMaxDrawdownRecovery = {
+        troughDate: dates[benchTroughIdx],
+        recoveryDate: dates[benchRecoveryIdx],
+        recoveryDays: benchRecoveryIdx - benchTroughIdx,
+      };
+    }
+  }
+
   let maxDrawdownRecovery: MaxDrawdownRecoveryRange | null = null;
   if (maxDrawdown > 0 && peakIdxAtTrough < n && troughIdx < n) {
     const peakValue = portfolio[peakIdxAtTrough];
@@ -176,6 +223,8 @@ export function computePortfolioKpis(
     sharpe: sharpe ?? null,
     maxDrawdown,
     maxDrawdownRecovery,
+    benchmarkMaxDrawdown,
+    benchmarkMaxDrawdownRecovery,
     expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
     stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
   };

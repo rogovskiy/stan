@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Position, Portfolio, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
-import { parseSchwabTransactionsCsv } from '../lib/schwabCsvParser';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
 interface PortfolioManagerProps {
@@ -561,9 +560,6 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     }
   };
 
-  const transactionSignature = (tx: { date: string; ticker: string | null; type: string; amount: number; quantity: number }) =>
-    `${tx.date}|${tx.ticker ?? ''}|${tx.type}|${tx.amount}|${tx.quantity}`;
-
   const handleImportCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -573,66 +569,28 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     setImportInProgress(true);
     try {
       const text = await file.text();
-      const { equity, cash } = parseSchwabTransactionsCsv(text);
-      const all = [...equity, ...cash];
-
-      const existingRes = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions`);
-      const existingResult = await existingRes.json();
-      const existingSignatures = new Set<string>();
-      if (existingResult.success && Array.isArray(existingResult.data)) {
-        existingResult.data.forEach((tx: Transaction) => {
-          existingSignatures.add(
-            transactionSignature({
-              date: tx.date,
-              ticker: tx.ticker,
-              type: tx.type,
-              amount: tx.amount,
-              quantity: tx.quantity,
-            })
-          );
-        });
-      }
-
-      let equityOk = 0;
-      let cashOk = 0;
-      let failed = 0;
-      let skipped = 0;
-      for (const tx of all) {
-        const sig = transactionSignature(tx);
-        if (existingSignatures.has(sig)) {
-          skipped += 1;
-          continue;
+      const res = await fetch(
+        `/api/portfolios/${selectedPortfolio.id}/transactions/import`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csv: text }),
         }
-        try {
-          const res = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: tx.type,
-              ticker: tx.ticker,
-              date: tx.date,
-              quantity: tx.quantity,
-              price: tx.price,
-              amount: tx.amount,
-              notes: tx.notes ?? '',
-            }),
-          });
-          const result = await res.json();
-          if (result.success) {
-            if (tx.type === 'cash') cashOk += 1;
-            else equityOk += 1;
-            if (result.portfolio) setSelectedPortfolio(result.portfolio);
-          } else {
-            failed += 1;
-          }
-        } catch {
-          failed += 1;
-        }
+      );
+      const result = await res.json();
+      if (!res.ok) {
+        setError(result.error ?? 'Import failed');
+        setImportMessage(null);
+        return;
       }
-      const parts = [`Imported ${equityOk} equity, ${cashOk} cash`];
-      if (skipped > 0) parts.push(`${skipped} duplicate(s) skipped`);
-      if (failed > 0) parts.push(`${failed} failed`);
-      setImportMessage(parts.join('. ') + '.');
+      if (result.success && result.data) {
+        const { equityOk, cashOk, skipped, failed } = result.data;
+        const parts = [`Imported ${equityOk} equity, ${cashOk} cash`];
+        if (skipped > 0) parts.push(`${skipped} duplicate(s) skipped`);
+        if (failed > 0) parts.push(`${failed} failed`);
+        setImportMessage(parts.join('. ') + '.');
+        if (result.portfolio) setSelectedPortfolio(result.portfolio);
+      }
       if (selectedPortfolio?.id) {
         await loadPortfolio(selectedPortfolio.id);
         await loadCashTransactions(selectedPortfolio.id);

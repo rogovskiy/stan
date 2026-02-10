@@ -337,6 +337,33 @@ export async function addTransaction(
   }
 }
 
+export async function addTransactionsBatch(
+  portfolioId: string,
+  transactions: Array<Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  if (transactions.length === 0) return;
+  try {
+    const transactionsRef = collection(db, 'portfolios', portfolioId, 'transactions');
+    for (const transaction of transactions) {
+      await addDoc(transactionsRef, {
+        type: transaction.type,
+        ticker: transaction.ticker != null ? transaction.ticker.toUpperCase() : null,
+        date: transaction.date,
+        quantity: transaction.quantity,
+        price: transaction.price ?? null,
+        amount: transaction.amount,
+        notes: transaction.notes ?? '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await recomputeAndWriteAggregates(portfolioId);
+  } catch (error) {
+    console.error(`Error adding transactions batch to portfolio ${portfolioId}:`, error);
+    throw new Error('Failed to add transactions batch');
+  }
+}
+
 export async function getTransaction(
   portfolioId: string,
   transactionId: string

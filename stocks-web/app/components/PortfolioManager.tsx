@@ -1206,6 +1206,57 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     <PortfolioBenchmarkChart portfolioId={selectedPortfolio.id} />
                   </div>
                 )}
+                {selectedPortfolio.id && (() => {
+                  const systematicRisks: { label: string; level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' }[] = [
+                    { label: 'Interest rates (duration)', level: 'HIGH' },
+                    { label: 'Equity market (SPY)', level: 'MED' },
+                    { label: 'Oil / energy', level: 'MED' },
+                    { label: 'Inflation hedge (gold)', level: 'LOW-MED' },
+                    { label: 'Crypto beta', level: 'LOW' },
+                  ];
+                  const levelBars: Record<string, number> = { HIGH: 3, MED: 2, 'LOW-MED': 2, LOW: 1 };
+                  const levelColors: Record<string, string> = {
+                    HIGH: '#dc2626',
+                    MED: '#d97706',
+                    'LOW-MED': '#ca8a04',
+                    LOW: '#16a34a',
+                  };
+                  const RiskBars = ({ level }: { level: keyof typeof levelBars }) => {
+                    const n = levelBars[level];
+                    const color = levelColors[level];
+                    const halfSecond = level === 'LOW-MED';
+                    return (
+                      <span className="inline-flex items-end gap-0.5" title={level} aria-label={level}>
+                        {[1, 2, 3].map((i) => {
+                          const filled = i < n;
+                          const half = i === n && halfSecond;
+                          const show = filled || half;
+                          return (
+                            <span
+                              key={i}
+                              className="w-1 rounded-sm"
+                              style={{
+                                height: 10,
+                                backgroundColor: show ? color : '#e5e7eb',
+                                opacity: half ? 0.5 : 1,
+                              }}
+                            />
+                          );
+                        })}
+                      </span>
+                    );
+                  };
+                  return (
+                    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                      <span className="font-medium text-gray-400">Systematic risks:</span>
+                      {systematicRisks.map(({ label, level }) => (
+                        <span key={label} className="inline-flex items-center gap-1.5">
+                          {label} <RiskBars level={level} />
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
                   <div>
                     <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">

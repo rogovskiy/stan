@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Position, Portfolio, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
+import { parseSchwabTransactionsCsv } from '../lib/schwabCsvParser';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 
 interface PortfolioManagerProps {
@@ -61,6 +62,10 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsAccountType, setSettingsAccountType] = useState<PortfolioAccountType>('taxable');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [importInProgress, setImportInProgress] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [cashTransactions, setCashTransactions] = useState<Transaction[]>([]);
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch data on mount and when view mode changes
   useEffect(() => {
@@ -80,6 +85,15 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       }
     }
   }, [initialPortfolioId, portfolios]);
+
+  // Load cash transactions when a portfolio is selected
+  useEffect(() => {
+    if (selectedPortfolio?.id) {
+      loadCashTransactions(selectedPortfolio.id);
+    } else {
+      setCashTransactions([]);
+    }
+  }, [selectedPortfolio?.id]);
 
   // Fetch latest price for each position ticker (for total value / total return)
   useEffect(() => {
@@ -397,6 +411,20 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     loadTransactionsForTicker(ticker);
   };
 
+  const loadCashTransactions = async (portfolioId: string) => {
+    try {
+      const res = await fetch(`/api/portfolios/${portfolioId}/transactions`);
+      const result = await res.json();
+      if (result.success && Array.isArray(result.data)) {
+        setCashTransactions(result.data.filter((tx: Transaction) => tx.type === 'cash'));
+      } else {
+        setCashTransactions([]);
+      }
+    } catch {
+      setCashTransactions([]);
+    }
+  };
+
   const handleSavePositionMetadata = async () => {
     if (!selectedPortfolio?.id || !editingPositionMetadata?.id) return;
     setError(null);
@@ -462,6 +490,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         setTransactionPrice('');
         setTransactionAmount('');
         setTransactionNotes('');
+        if (type === 'cash' && selectedPortfolio.id) {
+          loadCashTransactions(selectedPortfolio.id);
+        }
       } else {
         setError(result.error || 'Failed to add transaction');
       }
@@ -527,6 +558,90 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete transaction');
+    }
+  };
+
+  const transactionSignature = (tx: { date: string; ticker: string | null; type: string; amount: number; quantity: number }) =>
+    `${tx.date}|${tx.ticker ?? ''}|${tx.type}|${tx.amount}|${tx.quantity}`;
+
+  const handleImportCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedPortfolio?.id) return;
+    setError(null);
+    setImportMessage(null);
+    setImportInProgress(true);
+    try {
+      const text = await file.text();
+      const { equity, cash } = parseSchwabTransactionsCsv(text);
+      const all = [...equity, ...cash];
+
+      const existingRes = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions`);
+      const existingResult = await existingRes.json();
+      const existingSignatures = new Set<string>();
+      if (existingResult.success && Array.isArray(existingResult.data)) {
+        existingResult.data.forEach((tx: Transaction) => {
+          existingSignatures.add(
+            transactionSignature({
+              date: tx.date,
+              ticker: tx.ticker,
+              type: tx.type,
+              amount: tx.amount,
+              quantity: tx.quantity,
+            })
+          );
+        });
+      }
+
+      let equityOk = 0;
+      let cashOk = 0;
+      let failed = 0;
+      let skipped = 0;
+      for (const tx of all) {
+        const sig = transactionSignature(tx);
+        if (existingSignatures.has(sig)) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const res = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: tx.type,
+              ticker: tx.ticker,
+              date: tx.date,
+              quantity: tx.quantity,
+              price: tx.price,
+              amount: tx.amount,
+              notes: tx.notes ?? '',
+            }),
+          });
+          const result = await res.json();
+          if (result.success) {
+            if (tx.type === 'cash') cashOk += 1;
+            else equityOk += 1;
+            if (result.portfolio) setSelectedPortfolio(result.portfolio);
+          } else {
+            failed += 1;
+          }
+        } catch {
+          failed += 1;
+        }
+      }
+      const parts = [`Imported ${equityOk} equity, ${cashOk} cash`];
+      if (skipped > 0) parts.push(`${skipped} duplicate(s) skipped`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      setImportMessage(parts.join('. ') + '.');
+      if (selectedPortfolio?.id) {
+        await loadPortfolio(selectedPortfolio.id);
+        await loadCashTransactions(selectedPortfolio.id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to parse CSV');
+      setImportMessage(null);
+    } finally {
+      setImportInProgress(false);
     }
   };
 
@@ -954,7 +1069,22 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                 )}
                 {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
                   <div>
-                    <div className="flex justify-end mb-3">
+                    <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">
+                      <input
+                        ref={csvFileInputRef}
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={handleImportCsv}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => csvFileInputRef.current?.click()}
+                        disabled={importInProgress}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {importInProgress ? 'Importing…' : 'Import transactions'}
+                      </button>
                       <button
                         onClick={() => {
                           setTransactionType('buy');
@@ -971,6 +1101,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                         + Add Transaction
                       </button>
                     </div>
+                    {importMessage && (
+                      <p className="text-sm text-gray-600 mb-2">{importMessage}</p>
+                    )}
                     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                     <table className="w-full text-sm">
                       <thead>
@@ -1083,22 +1216,71 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   </div>
                 ) : (
                   <div className="text-center py-12">
-                    <p className="text-gray-500 mb-4">No positions in this portfolio yet. Add a transaction to get started.</p>
-                    <button
-                      onClick={() => {
-                        setTransactionType('buy');
-                        setTransactionTicker('');
-                        setTransactionDate(new Date().toISOString().slice(0, 10));
-                        setTransactionQuantity('');
-                        setTransactionPrice('');
-                        setTransactionAmount('');
-                        setTransactionNotes('');
-                        setShowAddTransaction(true);
-                      }}
-                      className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200"
-                    >
-                      Add Your First Transaction
-                    </button>
+                    <p className="text-gray-500 mb-4">No positions in this portfolio yet. Add a transaction or import from CSV.</p>
+                    <input
+                      ref={csvFileInputRef}
+                      type="file"
+                      accept=".csv"
+                      className="hidden"
+                      onChange={handleImportCsv}
+                    />
+                    <div className="flex justify-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => csvFileInputRef.current?.click()}
+                        disabled={importInProgress}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {importInProgress ? 'Importing…' : 'Import transactions'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTransactionType('buy');
+                          setTransactionTicker('');
+                          setTransactionDate(new Date().toISOString().slice(0, 10));
+                          setTransactionQuantity('');
+                          setTransactionPrice('');
+                          setTransactionAmount('');
+                          setTransactionNotes('');
+                          setShowAddTransaction(true);
+                        }}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200"
+                      >
+                        Add Your First Transaction
+                      </button>
+                    </div>
+                    {importMessage && (
+                      <p className="text-sm text-gray-600 mt-2">{importMessage}</p>
+                    )}
+                  </div>
+                )}
+                {selectedPortfolio.id && cashTransactions.length > 0 && (
+                  <div className="mt-6">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Cash transactions</h4>
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50">
+                            <th className="text-left py-2 px-4 font-medium text-gray-700">Date</th>
+                            <th className="text-left py-2 px-4 font-medium text-gray-700">Description</th>
+                            <th className="text-right py-2 px-4 font-medium text-gray-700">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cashTransactions.map((tx) => (
+                            <tr key={tx.id} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 px-4 text-gray-700">{tx.date}</td>
+                              <td className="py-2 px-4 text-gray-700">{tx.notes || '—'}</td>
+                              <td className="py-2 px-4 text-right font-medium">
+                                <span className={tx.amount >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {tx.amount >= 0 ? '+' : ''}${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>

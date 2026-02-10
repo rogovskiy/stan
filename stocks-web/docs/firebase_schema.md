@@ -196,6 +196,7 @@ Portfolios are top-level collections that contain investment portfolios with pos
 /portfolios/{portfolioId}                              (Portfolio document)
 /portfolios/{portfolioId}/positions/{positionId}       (Position subcollection – stored aggregates)
 /portfolios/{portfolioId}/transactions/{transactionId} (Transaction subcollection – source of truth for changes)
+/portfolios/{portfolioId}/snapshots/{date}             (Snapshot subcollection – portfolio state at each transaction date)
 ```
 
 **Example: `/portfolios/abc123`**
@@ -272,7 +273,7 @@ Portfolios are top-level collections that contain investment portfolios with pos
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
-**Transaction document:** Source of truth for changes. Creating, updating, or deleting a transaction triggers recompute of affected position(s) and portfolio cashBalance.
+**Transaction document:** Source of truth for changes. Creating, updating, or deleting a transaction triggers recompute of affected position(s), portfolio cashBalance, and snapshots.
 - `type` (string, required): One of `buy`, `sell`, `dividend`, `dividend_reinvest`, `cash`
 - `ticker` (string, optional): Ticker (null for type `cash` only)
 - `date` (string, required): ISO date (YYYY-MM-DD)
@@ -283,9 +284,17 @@ Portfolios are top-level collections that contain investment portfolios with pos
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
+**Snapshot document (stored aggregate):** One document per date that has at least one transaction. Written by `recomputeAndWriteAggregates` when transactions change. Used by the performance route so "state at date D" is a single read (latest snapshot with `date <= D`). Document ID = ISO date (e.g. `2024-08-22`).
+- `date` (string, required): Same as document ID; end-of-day state for this date
+- `cashBalance` (number): Cumulative cash after all transactions with `tx.date <= date`
+- `positions` (array): `{ ticker: string, quantity: number, costBasis: number }[]` — closing size and average cost per share per ticker after all tx with `tx.date <= date`. Cost basis from transactions only (no price API at write time).
+
+**Index for snapshots:** A composite index on `portfolios/{id}/snapshots` is required for queries: `date` (asc) for `getSnapshotsUpToDate` (where date <= dateMax, orderBy date asc), and `date` (desc) for `getSnapshotAtDate` (where date <= dateStr, orderBy date desc, limit 1). Firestore will suggest creating the index when you first run the query.
+
 **Benefits:**
 - ✅ Transactions drive position and cash aggregates; positions are stored for fast reads
 - ✅ Cash balance and per-ticker position size / average price derived from transactions
+- ✅ Snapshots materialize portfolio state (cash + positions with cost basis) at each transaction date; performance and narrative use snapshots instead of recomputing from transactions
 - ✅ Position-level thesisId and notes for display; transaction history available per ticker
 - ✅ Supports dividends, dividend reinvestment, and cash in/out (e.g. options as cash)
 

@@ -6,8 +6,11 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc,
+  setDoc,
   query,
+  where,
   orderBy,
+  limit,
   Timestamp,
   serverTimestamp
 } from 'firebase/firestore';
@@ -61,6 +64,19 @@ export interface Transaction {
 }
 
 export type PortfolioAccountType = 'taxable' | 'ira';
+
+/** Portfolio state at a date (from snapshots subcollection). */
+export interface SnapshotPosition {
+  ticker: string;
+  quantity: number;
+  costBasis: number;
+}
+
+export interface PortfolioSnapshot {
+  date: string;
+  cashBalance: number;
+  positions: SnapshotPosition[];
+}
 
 export interface Portfolio {
   id?: string;
@@ -465,28 +481,131 @@ export async function deleteTransaction(portfolioId: string, transactionId: stri
   }
 }
 
+/**
+ * Get portfolio snapshot at or before a date (latest snapshot with snapshot.date <= dateStr).
+ */
+export async function getSnapshotAtDate(
+  portfolioId: string,
+  dateStr: string
+): Promise<PortfolioSnapshot | null> {
+  try {
+    const snapshotsRef = collection(db, 'portfolios', portfolioId, 'snapshots');
+    const q = query(
+      snapshotsRef,
+      where('date', '<=', dateStr),
+      orderBy('date', 'desc'),
+      limit(1)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return null;
+    const d = snapshot.docs[0].data();
+    const positions = (d.positions as { ticker: string; quantity: number; costBasis: number }[] ?? []).map(
+      (p) => ({ ticker: p.ticker, quantity: p.quantity, costBasis: p.costBasis ?? 0 })
+    );
+    return {
+      date: d.date as string,
+      cashBalance: typeof d.cashBalance === 'number' ? d.cashBalance : 0,
+      positions,
+    };
+  } catch (error) {
+    console.error(`Error fetching snapshot for portfolio ${portfolioId} at ${dateStr}:`, error);
+    throw new Error('Failed to fetch snapshot');
+  }
+}
+
+/**
+ * Get all snapshots with date <= dateMax, sorted by date ascending (for batch use in performance route).
+ */
+export async function getSnapshotsUpToDate(
+  portfolioId: string,
+  dateMax: string
+): Promise<PortfolioSnapshot[]> {
+  try {
+    const snapshotsRef = collection(db, 'portfolios', portfolioId, 'snapshots');
+    const q = query(
+      snapshotsRef,
+      where('date', '<=', dateMax),
+      orderBy('date', 'asc')
+    );
+    const snapshot = await getDocs(q);
+    const result: PortfolioSnapshot[] = [];
+    snapshot.forEach((docSnap) => {
+      const d = docSnap.data();
+      const positions = (d.positions as { ticker: string; quantity: number; costBasis: number }[] ?? []).map(
+        (p) => ({ ticker: p.ticker, quantity: p.quantity, costBasis: p.costBasis ?? 0 })
+      );
+      result.push({
+        date: d.date as string,
+        cashBalance: typeof d.cashBalance === 'number' ? d.cashBalance : 0,
+        positions,
+      });
+    });
+    return result;
+  } catch (error) {
+    console.error(`Error fetching snapshots for portfolio ${portfolioId} up to ${dateMax}:`, error);
+    throw new Error('Failed to fetch snapshots');
+  }
+}
+
 export async function recomputeAndWriteAggregates(portfolioId: string): Promise<void> {
   const transactions = await getTransactions(portfolioId, null);
+  const transactionsAsc = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+
   const portfolioRef = doc(db, 'portfolios', portfolioId);
   const byTicker = new Map<
     string,
     { quantity: number; costSum: number; earliestDate: string | null; thesisId?: string; notes?: string }
   >();
   let cashTotal = 0;
+  const datesWithTx = new Set<string>();
 
-  for (const tx of transactions) {
-    cashTotal += tx.amount;
-    if (tx.ticker) {
-      const key = tx.ticker.toUpperCase();
-      if (!byTicker.has(key)) byTicker.set(key, { quantity: 0, costSum: 0, earliestDate: null });
-      const row = byTicker.get(key)!;
-      row.quantity += tx.quantity;
-      if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
-        row.costSum += tx.quantity * tx.price;
+  // Group by date, then process in date order to write snapshots and build final state
+  const byDate = new Map<string, typeof transactions>();
+  for (const tx of transactionsAsc) {
+    const list = byDate.get(tx.date) ?? [];
+    list.push(tx);
+    byDate.set(tx.date, list);
+  }
+  const sortedDates = Array.from(byDate.keys()).sort();
+
+  const snapshotsRef = collection(db, 'portfolios', portfolioId, 'snapshots');
+  for (const dateStr of sortedDates) {
+    const txsForDate = byDate.get(dateStr)!;
+    for (const tx of txsForDate) {
+      cashTotal += tx.amount;
+      if (tx.ticker) {
+        const key = tx.ticker.toUpperCase();
+        if (!byTicker.has(key)) byTicker.set(key, { quantity: 0, costSum: 0, earliestDate: null });
+        const row = byTicker.get(key)!;
+        row.quantity += tx.quantity;
+        if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
+          row.costSum += tx.quantity * tx.price;
+        }
+        if (tx.date && (row.earliestDate == null || tx.date < row.earliestDate)) {
+          row.earliestDate = tx.date;
+        }
       }
-      if (tx.date) {
-        if (row.earliestDate == null || tx.date < row.earliestDate) row.earliestDate = tx.date;
-      }
+    }
+    datesWithTx.add(dateStr);
+    const positionsForSnapshot: { ticker: string; quantity: number; costBasis: number }[] = [];
+    for (const [ticker, row] of byTicker) {
+      if (row.quantity <= 0) continue;
+      const costBasis = row.quantity > 0 && row.costSum > 0 ? row.costSum / row.quantity : 0;
+      positionsForSnapshot.push({ ticker, quantity: row.quantity, costBasis });
+    }
+    const snapshotRef = doc(db, 'portfolios', portfolioId, 'snapshots', dateStr);
+    await setDoc(snapshotRef, {
+      date: dateStr,
+      cashBalance: cashTotal,
+      positions: positionsForSnapshot,
+    });
+  }
+
+  // Remove snapshots for dates that no longer have any transactions
+  const existingSnapshots = await getDocs(snapshotsRef);
+  for (const snapDoc of existingSnapshots.docs) {
+    if (!datesWithTx.has(snapDoc.id)) {
+      await deleteDoc(doc(db, 'portfolios', portfolioId, 'snapshots', snapDoc.id));
     }
   }
 

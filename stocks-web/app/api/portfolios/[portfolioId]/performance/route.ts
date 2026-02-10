@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPortfolio, getTransactions } from '../../../../lib/services/portfolioService';
+import { getPortfolio, getTransactions, getSnapshotsUpToDate } from '../../../../lib/services/portfolioService';
+import type { PortfolioSnapshot } from '../../../../lib/services/portfolioService';
 import { getDailyPricesForTicker, getStartDateFromPeriod } from '../../../../lib/dailyPrices';
 import { computeBandExpectedReturn } from '../../../../lib/portfolioKpis';
-import type { Transaction } from '../../../../lib/services/portfolioService';
 
 const VALID_BENCHMARKS = ['SPY', 'QQQ', 'GLD'] as const;
 type BenchmarkTicker = (typeof VALID_BENCHMARKS)[number];
@@ -39,113 +39,46 @@ function getPriceAtDate(
   return useDate != null ? (map.get(useDate) ?? 0) : 0;
 }
 
-/**
- * Effective price per share for a ticker on a date from transactions on that date.
- * Used so value on trade date matches the transaction (e.g. buy at $1,357.76).
- */
-function getTransactionPriceOnDate(
-  ticker: string,
-  dateStr: string,
-  transactions: Transaction[]
-): number | null {
-  const t = ticker.toUpperCase();
-  let cost = 0;
-  let qty = 0;
-  for (const tx of transactions) {
-    if (tx.ticker?.toUpperCase() !== t || tx.date !== dateStr || tx.quantity === 0) continue;
-    const price = tx.price != null && tx.price > 0
-      ? tx.price
-      : Math.abs(tx.amount) / Math.abs(tx.quantity);
-    cost += tx.quantity * price;
-    qty += tx.quantity;
+/** Latest snapshot with snapshot.date <= dateStr from list sorted by date asc. */
+function getSnapshotForDate(snapshotsAsc: PortfolioSnapshot[], dateStr: string): PortfolioSnapshot | null {
+  for (let i = snapshotsAsc.length - 1; i >= 0; i--) {
+    if (snapshotsAsc[i].date <= dateStr) return snapshotsAsc[i];
   }
-  return qty !== 0 ? cost / qty : null;
+  return null;
 }
 
-/**
- * Portfolio value at a date from transactions (historical quantity) and prices.
- * On a trade date we use the transaction price so value matches the trade (e.g. buy cost).
- */
-function getPortfolioValueFromTransactionsAtDate(
-  dateStr: string,
-  transactions: Transaction[],
+/** Portfolio value at valueDate using snapshot positions and cash, valued at valueDate prices. */
+function valueFromSnapshot(
+  snapshot: PortfolioSnapshot,
+  valueDate: string,
   priceMaps: Map<string, Map<string, number>>
 ): number {
-  const qtyByTicker = new Map<string, number>();
-  for (const tx of transactions) {
-    if (tx.ticker == null || tx.date > dateStr) continue;
-    const t = tx.ticker.toUpperCase();
-    qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
-  }
-  let total = 0;
-  for (const [ticker, quantity] of qtyByTicker) {
-    if (quantity <= 0) continue;
-    const txPrice = getTransactionPriceOnDate(ticker, dateStr, transactions);
-    const map = priceMaps.get(ticker);
-    const price = (txPrice != null && txPrice > 0)
-      ? txPrice
-      : (map ? getPriceAtDate(dateStr, map) : 0);
-    if (price > 0) total += quantity * price;
-  }
-  return total;
-}
-
-/**
- * Value at dateStr of positions held before dateStr (tx.date < dateStr), at dateStr prices.
- * Used for TWR on a deposit day: return = this / V0 - 1 so we don't count new purchases as return.
- */
-function getPortfolioValueFromTransactionsStrictlyBeforeDate(
-  dateStr: string,
-  transactions: Transaction[],
-  priceMaps: Map<string, Map<string, number>>
-): number {
-  const qtyByTicker = new Map<string, number>();
-  for (const tx of transactions) {
-    if (tx.ticker == null || tx.date >= dateStr) continue;
-    const t = tx.ticker.toUpperCase();
-    qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
-  }
-  let total = 0;
-  for (const [ticker, quantity] of qtyByTicker) {
-    if (quantity <= 0) continue;
-    const map = priceMaps.get(ticker);
+  let total = snapshot.cashBalance;
+  for (const p of snapshot.positions) {
+    if (p.quantity <= 0) continue;
+    const map = priceMaps.get(p.ticker);
     if (!map) continue;
-    const price = getPriceAtDate(dateStr, map);
-    if (price > 0) total += quantity * price;
+    const price = getPriceAtDate(valueDate, map);
+    if (price > 0) total += p.quantity * price;
   }
   return total;
 }
 
-/**
- * Per-position breakdown at a date using transactions (historical quantity).
- * On a trade date we use the transaction price so value matches the trade.
- */
-function getHistoricalPositionBreakdownAtDate(
+/** Position breakdown at dateStr from snapshot (price from priceMaps). */
+function getBreakdownFromSnapshot(
+  snapshot: PortfolioSnapshot | null,
   dateStr: string,
-  transactions: Transaction[],
   priceMaps: Map<string, Map<string, number>>
 ): { ticker: string; quantity: number; price: number; value: number }[] {
-  const qtyByTicker = new Map<string, number>();
-  for (const tx of transactions) {
-    if (tx.ticker == null || tx.date > dateStr) continue;
-    const t = tx.ticker.toUpperCase();
-    qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
-  }
+  if (!snapshot) return [];
   const result: { ticker: string; quantity: number; price: number; value: number }[] = [];
-  for (const [ticker, quantity] of qtyByTicker) {
-    if (quantity <= 0) continue;
-    const txPrice = getTransactionPriceOnDate(ticker, dateStr, transactions);
-    const map = priceMaps.get(ticker);
-    const price = (txPrice != null && txPrice > 0)
-      ? txPrice
-      : (map ? getPriceAtDate(dateStr, map) : 0);
+  for (const p of snapshot.positions) {
+    if (p.quantity <= 0) continue;
+    const map = priceMaps.get(p.ticker);
+    if (!map) continue;
+    const price = getPriceAtDate(dateStr, map);
     if (price > 0) {
-      result.push({
-        ticker,
-        quantity,
-        price,
-        value: quantity * price,
-      });
+      result.push({ ticker: p.ticker, quantity: p.quantity, price, value: p.quantity * price });
     }
   }
   return result.sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -229,9 +162,12 @@ export async function GET(
       );
     }
 
-    const portfolioValues = dates.map((d) =>
-      getPortfolioValueFromTransactionsAtDate(d, transactions, priceMaps)
-    );
+    const dateMax = dates[dates.length - 1];
+    const snapshotsAsc = await getSnapshotsUpToDate(portfolioId, dateMax);
+    const portfolioValues = dates.map((d) => {
+      const snap = getSnapshotForDate(snapshotsAsc, d);
+      return snap ? valueFromSnapshot(snap, d, priceMaps) : 0;
+    });
     const benchmarkValues = dates.map((d) => {
       let v = benchmarkMap.get(d);
       if (v === undefined) {
@@ -246,7 +182,6 @@ export async function GET(
 
     const hasPortfolioData = portfolioValues.some((v) => v > 0);
     const dateMin = dates[0];
-    const dateMax = dates[dates.length - 1];
 
     // Time-weighted return: build growth index so deposits/withdrawals are not counted as returns
     let normPortfolio: number[];
@@ -276,7 +211,8 @@ export async function GET(
           // On a deposit day, return = market move on existing positions only (don't count new buys as return).
           let r: number;
           if (C > 0) {
-            const valueOldAtEnd = getPortfolioValueFromTransactionsStrictlyBeforeDate(nextDate, transactions, priceMaps);
+            const prevSnap = getSnapshotForDate(snapshotsAsc, dates[i]);
+            const valueOldAtEnd = prevSnap ? valueFromSnapshot(prevSnap, nextDate, priceMaps) : 0;
             r = valueOldAtEnd > 0 ? valueOldAtEnd / V0 - 1 : 0;
           } else if (C < 0) {
             r = (V1 - C) / V0 - 1; // withdrawal at end of day
@@ -287,7 +223,8 @@ export async function GET(
         }
         if (debug && (i < 3 || C !== 0 || i >= dates.length - 4)) {
           const Cval = cashFlowByDate[nextDate] ?? 0;
-          const valueOldAtEnd = Cval > 0 ? getPortfolioValueFromTransactionsStrictlyBeforeDate(nextDate, transactions, priceMaps) : 0;
+          const prevSnap = Cval > 0 ? getSnapshotForDate(snapshotsAsc, dates[i]) : null;
+          const valueOldAtEnd = prevSnap ? valueFromSnapshot(prevSnap, nextDate, priceMaps) : 0;
           const rComputed =
             V0 <= 0
               ? 0
@@ -397,7 +334,7 @@ export async function GET(
               narrativeLines.push(
                 `${flowLabel} of $${Math.abs(cfAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} was made, we now have $${aumAfter.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} under management.`
               );
-              const breakdown = getHistoricalPositionBreakdownAtDate(cfDate, transactions, priceMaps);
+              const breakdown = getBreakdownFromSnapshot(getSnapshotForDate(snapshotsAsc, cfDate), cfDate, priceMaps);
               for (const row of breakdown) {
                 narrativeLines.push(
                   `  ${row.ticker}: ${row.quantity} @ $${row.price.toFixed(2)} = $${row.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

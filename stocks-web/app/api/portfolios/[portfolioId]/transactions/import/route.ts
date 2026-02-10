@@ -3,6 +3,7 @@ import {
   getTransactions,
   getPortfolio,
   addTransactionsBatch,
+  recomputeAndWriteAggregates,
 } from '../../../../../lib/services/portfolioService';
 import type { TransactionType } from '../../../../../lib/services/portfolioService';
 import { parseSchwabTransactionsCsv } from '../../../../../lib/schwabCsvParser';
@@ -109,6 +110,8 @@ export async function POST(
 
     if (newTransactions.length > 0) {
       await addTransactionsBatch(portfolioId, newTransactions);
+    } else {
+      await recomputeAndWriteAggregates(portfolioId);
     }
 
     const updatedPortfolio = await getPortfolio(portfolioId);

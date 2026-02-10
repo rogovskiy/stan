@@ -52,6 +52,8 @@ const STRESS_DRAWDOWN_PLACEHOLDER = 0;
 
 /**
  * Compute portfolio KPIs from historical index series (normalized to 100 at start).
+ * Average annual return is based on calendar-year returns (not period length) so it
+ * stays consistent regardless of chart range (1y/3y/5y).
  */
 export function computePortfolioKpis(
   dates: string[],
@@ -70,10 +72,31 @@ export function computePortfolioKpis(
     };
   }
 
-  const lastP = portfolio[n - 1];
-  const periodReturn = lastP / 100 - 1;
-  const years = (n - 1) / TRADING_DAYS_PER_YEAR;
-  const averageReturn = years > 0 ? (Math.pow(1 + periodReturn, 1 / years) - 1) * 100 : null;
+  const currentYear = new Date().getFullYear();
+  const byYear = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const year = new Date(dates[i]).getFullYear();
+    if (!byYear.has(year)) byYear.set(year, []);
+    byYear.get(year)!.push(i);
+  }
+  const fullYearReturns: number[] = [];
+  for (const [year, indices] of byYear.entries()) {
+    if (year === currentYear) continue;
+    const firstIdx = Math.min(...indices);
+    const lastIdx = Math.max(...indices);
+    const vFirst = portfolio[firstIdx];
+    if (vFirst > 0) {
+      const r = (portfolio[lastIdx] / vFirst - 1) * 100;
+      fullYearReturns.push(r);
+    }
+  }
+  const nonZeroReturns = fullYearReturns.filter((r) => r !== 0);
+  const averageReturn =
+    nonZeroReturns.length > 0
+      ? nonZeroReturns.reduce((a, b) => a + b, 0) / nonZeroReturns.length
+      : fullYearReturns.length > 0
+        ? 0
+        : null;
 
   const rp = dailyReturns(portfolio);
   const rb = dailyReturns(benchmark);

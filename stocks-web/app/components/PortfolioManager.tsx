@@ -269,7 +269,12 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       const result = await response.json();
       
       if (result.success) {
-        setSelectedPortfolio(result.data.portfolio);
+        const updated = result.data?.portfolio;
+        if (updated?.id) {
+          setSelectedPortfolio(updated);
+        } else if (selectedPortfolio?.id) {
+          await loadPortfolio(selectedPortfolio.id);
+        }
         setShowAddPosition(false);
         resetPositionForm();
       } else {
@@ -303,7 +308,12 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       const result = await response.json();
       
       if (result.success) {
-        setSelectedPortfolio(result.data);
+        const updated = result.data;
+        if (updated?.id) {
+          setSelectedPortfolio(updated);
+        } else if (selectedPortfolio?.id) {
+          await loadPortfolio(selectedPortfolio.id);
+        }
         setEditingPosition(null);
         setShowAddPosition(false);
         resetPositionForm();
@@ -1107,7 +1117,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                 </h3>
                 <button
                   onClick={cancelEdit}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-gray-600 hover:text-gray-900"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1117,19 +1127,19 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Ticker *
                   </label>
                   <input
                     type="text"
                     value={positionTicker}
                     onChange={(e) => setPositionTicker(e.target.value.toUpperCase())}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., AAPL"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Quantity *
                   </label>
                   <input
@@ -1138,23 +1148,23 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     onChange={(e) => setPositionQuantity(e.target.value)}
                     min="0"
                     step="0.01"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., 100"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Purchase Date
                   </label>
                   <input
                     type="date"
                     value={positionPurchaseDate}
                     onChange={(e) => setPositionPurchaseDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Purchase Price
                   </label>
                   <input
@@ -1163,34 +1173,34 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     onChange={(e) => setPositionPurchasePrice(e.target.value)}
                     min="0"
                     step="0.01"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="e.g., 150.00"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Thesis ID (optional)
                   </label>
                   <input
                     type="text"
                     value={positionThesisId}
                     onChange={(e) => setPositionThesisId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Link to investment thesis"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-600 mt-1">
                     You can link this position to an investment thesis
                   </p>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
                     Notes
                   </label>
                   <textarea
                     value={positionNotes}
                     onChange={(e) => setPositionNotes(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Optional notes about this position..."
                   />
                 </div>

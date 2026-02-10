@@ -211,7 +211,9 @@ Portfolios are top-level collections that contain investment portfolios with pos
       "sizeMinPct": 10,
       "sizeMaxPct": 20,
       "maxPositionSizePct": 5,
-      "maxDrawdownPct": 15
+      "maxDrawdownPct": 15,
+      "expectedReturnMinPct": 8,
+      "expectedReturnMaxPct": 15
     }
   ],
   "userId": null,
@@ -254,7 +256,7 @@ Portfolios are top-level collections that contain investment portfolios with pos
 - `name` (string, required): Portfolio name
 - `description` (string, optional): Portfolio description
 - `cashBalance` (number, optional): Stored cash balance; updated when transactions are applied (sum of transaction amounts). Default 0.
-- `bands` (array, optional): Risk bands for this portfolio. Each band has: `id`, `name`, `sizeMinPct`, `sizeMaxPct`, and optionally `maxPositionSizePct`, `maxDrawdownPct`. Defined in portfolio settings; positions can reference a band via `bandId`.
+- `bands` (array, optional): Risk bands for this portfolio. Each band has: `id`, `name`, `sizeMinPct`, `sizeMaxPct`, and optionally `maxPositionSizePct`, `maxDrawdownPct`, `expectedReturnMinPct`, `expectedReturnMaxPct`. Defined in portfolio settings; positions can reference a band via `bandId`.
 - `userId` (string, optional): User ID for multi-user support (future)
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp

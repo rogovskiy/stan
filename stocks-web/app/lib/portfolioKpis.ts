@@ -113,3 +113,125 @@ export function computePortfolioKpis(
     stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
   };
 }
+
+export interface YearlyReturn {
+  year: number;
+  returnPct: number;
+}
+
+export interface YearlyAndYtdReturns {
+  yearly: YearlyReturn[];
+  ytdReturnPct: number | null;
+}
+
+/**
+ * Compute per-calendar-year returns and YTD return from TWR growth index.
+ * Input portfolio must be the TWR series from the performance API (so deposits are not counted).
+ */
+export function computeYearlyAndYtdReturns(
+  dates: string[],
+  portfolio: number[]
+): YearlyAndYtdReturns {
+  const n = dates.length;
+  if (n === 0 || portfolio.length !== n) {
+    return { yearly: [], ytdReturnPct: null };
+  }
+
+  const byYear = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const year = new Date(dates[i]).getFullYear();
+    if (!byYear.has(year)) byYear.set(year, []);
+    byYear.get(year)!.push(i);
+  }
+
+  const yearly: YearlyReturn[] = [];
+  for (const [year, indices] of byYear.entries()) {
+    const firstIdx = Math.min(...indices);
+    const lastIdx = Math.max(...indices);
+    const vFirst = portfolio[firstIdx];
+    if (vFirst > 0) {
+      const returnPct = (portfolio[lastIdx] / vFirst - 1) * 100;
+      yearly.push({ year, returnPct });
+    }
+  }
+  yearly.sort((a, b) => a.year - b.year);
+
+  const currentYear = new Date().getFullYear();
+  const currentYearIndices = byYear.get(currentYear);
+  let ytdReturnPct: number | null = null;
+  if (currentYearIndices && currentYearIndices.length > 0) {
+    const firstInYear = Math.min(...currentYearIndices);
+    const lastInSeries = n - 1;
+    const vFirst = portfolio[firstInYear];
+    if (vFirst > 0) {
+      ytdReturnPct = (portfolio[lastInSeries] / vFirst - 1) * 100;
+    }
+  }
+
+  return { yearly, ytdReturnPct };
+}
+
+/** Band shape for expected return calculation (uses size range only). */
+export interface BandForExpectedReturn {
+  id: string;
+  name: string;
+  sizeMinPct: number;
+  sizeMaxPct: number;
+  expectedReturnMinPct?: number;
+  expectedReturnMaxPct?: number;
+}
+
+export interface ExpectedReturnResult {
+  minPct: number;
+  maxPct: number;
+  bandBreakdown: {
+    bandName: string;
+    bandId: string;
+    weightPct: number;
+    expectedReturnMinPct?: number;
+    expectedReturnMaxPct?: number;
+  }[];
+}
+
+/**
+ * Compute band-weighted expected return from bands only (no position data).
+ * Weight = (sizeMinPct + sizeMaxPct) / 2, normalized across bands.
+ * Bands without expected return range are excluded from portfolio total.
+ */
+export function computeBandExpectedReturn(bands: BandForExpectedReturn[]): ExpectedReturnResult | null {
+  if (!bands || bands.length === 0) return null;
+
+  const bandBreakdown = bands.map((b) => {
+    const targetWeight = (b.sizeMinPct + b.sizeMaxPct) / 2;
+    return {
+      bandName: b.name,
+      bandId: b.id,
+      weightPct: targetWeight,
+      expectedReturnMinPct: b.expectedReturnMinPct,
+      expectedReturnMaxPct: b.expectedReturnMaxPct,
+    };
+  });
+
+  const totalTargetWeight = bandBreakdown.reduce((s, b) => s + b.weightPct, 0);
+  if (totalTargetWeight <= 0) return { minPct: 0, maxPct: 0, bandBreakdown };
+
+  const contributing = bandBreakdown.filter(
+    (b) =>
+      b.expectedReturnMinPct != null &&
+      b.expectedReturnMaxPct != null
+  );
+  if (contributing.length === 0) return { minPct: 0, maxPct: 0, bandBreakdown };
+
+  const contributingWeight = contributing.reduce((s, b) => s + b.weightPct, 0);
+  if (contributingWeight <= 0) return { minPct: 0, maxPct: 0, bandBreakdown };
+
+  let minPct = 0;
+  let maxPct = 0;
+  for (const b of contributing) {
+    const w = b.weightPct / contributingWeight;
+    minPct += w * (b.expectedReturnMinPct ?? 0);
+    maxPct += w * (b.expectedReturnMaxPct ?? 0);
+  }
+
+  return { minPct, maxPct, bandBreakdown };
+}

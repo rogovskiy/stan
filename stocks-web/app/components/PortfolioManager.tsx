@@ -289,6 +289,8 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
             sizeMaxPct: b.sizeMaxPct,
             maxPositionSizePct: b.maxPositionSizePct,
             maxDrawdownPct: b.maxDrawdownPct,
+            expectedReturnMinPct: b.expectedReturnMinPct,
+            expectedReturnMaxPct: b.expectedReturnMaxPct,
           })),
         }),
       });
@@ -1130,6 +1132,38 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                                       }}
                                       className="w-full max-w-[8rem] px-2 py-1 text-black border border-gray-300 rounded"
                                     />
+                                  </label>
+                                  <label className="flex flex-col gap-0.5 col-span-2">
+                                    <span className="text-gray-500">Expected return range % (annual)</span>
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min={-100}
+                                        max={200}
+                                        step={0.5}
+                                        placeholder="Min"
+                                        value={band.expectedReturnMinPct ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          updateBand(band.id, { expectedReturnMinPct: v === '' ? undefined : parseFloat(v) || 0 });
+                                        }}
+                                        className="w-16 px-2 py-1 text-black border border-gray-300 rounded"
+                                      />
+                                      <span className="text-gray-400">–</span>
+                                      <input
+                                        type="number"
+                                        min={-100}
+                                        max={200}
+                                        step={0.5}
+                                        placeholder="Max"
+                                        value={band.expectedReturnMaxPct ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          updateBand(band.id, { expectedReturnMaxPct: v === '' ? undefined : parseFloat(v) || 0 });
+                                        }}
+                                        className="w-16 px-2 py-1 text-black border border-gray-300 rounded"
+                                      />
+                                    </div>
                                   </label>
                                 </div>
                               </li>

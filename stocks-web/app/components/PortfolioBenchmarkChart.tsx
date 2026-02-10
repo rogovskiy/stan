@@ -10,6 +10,9 @@ import {
   ResponsiveContainer,
   Legend,
   ReferenceLine,
+  BarChart,
+  Bar,
+  Cell,
 } from 'recharts';
 import type { PortfolioPerformanceResponse, BenchmarkTicker } from '../types/api';
 import {
@@ -18,7 +21,7 @@ import {
   PORTFOLIO_CONE_PARAMS,
   BENCHMARK_CONE_PARAMS,
 } from '../lib/portfolioForecast';
-import { computePortfolioKpis } from '../lib/portfolioKpis';
+import { computePortfolioKpis, computeYearlyAndYtdReturns } from '../lib/portfolioKpis';
 
 /** 2 years in days so forecast has daily resolution and cone lines render as one segment. */
 const FORECAST_DAYS = 365 * 2;
@@ -203,6 +206,26 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     if (!data || data.dates.length < 2) return null;
     return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
   }, [data]);
+
+  const yearlyAndYtd = useMemo(() => {
+    if (!data || data.dates.length < 2) return null;
+    return computeYearlyAndYtdReturns(data.dates, data.series.portfolio);
+  }, [data]);
+
+  const returnsBarData = useMemo(() => {
+    if (!yearlyAndYtd) return [];
+    const currentYear = new Date().getFullYear();
+    const rows: { label: string; value: number }[] = yearlyAndYtd.yearly
+      .filter(({ year }) => year !== currentYear)
+      .map(({ year, returnPct }) => ({
+        label: String(year),
+        value: returnPct,
+      }));
+    if (yearlyAndYtd.ytdReturnPct !== null) {
+      rows.push({ label: 'YTD', value: yearlyAndYtd.ytdReturnPct });
+    }
+    return rows;
+  }, [yearlyAndYtd]);
 
   if (loading && !data) {
     return (
@@ -546,10 +569,56 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
                 {kpis.maxDrawdown != null ? `${kpis.maxDrawdown.toFixed(1)}%` : '—'}
               </p>
             </div>
-            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Expected return</p>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col">
+              <div className="flex items-center justify-between gap-1">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Expected return</p>
+                {data?.expectedReturn?.bandBreakdown && data.expectedReturn.bandBreakdown.length > 0 && (
+                  <div className="group relative">
+                    <span
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-gray-300 text-gray-600 text-xs font-medium hover:bg-gray-400 cursor-help"
+                      aria-label="Expected return breakdown"
+                    >
+                      i
+                    </span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10 whitespace-nowrap">
+                      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-left text-sm">
+                        <p className="text-gray-600 mb-2">Based on band definitions</p>
+                        <p className="font-medium text-gray-800 mb-2">
+                          {data.expectedReturn.minPct !== 0 || data.expectedReturn.maxPct !== 0
+                            ? `${data.expectedReturn.minPct.toFixed(1)}–${data.expectedReturn.maxPct.toFixed(1)}%`
+                            : '—'}
+                        </p>
+                        <table className="text-gray-600">
+                          <thead>
+                            <tr>
+                              <th className="text-left font-medium text-gray-500 pr-3">Band</th>
+                              <th className="text-right font-medium text-gray-500 pr-3">Weight</th>
+                              <th className="text-right font-medium text-gray-500">Return</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.expectedReturn.bandBreakdown.map((b) => (
+                              <tr key={b.bandId}>
+                                <td className="pr-3">{b.bandName}</td>
+                                <td className="text-right pr-3">{b.weightPct.toFixed(0)}%</td>
+                                <td className="text-right">
+                                  {b.expectedReturnMinPct != null && b.expectedReturnMaxPct != null
+                                    ? `${b.expectedReturnMinPct.toFixed(0)}–${b.expectedReturnMaxPct.toFixed(0)}%`
+                                    : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
-                {kpis.expectedReturn != null ? `${kpis.expectedReturn.toFixed(1)}%` : '—'}
+                {data?.expectedReturn && (data.expectedReturn.minPct !== 0 || data.expectedReturn.maxPct !== 0)
+                  ? `${data.expectedReturn.minPct.toFixed(1)}–${data.expectedReturn.maxPct.toFixed(1)}%`
+                  : '—'}
               </p>
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col">
@@ -573,6 +642,34 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               </p>
             </div>
           </div>
+          {returnsBarData.length >= 1 && (
+            <div className="mt-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Returns by year</p>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={returnsBarData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => `${v}%`}
+                    domain={['auto', 'auto']}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [`${value >= 0 ? '+' : ''}${value.toFixed(2)}%`, 'Return']}
+                    contentStyle={{ fontSize: 12 }}
+                  />
+                  <Bar dataKey="value" name="Return" radius={[2, 2, 0, 0]}>
+                    {returnsBarData.map((entry) => (
+                      <Cell
+                        key={entry.label}
+                        fill={entry.value >= 0 ? '#16a34a' : '#dc2626'}
+                      />
+                    ))}
+                  </Bar>
+                  <ReferenceLine y={0} stroke="#9ca3af" strokeWidth={1} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
           {stressPanelOpen && (
             <div className="mt-4 p-4 rounded-lg border border-gray-200 bg-gray-50">
               <h4 className="text-sm font-semibold text-gray-800 mb-3">Stress scenario parameters</h4>

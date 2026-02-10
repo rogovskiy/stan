@@ -25,6 +25,10 @@ export interface Band {
   maxPositionSizePct?: number;
   /** Max drawdown % (optional). */
   maxDrawdownPct?: number;
+  /** Expected annual return range min % (optional). */
+  expectedReturnMinPct?: number;
+  /** Expected annual return range max % (optional). */
+  expectedReturnMaxPct?: number;
 }
 
 export interface Position {
@@ -139,13 +143,15 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
     
     const cashBalance = typeof portfolioData.cashBalance === 'number' ? portfolioData.cashBalance : 0;
     const bands: Band[] = Array.isArray(portfolioData.bands)
-      ? portfolioData.bands.map((b: { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number }) => ({
+      ? portfolioData.bands.map((b: { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number; expectedReturnMinPct?: number; expectedReturnMaxPct?: number }) => ({
           id: b.id,
           name: b.name,
           sizeMinPct: Number(b.sizeMinPct),
           sizeMaxPct: Number(b.sizeMaxPct),
           maxPositionSizePct: b.maxPositionSizePct != null ? Number(b.maxPositionSizePct) : undefined,
           maxDrawdownPct: b.maxDrawdownPct != null ? Number(b.maxDrawdownPct) : undefined,
+          expectedReturnMinPct: b.expectedReturnMinPct != null ? Number(b.expectedReturnMinPct) : undefined,
+          expectedReturnMaxPct: b.expectedReturnMaxPct != null ? Number(b.expectedReturnMaxPct) : undefined,
         }))
       : [];
 

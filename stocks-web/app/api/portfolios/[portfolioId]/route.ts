@@ -85,7 +85,7 @@ export async function PUT(
         if (!b || typeof b !== 'object' || !('id' in b) || !('name' in b) || !('sizeMinPct' in b) || !('sizeMaxPct' in b)) {
           throw new Error(`bands[${i}] must have id, name, sizeMinPct, sizeMaxPct`);
         }
-        const x = b as { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number };
+        const x = b as { id: string; name: string; sizeMinPct: number; sizeMaxPct: number; maxPositionSizePct?: number; maxDrawdownPct?: number; expectedReturnMinPct?: number; expectedReturnMaxPct?: number };
         if (typeof x.sizeMinPct !== 'number' || typeof x.sizeMaxPct !== 'number' || x.sizeMinPct < 0 || x.sizeMaxPct > 100 || x.sizeMinPct > x.sizeMaxPct) {
           throw new Error(`bands[${i}]: sizeMinPct/sizeMaxPct must be 0-100 with min <= max`);
         }
@@ -96,6 +96,8 @@ export async function PUT(
           sizeMaxPct: x.sizeMaxPct,
           maxPositionSizePct: x.maxPositionSizePct != null ? Number(x.maxPositionSizePct) : undefined,
           maxDrawdownPct: x.maxDrawdownPct != null ? Number(x.maxDrawdownPct) : undefined,
+          expectedReturnMinPct: x.expectedReturnMinPct != null ? Number(x.expectedReturnMinPct) : undefined,
+          expectedReturnMaxPct: x.expectedReturnMaxPct != null ? Number(x.expectedReturnMaxPct) : undefined,
         };
       });
       updates.bands = validated;

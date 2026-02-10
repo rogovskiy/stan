@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPortfolio, getTransactions } from '../../../../lib/services/portfolioService';
 import { getDailyPricesForTicker, getStartDateFromPeriod } from '../../../../lib/dailyPrices';
-import type { Position, Transaction } from '../../../../lib/services/portfolioService';
+import { computeBandExpectedReturn } from '../../../../lib/portfolioKpis';
+import type { Transaction } from '../../../../lib/services/portfolioService';
 
 const VALID_BENCHMARKS = ['SPY', 'QQQ', 'GLD'] as const;
 type BenchmarkTicker = (typeof VALID_BENCHMARKS)[number];
@@ -25,11 +26,13 @@ function buildPriceMap(points: { date: string; price: number }[]): Map<string, n
   return map;
 }
 
-/** Price on or most recently before dateStr (use exact date when present). */
+/** Get price from map for dateStr; if missing, use latest date on or before dateStr. */
 function getPriceAtDate(
   dateStr: string,
   map: Map<string, number>
 ): number {
+  const price = map.get(dateStr);
+  if (price !== undefined) return price;
   const sortedDates = Array.from(map.keys()).sort();
   const onOrBefore = sortedDates.filter((d) => d <= dateStr);
   const useDate = onOrBefore.length > 0 ? onOrBefore[onOrBefore.length - 1] : sortedDates[0];
@@ -37,38 +40,85 @@ function getPriceAtDate(
 }
 
 /**
- * Get portfolio value for a date. Uses forward-fill for missing prices
- * (previous known price) and only includes positions held at that date.
+ * Effective price per share for a ticker on a date from transactions on that date.
+ * Used so value on trade date matches the transaction (e.g. buy at $1,357.76).
  */
-function getPortfolioValueAtDate(
+function getTransactionPriceOnDate(
+  ticker: string,
   dateStr: string,
-  positions: Position[],
-  priceMaps: Map<string, Map<string, number>>,
-  periodStart: Date
+  transactions: Transaction[]
+): number | null {
+  const t = ticker.toUpperCase();
+  let cost = 0;
+  let qty = 0;
+  for (const tx of transactions) {
+    if (tx.ticker?.toUpperCase() !== t || tx.date !== dateStr || tx.quantity === 0) continue;
+    const price = tx.price != null && tx.price > 0
+      ? tx.price
+      : Math.abs(tx.amount) / Math.abs(tx.quantity);
+    cost += tx.quantity * price;
+    qty += tx.quantity;
+  }
+  return qty !== 0 ? cost / qty : null;
+}
+
+/**
+ * Portfolio value at a date from transactions (historical quantity) and prices.
+ * On a trade date we use the transaction price so value matches the trade (e.g. buy cost).
+ */
+function getPortfolioValueFromTransactionsAtDate(
+  dateStr: string,
+  transactions: Transaction[],
+  priceMaps: Map<string, Map<string, number>>
 ): number {
-  const date = new Date(dateStr);
+  const qtyByTicker = new Map<string, number>();
+  for (const tx of transactions) {
+    if (tx.ticker == null || tx.date > dateStr) continue;
+    const t = tx.ticker.toUpperCase();
+    qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
+  }
   let total = 0;
-
-  for (const pos of positions) {
-    const posStart = pos.purchaseDate ? new Date(pos.purchaseDate) : periodStart;
-    if (date < posStart) continue;
-
-    const map = priceMaps.get(pos.ticker.toUpperCase());
-    if (!map) continue;
-
-    const price = getPriceAtDate(dateStr, map);
-    if (price > 0) {
-      total += pos.quantity * price;
-    }
+  for (const [ticker, quantity] of qtyByTicker) {
+    if (quantity <= 0) continue;
+    const txPrice = getTransactionPriceOnDate(ticker, dateStr, transactions);
+    const map = priceMaps.get(ticker);
+    const price = (txPrice != null && txPrice > 0)
+      ? txPrice
+      : (map ? getPriceAtDate(dateStr, map) : 0);
+    if (price > 0) total += quantity * price;
   }
   return total;
 }
 
 /**
- * Per-position breakdown at a date using transactions (historical quantity), not current positions.
- * Quantity = sum of tx.quantity for all tx with tx.date <= dateStr and tx.ticker = T.
- * Price: prefer transaction price when there is a trade on this date for this ticker (actual execution price);
- * otherwise use daily price from priceMaps.
+ * Value at dateStr of positions held before dateStr (tx.date < dateStr), at dateStr prices.
+ * Used for TWR on a deposit day: return = this / V0 - 1 so we don't count new purchases as return.
+ */
+function getPortfolioValueFromTransactionsStrictlyBeforeDate(
+  dateStr: string,
+  transactions: Transaction[],
+  priceMaps: Map<string, Map<string, number>>
+): number {
+  const qtyByTicker = new Map<string, number>();
+  for (const tx of transactions) {
+    if (tx.ticker == null || tx.date >= dateStr) continue;
+    const t = tx.ticker.toUpperCase();
+    qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
+  }
+  let total = 0;
+  for (const [ticker, quantity] of qtyByTicker) {
+    if (quantity <= 0) continue;
+    const map = priceMaps.get(ticker);
+    if (!map) continue;
+    const price = getPriceAtDate(dateStr, map);
+    if (price > 0) total += quantity * price;
+  }
+  return total;
+}
+
+/**
+ * Per-position breakdown at a date using transactions (historical quantity).
+ * On a trade date we use the transaction price so value matches the trade.
  */
 function getHistoricalPositionBreakdownAtDate(
   dateStr: string,
@@ -81,20 +131,14 @@ function getHistoricalPositionBreakdownAtDate(
     const t = tx.ticker.toUpperCase();
     qtyByTicker.set(t, (qtyByTicker.get(t) ?? 0) + tx.quantity);
   }
-  const priceFromTxOnDate = new Map<string, number>();
-  for (const tx of transactions) {
-    if (tx.ticker == null || tx.date !== dateStr || tx.price == null || tx.price <= 0) continue;
-    priceFromTxOnDate.set(tx.ticker.toUpperCase(), tx.price);
-  }
   const result: { ticker: string; quantity: number; price: number; value: number }[] = [];
   for (const [ticker, quantity] of qtyByTicker) {
     if (quantity <= 0) continue;
-    let price = priceFromTxOnDate.get(ticker);
-    if (price == null || price <= 0) {
-      const map = priceMaps.get(ticker);
-      if (!map) continue;
-      price = getPriceAtDate(dateStr, map);
-    }
+    const txPrice = getTransactionPriceOnDate(ticker, dateStr, transactions);
+    const map = priceMaps.get(ticker);
+    const price = (txPrice != null && txPrice > 0)
+      ? txPrice
+      : (map ? getPriceAtDate(dateStr, map) : 0);
     if (price > 0) {
       result.push({
         ticker,
@@ -136,12 +180,21 @@ export async function GET(
       return NextResponse.json({ error: 'Portfolio not found' }, { status: 404 });
     }
 
-    const positions = portfolio.positions || [];
     const periodStart = getStartDateFromPeriod(period);
+    const transactions = await getTransactions(portfolioId, null);
 
-    // Fetch prices for all position tickers and the benchmark in parallel
+    const transactionTickers = [
+      ...new Set(
+        transactions.filter((t) => t.ticker != null).map((t) => t.ticker!.toUpperCase())
+      ),
+    ];
+    const positions = portfolio.positions || [];
     const tickersToFetch = [
-      ...new Set([...positions.map((p) => p.ticker.toUpperCase()), benchmark]),
+      ...new Set(
+        transactionTickers.length > 0
+          ? [...transactionTickers, benchmark]
+          : [...positions.map((p) => p.ticker.toUpperCase()), benchmark]
+      ),
     ];
 
     const priceResults = await Promise.all(
@@ -161,7 +214,6 @@ export async function GET(
       );
     }
 
-    // Build union of all dates (from benchmark and any position)
     const dateSet = new Set<string>();
     for (const map of priceMaps.values()) {
       for (const d of map.keys()) {
@@ -178,7 +230,7 @@ export async function GET(
     }
 
     const portfolioValues = dates.map((d) =>
-      getPortfolioValueAtDate(d, positions, priceMaps, periodStart)
+      getPortfolioValueFromTransactionsAtDate(d, transactions, priceMaps)
     );
     const benchmarkValues = dates.map((d) => {
       let v = benchmarkMap.get(d);
@@ -192,7 +244,7 @@ export async function GET(
       return v ?? 0;
     });
 
-    const hasPortfolioData = positions.length > 0 && portfolioValues.some((v) => v > 0);
+    const hasPortfolioData = portfolioValues.some((v) => v > 0);
     const dateMin = dates[0];
     const dateMax = dates[dates.length - 1];
 
@@ -202,7 +254,6 @@ export async function GET(
     if (!hasPortfolioData) {
       normPortfolio = portfolioValues.map(() => 100);
     } else {
-      const transactions = await getTransactions(portfolioId, null);
       const cashFlowByDate: Record<string, number> = {};
       for (const tx of transactions) {
         if (tx.type !== 'cash') continue;
@@ -216,26 +267,35 @@ export async function GET(
       for (let i = 0; i < dates.length - 1; i++) {
         const V0 = portfolioValues[i];
         const V1 = portfolioValues[i + 1];
-        const C = cashFlowByDate[dates[i + 1]] ?? 0;
+        const nextDate = dates[i + 1];
+        const C = cashFlowByDate[nextDate] ?? 0;
         if (V0 <= 0) {
           growthIndex[i + 1] = growthIndex[i];
         } else {
+          // End-of-period cash flow: deposit/withdrawal happens after the day's return.
+          // On a deposit day, return = market move on existing positions only (don't count new buys as return).
           let r: number;
           if (C > 0) {
-            r = V1 / (V0 + C) - 1;
+            const valueOldAtEnd = getPortfolioValueFromTransactionsStrictlyBeforeDate(nextDate, transactions, priceMaps);
+            r = valueOldAtEnd > 0 ? valueOldAtEnd / V0 - 1 : 0;
+          } else if (C < 0) {
+            r = (V1 - C) / V0 - 1; // withdrawal at end of day
           } else {
-            r = (V1 - C) / V0 - 1;
+            r = V1 / V0 - 1;
           }
           growthIndex[i + 1] = growthIndex[i] * (1 + r);
         }
         if (debug && (i < 3 || C !== 0 || i >= dates.length - 4)) {
-          const Cval = cashFlowByDate[dates[i + 1]] ?? 0;
+          const Cval = cashFlowByDate[nextDate] ?? 0;
+          const valueOldAtEnd = Cval > 0 ? getPortfolioValueFromTransactionsStrictlyBeforeDate(nextDate, transactions, priceMaps) : 0;
           const rComputed =
             V0 <= 0
               ? 0
               : Cval > 0
-                ? portfolioValues[i + 1] / (V0 + Cval) - 1
-                : (portfolioValues[i + 1] - Cval) / V0 - 1;
+                ? (valueOldAtEnd > 0 ? valueOldAtEnd / V0 - 1 : 0)
+                : Cval < 0
+                  ? (portfolioValues[i + 1] - Cval) / V0 - 1
+                  : portfolioValues[i + 1] / V0 - 1;
           steps.push({
             date: dates[i + 1],
             V0: Math.round(V0 * 100) / 100,
@@ -249,6 +309,12 @@ export async function GET(
       normPortfolio = growthIndex;
 
       if (debug) {
+        // Cumulative net cash (deposits - withdrawals) up to each date, for narrative "under management"
+        const cumulativeCashUpTo = (dateStr: string): number => {
+          return transactions
+            .filter((tx) => tx.type === 'cash' && tx.date <= dateStr)
+            .reduce((sum, tx) => sum + tx.amount, 0);
+        };
         const allTxInRange = transactions.filter((tx) => tx.date >= dateMin && tx.date <= dateMax);
         const byType = allTxInRange.reduce<Record<string, { count: number; sumAmount: number }>>((acc, tx) => {
           const t = tx.type;
@@ -292,8 +358,12 @@ export async function GET(
           const firstDate = dates[firstIdxWithValue];
           const firstValue = portfolioValues[firstIdxWithValue];
           if (firstIdxWithValue > 0) {
+            const cashInNoPositionPeriod = cumulativeCashUpTo(dates[firstIdxWithValue - 1]);
+            const cashStr = cashInNoPositionPeriod.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             narrativeLines.push(
-              `From ${dates[0]} to ${dates[firstIdxWithValue - 1]} we had $0 under management (no positions yet; cash/deposits are not counted).`
+              cashInNoPositionPeriod > 0
+                ? `From ${dates[0]} to ${dates[firstIdxWithValue - 1]} we had $${cashStr} under management (deposits only; no positions yet, so 0% return).`
+                : `From ${dates[0]} to ${dates[firstIdxWithValue - 1]} we had $0 under management (no deposits or positions in this period).`
             );
           }
           narrativeLines.push(
@@ -309,10 +379,10 @@ export async function GET(
             const segmentEndIdx = segmentEndIndices[s];
             const startDate = dates[segmentStartIdx];
             const endDate = dates[segmentEndIdx];
-            const VStart = portfolioValues[segmentStartIdx];
-            const VEnd = portfolioValues[segmentEndIdx];
             const days = segmentEndIdx - segmentStartIdx;
-            const returnDec = VStart > 0 ? VEnd / VStart - 1 : 0;
+            const indexStart = growthIndex[segmentStartIdx];
+            const indexEnd = growthIndex[segmentEndIdx];
+            const returnDec = indexStart > 0 ? indexEnd / indexStart - 1 : 0;
             const returnPct = returnDec * 100;
             const dailyPct = days > 0 ? ((Math.pow(1 + returnDec, 1 / days) - 1) * 100) : 0;
             const apyPct = days > 0 ? ((Math.pow(1 + returnDec, 365 / days) - 1) * 100) : 0;
@@ -369,6 +439,9 @@ export async function GET(
 
     const normBenchmark = normalizeTo100(benchmarkValues);
 
+    const bands = portfolio.bands ?? [];
+    const expectedReturn = computeBandExpectedReturn(bands);
+
     const json: Record<string, unknown> = {
       dates,
       series: {
@@ -377,6 +450,7 @@ export async function GET(
       },
       benchmark,
     };
+    if (expectedReturn) json.expectedReturn = expectedReturn;
     if (debug && debugPayload) json.debug = debugPayload;
     return NextResponse.json(json);
   } catch (error) {

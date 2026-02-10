@@ -101,6 +101,20 @@ export interface QuarterlyDataPoint {
 
 export type BenchmarkTicker = 'SPY' | 'QQQ' | 'GLD';
 
+export interface ExpectedReturnBandBreakdown {
+  bandName: string;
+  bandId: string;
+  weightPct: number;
+  expectedReturnMinPct?: number;
+  expectedReturnMaxPct?: number;
+}
+
+export interface ExpectedReturnResponse {
+  minPct: number;
+  maxPct: number;
+  bandBreakdown: ExpectedReturnBandBreakdown[];
+}
+
 export interface PortfolioPerformanceResponse {
   dates: string[];
   series: {
@@ -108,6 +122,7 @@ export interface PortfolioPerformanceResponse {
     benchmark: number[];
   };
   benchmark: BenchmarkTicker;
+  expectedReturn?: ExpectedReturnResponse;
 }
 
 // Legacy interface for backwards compatibility

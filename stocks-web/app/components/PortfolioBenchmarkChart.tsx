@@ -545,11 +545,33 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
       {kpis && (
         <div className="mt-6 border-t border-gray-200 pt-4">
           <div className="grid grid-cols-6 gap-3">
-            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
+            <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col min-h-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Average return</p>
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.averageReturn != null ? `${kpis.averageReturn.toFixed(1)}%` : '—'}
               </p>
+              {returnsBarData.length >= 1 && (
+                <div className="mt-1.5 flex-1 min-h-0" style={{ height: 44 }}>
+                  <ResponsiveContainer width="100%" height={44}>
+                    <BarChart data={returnsBarData} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                      <XAxis dataKey="label" hide />
+                      <YAxis hide domain={['auto', 'auto']} />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(0,0,0,0.06)' }}
+                        contentStyle={{ fontSize: 11, padding: '4px 8px' }}
+                        formatter={(value: number) => [`${value >= 0 ? '+' : ''}${value.toFixed(2)}%`, 'Return']}
+                        labelFormatter={(label) => label}
+                      />
+                      <Bar dataKey="value" radius={[1, 1, 0, 0]} isAnimationActive={false}>
+                        {returnsBarData.map((entry) => (
+                          <Cell key={entry.label} fill={entry.value >= 0 ? '#16a34a' : '#dc2626'} />
+                        ))}
+                      </Bar>
+                      <ReferenceLine y={0} stroke="#9ca3af" strokeWidth={1} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Beta</p>
@@ -642,34 +664,6 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               </p>
             </div>
           </div>
-          {returnsBarData.length >= 1 && (
-            <div className="mt-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Returns by year</p>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={returnsBarData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(v) => `${v}%`}
-                    domain={['auto', 'auto']}
-                  />
-                  <Tooltip
-                    formatter={(value: number) => [`${value >= 0 ? '+' : ''}${value.toFixed(2)}%`, 'Return']}
-                    contentStyle={{ fontSize: 12 }}
-                  />
-                  <Bar dataKey="value" name="Return" radius={[2, 2, 0, 0]}>
-                    {returnsBarData.map((entry) => (
-                      <Cell
-                        key={entry.label}
-                        fill={entry.value >= 0 ? '#16a34a' : '#dc2626'}
-                      />
-                    ))}
-                  </Bar>
-                  <ReferenceLine y={0} stroke="#9ca3af" strokeWidth={1} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
           {stressPanelOpen && (
             <div className="mt-4 p-4 rounded-lg border border-gray-200 bg-gray-50">
               <h4 className="text-sm font-semibold text-gray-800 mb-3">Stress scenario parameters</h4>

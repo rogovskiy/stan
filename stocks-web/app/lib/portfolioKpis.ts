@@ -35,11 +35,23 @@ function covariance(x: number[], y: number[]): number {
   return s / (x.length - 1);
 }
 
+/** Date range for the max-drawdown recovery period (trough → recovery). */
+export interface MaxDrawdownRecoveryRange {
+  /** Date at trough (ISO string). */
+  troughDate: string;
+  /** Date when portfolio recovered to pre-drawdown peak (ISO string). */
+  recoveryDate: string;
+  /** Recovery duration in trading days (trough to recovery). */
+  recoveryDays: number;
+}
+
 export interface PortfolioKpis {
   averageReturn: number | null;
   beta: number | null;
   sharpe: number | null;
   maxDrawdown: number | null;
+  /** Recovery period of the max drawdown (trough to recovery); null if no drawdown or not yet recovered. */
+  maxDrawdownRecovery: MaxDrawdownRecoveryRange | null;
   expectedReturn: number | null;
   stressDrawdown: number | null;
 }
@@ -67,6 +79,7 @@ export function computePortfolioKpis(
       beta: null,
       sharpe: null,
       maxDrawdown: null,
+      maxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
       stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
     };
@@ -106,6 +119,7 @@ export function computePortfolioKpis(
       beta: null,
       sharpe: null,
       maxDrawdown: null,
+      maxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
       stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
     };
@@ -119,19 +133,49 @@ export function computePortfolioKpis(
   const sharpe = stdRp > 0 ? (meanRp / stdRp) * Math.sqrt(TRADING_DAYS_PER_YEAR) : null;
 
   let runningMax = portfolio[0];
+  let peakIdx = 0;
   let minDrawdown = 0;
+  let troughIdx = 0;
+  let peakIdxAtTrough = 0;
   for (let i = 1; i < portfolio.length; i++) {
-    if (portfolio[i] > runningMax) runningMax = portfolio[i];
+    if (portfolio[i] > runningMax) {
+      runningMax = portfolio[i];
+      peakIdx = i;
+    }
     const dd = runningMax > 0 ? (portfolio[i] - runningMax) / runningMax : 0;
-    if (dd < minDrawdown) minDrawdown = dd;
+    if (dd < minDrawdown) {
+      minDrawdown = dd;
+      troughIdx = i;
+      peakIdxAtTrough = peakIdx;
+    }
   }
   const maxDrawdown = minDrawdown <= 0 ? Math.abs(minDrawdown) * 100 : 0;
+
+  let maxDrawdownRecovery: MaxDrawdownRecoveryRange | null = null;
+  if (maxDrawdown > 0 && peakIdxAtTrough < n && troughIdx < n) {
+    const peakValue = portfolio[peakIdxAtTrough];
+    let recoveryIdx: number | null = null;
+    for (let j = troughIdx + 1; j < n; j++) {
+      if (portfolio[j] >= peakValue) {
+        recoveryIdx = j;
+        break;
+      }
+    }
+    if (recoveryIdx != null) {
+      maxDrawdownRecovery = {
+        troughDate: dates[troughIdx],
+        recoveryDate: dates[recoveryIdx],
+        recoveryDays: recoveryIdx - troughIdx,
+      };
+    }
+  }
 
   return {
     averageReturn: averageReturn ?? null,
     beta: beta ?? null,
     sharpe: sharpe ?? null,
     maxDrawdown,
+    maxDrawdownRecovery,
     expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
     stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
   };

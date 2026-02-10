@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   Legend,
   ReferenceLine,
+  ReferenceArea,
   BarChart,
   Bar,
   Cell,
@@ -207,6 +208,16 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
   }, [data]);
 
+  /** Recovery period for max drawdown (for ReferenceArea highlight). Only in absolute view. */
+  const maxDrawdownRecoveryRange = useMemo(() => {
+    if (!kpis?.maxDrawdownRecovery || viewMode !== 'absolute') return null;
+    const { troughDate, recoveryDate } = kpis.maxDrawdownRecovery;
+    return {
+      x1: new Date(troughDate).getTime(),
+      x2: new Date(recoveryDate).getTime(),
+    };
+  }, [kpis?.maxDrawdownRecovery, viewMode]);
+
   const yearlyAndYtd = useMemo(() => {
     if (!data || data.dates.length < 2) return null;
     return computeYearlyAndYtdReturns(data.dates, data.series.portfolio);
@@ -371,6 +382,14 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               }
             />
             {viewMode === 'relative' && <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />}
+            {viewMode === 'absolute' && maxDrawdownRecoveryRange && (
+              <ReferenceArea
+                x1={maxDrawdownRecoveryRange.x1}
+                x2={maxDrawdownRecoveryRange.x2}
+                fill="rgba(220, 38, 38, 0.15)"
+                stroke="none"
+              />
+            )}
             {viewMode === 'absolute' && showForecast && forecastStartTimestamp != null && (
               <ReferenceLine
                 x={forecastStartTimestamp}
@@ -610,6 +629,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.maxDrawdown != null ? `${kpis.maxDrawdown.toFixed(1)}%` : '—'}
               </p>
+              {kpis.maxDrawdownRecovery != null && (
+                <p className="text-xs text-gray-600 mt-1">
+                  Recovery: {kpis.maxDrawdownRecovery.recoveryDays} day{kpis.maxDrawdownRecovery.recoveryDays !== 1 ? 's' : ''}
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2 border border-gray-100 flex flex-col">
               <div className="flex items-center justify-between gap-1">

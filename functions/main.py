@@ -24,6 +24,7 @@ logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 # parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
 set_global_options(max_instances=10)
 
+benchmarks = [ 'SPY', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLC', "GLD", 'QQQ' ]
 initialize_app()
 
 # Scheduled function that runs daily at midnight UTC
@@ -94,6 +95,14 @@ def scheduled_daily_refresh(event: scheduler_fn.ScheduledEvent) -> None:
             logging.info(f"Published refresh message for ticker {ticker} to {yf_topic_path} with message ID: {message_id_yf}")
         
         logging.info(f"Published {ir_published_count} messages to {ir_topic_path} and {yf_published_count} messages to {yf_topic_path}")
+        
+        for ticker in benchmarks:
+            message_data = {'ticker': ticker}
+            message_json = json.dumps(message_data).encode('utf-8')
+            future_yf = publisher.publish(yf_topic_path, message_json)
+            message_id_yf = future_yf.result()
+            yf_published_count += 1
+            logging.info(f"Published refresh message for ticker {ticker} to {yf_topic_path} with message ID: {message_id_yf}")
         
     except Exception as e:
         error_msg = f"Error fetching tickers or publishing message: {e}"

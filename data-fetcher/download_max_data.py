@@ -63,35 +63,35 @@ class MaxDataDownloader:
         self.yfinance_service = YFinanceService()
         self.sec_service = SECFinancialsService()
     
-    def download_max_data(self, ticker: str, clear_existing: bool = False, 
+    def download_max_data(self, ticker: str, clear_existing: bool = False,
+                         force_price: bool = False,
                          verbose: bool = False, skip_price: bool = False,
                          include_analyst: bool = False) -> None:
         """Download and cache maximum available data for a ticker
-        
+
         Args:
             ticker: Stock ticker symbol
-            clear_existing: Clear existing cache before downloading
+            clear_existing: Clear existing price cache before downloading
+            force_price: Clear only price cache before downloading (force price re-download)
             verbose: Show detailed progress
             skip_price: Skip downloading historical price data
             include_analyst: Include analyst predictions/forecasts data
         """
-        
+
         if verbose:
             print(f'\n🚀 Starting maximum data download for {ticker.upper()}')
-            print(f'Options: clearExisting={clear_existing}, skipPrice={skip_price}, includeAnalyst={include_analyst}')
+            print(f'Options: clear={clear_existing}, force_price={force_price}, skipPrice={skip_price}, includeAnalyst={include_analyst}')
         else:
             print(f'\n🚀 Downloading data for {ticker.upper()}...')
-        
+
         try:
-            # Clear existing cache if requested
-            if clear_existing:
+            # Clear price cache if requested (force full price re-download)
+            if clear_existing or force_price:
                 if verbose:
-                    print(f'\n🗑️  Clearing existing cache for {ticker}...')
-                # Note: clear_cache is a cross-domain utility - skipping for now
-                # Individual services can be cleared separately if needed
-                print(f'⚠️  Clear cache not yet implemented in refactored services')
+                    print(f'\n🗑️  Clearing price cache for {ticker}...')
+                self.price_service.clear_price_data(ticker, verbose=verbose)
                 if verbose:
-                    print(f'✅ Cache cleared for {ticker}')
+                    print(f'✅ Price cache cleared for {ticker}')
             
             # Download historical price data (optional)
             if not skip_price:
@@ -186,7 +186,9 @@ class MaxDataDownloader:
                 print(f"   Fetching data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
             
             stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date, end=end_date, interval='1d')
+            hist = stock.history(start=start_date, end=end_date, interval='1d', auto_adjust=False)
+            # print 2024-05-29 row
+            print("AAAA", hist.loc['2024-05-29'])
             
             if hist.empty:
                 return {
@@ -227,6 +229,8 @@ class MaxDataDownloader:
                     'c': round(float(row.get('Close', 0)), 2),
                     'v': int(row.get('Volume', 0))
                 }
+                if date_str == '2024-05-29':
+                    print("BBBB", annual_data[year_str]['data'][date_str])
             
             # Update total_days metadata and cache each year
             years_cached = 0
@@ -542,14 +546,19 @@ Examples:
   # Download only financial data (skip price)
   python download_max_data.py AAPL --skip-price
   
-  # Clear cache and re-download with verbose output
+  # Force price re-download (clear price cache, then re-download)
+  python download_max_data.py AAPL --force-price
+
+  # Clear price cache and re-download with verbose output
   python download_max_data.py AAPL --clear --verbose
         '''
     )
     
     parser.add_argument('ticker', help='Stock ticker symbol (e.g., AAPL, MSFT, GOOGL)')
-    parser.add_argument('--clear', action='store_true', 
-                       help='Clear existing cache before downloading')
+    parser.add_argument('--clear', action='store_true',
+                       help='Clear existing price cache before downloading')
+    parser.add_argument('--force-price', action='store_true',
+                       help='Clear price cache and re-download price data (unadjusted OHLC)')
     parser.add_argument('--verbose', action='store_true',
                        help='Show detailed progress information')
     parser.add_argument('--skip-price', action='store_true',
@@ -567,6 +576,7 @@ Examples:
         downloader.download_max_data(
             ticker=ticker,
             clear_existing=args.clear,
+            force_price=args.force_price,
             verbose=args.verbose,
             skip_price=args.skip_price,
             include_analyst=args.include_analyst

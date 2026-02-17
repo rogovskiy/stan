@@ -32,7 +32,9 @@ class PriceDataService(FirebaseBaseService):
             # 1. Upload price data to Firebase Storage
             storage_path = f'price_data/{upper_ticker}/{year}.json'
             json_data = json.dumps(price_data, indent=2)
-            
+
+            if year == 2024 and '2024-05-29' in price_data['data']:
+                print("CCCC", price_data['data']['2024-05-29']) 
             if verbose:
                 print(f'Uploading price data for {ticker} {year} to Storage...')
             blob = self.bucket.blob(storage_path)
@@ -114,7 +116,36 @@ class PriceDataService(FirebaseBaseService):
         except Exception as error:
             print(f'Error getting annual price reference for {ticker} {year}: {error}')
             return None
-    
+
+    def clear_price_data(self, ticker: str, verbose: bool = True) -> None:
+        """Clear all cached price data for a ticker (Storage blobs + consolidated doc).
+        Use before re-downloading to force a full price refresh."""
+        try:
+            upper_ticker = ticker.upper()
+            prefix = f'price_data/{upper_ticker}/'
+            blobs = list(self.bucket.list_blobs(prefix=prefix))
+            for blob in blobs:
+                blob.delete()
+                if verbose:
+                    print(f'   Deleted {blob.name}')
+            # Reset consolidated document so it has no years
+            price_data_ref = (
+                self.db.collection('tickers')
+                .document(upper_ticker)
+                .collection('price')
+                .document('consolidated')
+            )
+            price_data_ref.set({
+                'last_updated': datetime.now().isoformat(),
+                'data_source': 'yfinance_python',
+                'years': {}
+            })
+            if verbose:
+                print(f'Cleared price data for {ticker} ({len(blobs)} Storage file(s))')
+        except Exception as error:
+            print(f'Error clearing price data for {ticker}: {error}')
+            raise error
+
     def download_annual_price_data(self, reference: Dict[str, Any]) -> Dict[str, Any]:
         """Download annual price data from Firebase Storage"""
         try:

@@ -453,9 +453,11 @@ export default function SectorRotationChart({
               isAnimationActive={false}
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               shape={(props: any) => {
-                const cx = typeof props.cx === 'number' ? props.cx : null;
-                const cy = typeof props.cy === 'number' ? props.cy : null;
-                if (cx == null || cy == null) return null;
+                const cx = typeof props.cx === 'number' ? props.cx : 0;
+                const cy = typeof props.cy === 'number' ? props.cy : 0;
+                if (typeof props.cx !== 'number' || typeof props.cy !== 'number') {
+                  return <circle cx={cx} cy={cy} r={0} fill="none" />;
+                }
                 const idx =
                   typeof props.index === 'number'
                     ? props.index

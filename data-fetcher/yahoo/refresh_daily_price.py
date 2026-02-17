@@ -111,7 +111,7 @@ def refresh_daily_price(ticker: str, verbose: bool = False) -> Dict[str, Any]:
                 prev_year_start = datetime(previous_year, 1, 1)
                 prev_year_end = datetime(previous_year, 12, 31)
                 stock = yf.Ticker(ticker)
-                prev_hist = stock.history(start=prev_year_start, end=prev_year_end, interval='1d')
+                prev_hist = stock.history(start=prev_year_start, end=prev_year_end, interval='1d', auto_adjust=False)
                 
                 if not prev_hist.empty:
                     # Build complete previous year data
@@ -170,7 +170,7 @@ def refresh_daily_price(ticker: str, verbose: bool = False) -> Dict[str, Any]:
             logger.info(f'Fetching price data from {start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")}')
         
         stock = yf.Ticker(ticker)
-        hist = stock.history(start=start_date, end=end_date, interval='1d')
+        hist = stock.history(start=start_date, end=end_date, interval='1d', auto_adjust=False)
         
         if hist.empty:
             if verbose:

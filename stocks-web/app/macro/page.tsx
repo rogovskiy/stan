@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import AppNavigation from '../components/AppNavigation';
+import SectorRotationChart from '../components/SectorRotationChart';
+import type { SectorRotationData } from '../components/SectorRotationChart';
 import {
   LineChart,
   Line,
@@ -41,6 +43,11 @@ export default function MacroPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [sectorRotationData, setSectorRotationData] =
+    useState<SectorRotationData | null>(null);
+  const [sectorRotationLoading, setSectorRotationLoading] = useState(true);
+  const [sectorRotationError, setSectorRotationError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     async function fetchData() {
@@ -66,6 +73,38 @@ export default function MacroPage() {
       }
     }
     fetchData();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSectorRotation() {
+      setSectorRotationLoading(true);
+      setSectorRotationError(null);
+      try {
+        const res = await fetch('/api/macro/sector-rotation?period=3y');
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setSectorRotationError(
+            json.error || 'Failed to load sector rotation data'
+          );
+          setSectorRotationData(null);
+          return;
+        }
+        setSectorRotationData(json);
+      } catch (err) {
+        if (!cancelled) {
+          setSectorRotationError(
+            err instanceof Error ? err.message : 'Failed to load sector rotation'
+          );
+          setSectorRotationData(null);
+        }
+      } finally {
+        if (!cancelled) setSectorRotationLoading(false);
+      }
+    }
+    fetchSectorRotation();
     return () => { cancelled = true; };
   }, []);
 
@@ -199,6 +238,17 @@ export default function MacroPage() {
             </div>
           </>
         )}
+
+        <div className="mt-8 rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Sector rotation (vs SPY)
+          </h2>
+          <SectorRotationChart
+            data={sectorRotationData}
+            loading={sectorRotationLoading}
+            error={sectorRotationError}
+          />
+        </div>
       </div>
     </div>
   );

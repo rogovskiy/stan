@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 
 
-# Channel weights (v1)
-WEIGHTS = {
+# Default channel weights -- used as fallback when Firebase config is unavailable.
+DEFAULT_WEIGHTS: Dict[str, float] = {
     "EQUITIES": 0.35,
     "CREDIT": 0.25,
     "VOL": 0.25,
@@ -20,7 +20,7 @@ WEIGHTS = {
     "OIL": 0.05,
 }
 
-REASON_LABELS = {
+DEFAULT_REASON_LABELS: Dict[str, Dict[float, Optional[str]]] = {
     "EQUITIES": {
         1: "Equity trend strong (SPY above 200D, positive 60D momentum)",
         -1: "Equity trend weakening (SPY below 200D or weak 60D momentum)",
@@ -175,28 +175,46 @@ def channel_oil(series_by_ticker: Dict[str, pd.Series]) -> float:
     return -1.0 if feats["mom20"] > 0.08 else 0.0
 
 
-def compute_channel_scores(series_by_ticker: Dict[str, pd.Series]) -> Dict[str, float]:
-    """All channel scores; missing channels omitted from returned dict."""
+CHANNEL_REGISTRY: Dict[str, Any] = {
+    "EQUITIES": channel_equities,
+    "CREDIT": channel_credit,
+    "VOL": channel_vol,
+    "USD": channel_usd,
+    "OIL": channel_oil,
+}
+
+
+def compute_channel_scores(
+    series_by_ticker: Dict[str, pd.Series],
+    active_channels: Optional[list] = None,
+) -> Dict[str, float]:
+    """All channel scores; missing channels omitted from returned dict.
+
+    Args:
+        series_by_ticker: Price series keyed by ticker symbol.
+        active_channels: Channel keys to compute. Defaults to all registered channels.
+    """
+    keys = active_channels if active_channels is not None else list(CHANNEL_REGISTRY.keys())
     scores = {}
-    eq = channel_equities(series_by_ticker)
-    if eq is not None:
-        scores["EQUITIES"] = eq
-    cr = channel_credit(series_by_ticker)
-    if cr is not None:
-        scores["CREDIT"] = cr
-    vol = channel_vol(series_by_ticker)
-    if vol is not None:
-        scores["VOL"] = vol
-    scores["USD"] = channel_usd(series_by_ticker)
-    scores["OIL"] = channel_oil(series_by_ticker)
+    for ch in keys:
+        fn = CHANNEL_REGISTRY.get(ch)
+        if fn is None:
+            continue
+        result = fn(series_by_ticker)
+        if result is not None:
+            scores[ch] = result
     return scores
 
 
-def compute_global_score(channel_scores: Dict[str, float]) -> float:
+def compute_global_score(
+    channel_scores: Dict[str, float],
+    weights: Optional[Dict[str, float]] = None,
+) -> float:
     """Weighted sum; missing channel contributes 0."""
+    w = weights if weights is not None else DEFAULT_WEIGHTS
     total = 0.0
-    for ch, w in WEIGHTS.items():
-        total += w * channel_scores.get(ch, 0.0)
+    for ch, weight in w.items():
+        total += weight * channel_scores.get(ch, 0.0)
     return total
 
 
@@ -231,13 +249,17 @@ def top_reasons(
     mode: str,
     trans: str,
     n: int = 2,
+    weights: Optional[Dict[str, float]] = None,
+    reason_labels: Optional[Dict[str, Dict[float, Optional[str]]]] = None,
 ) -> list:
     """Top n reasons by absolute contribution; prefer negative impact when risk-off/deteriorating."""
+    w_map = weights if weights is not None else DEFAULT_WEIGHTS
+    r_map = reason_labels if reason_labels is not None else DEFAULT_REASON_LABELS
     contribs = []
     for ch, score in channel_scores.items():
-        w = WEIGHTS.get(ch, 0)
+        w = w_map.get(ch, 0)
         c = w * score
-        labels = REASON_LABELS.get(ch, {})
+        labels = r_map.get(ch, {})
         if ch == "USD":
             label = labels.get(score)
         elif ch == "OIL":
@@ -259,33 +281,49 @@ def top_reasons(
 
 def compute_global_score_prev(
     series_by_ticker_10d_ago: Dict[str, pd.Series],
+    active_channels: Optional[list] = None,
+    weights: Optional[Dict[str, float]] = None,
 ) -> Optional[float]:
     """Compute global score as of 10d-ago series (for transition)."""
     if not series_by_ticker_10d_ago:
         return None
-    channel_scores = compute_channel_scores(series_by_ticker_10d_ago)
+    channel_scores = compute_channel_scores(series_by_ticker_10d_ago, active_channels=active_channels)
     if not channel_scores:
         return None
-    return compute_global_score(channel_scores)
+    return compute_global_score(channel_scores, weights=weights)
 
 
 def compute_macro_scores(
     series_by_ticker: Dict[str, pd.Series],
     as_of_date: str,
     series_by_ticker_10d_ago: Optional[Dict[str, pd.Series]] = None,
+    active_channels: Optional[list] = None,
+    weights: Optional[Dict[str, float]] = None,
+    reason_labels: Optional[Dict[str, Dict[float, Optional[str]]]] = None,
 ) -> Dict[str, Any]:
     """
     Full macro score payload: asOf, macroMode, globalScore, confidence, transition, channelScores, reasons.
-    If series_by_ticker_10d_ago is provided, transition is computed; else STABLE.
+
+    Args:
+        series_by_ticker: Price series keyed by ticker symbol.
+        as_of_date: YYYY-MM-DD string.
+        series_by_ticker_10d_ago: Optional 10-day-ago series for transition.
+        active_channels: Channel keys to compute (from Firebase). Defaults to CHANNEL_REGISTRY keys.
+        weights: Channel weights (from Firebase). Defaults to DEFAULT_WEIGHTS.
+        reason_labels: Reason labels (from Firebase). Defaults to DEFAULT_REASON_LABELS.
     """
-    channel_scores = compute_channel_scores(series_by_ticker)
-    global_score = compute_global_score(channel_scores)
+    channel_scores = compute_channel_scores(series_by_ticker, active_channels=active_channels)
+    global_score = compute_global_score(channel_scores, weights=weights)
     global_score_prev = None
     if series_by_ticker_10d_ago:
-        global_score_prev = compute_global_score_prev(series_by_ticker_10d_ago)
+        global_score_prev = compute_global_score_prev(
+            series_by_ticker_10d_ago, active_channels=active_channels, weights=weights
+        )
     trans = transition(global_score, global_score_prev)
     mode = macro_mode(global_score)
-    reasons = top_reasons(channel_scores, mode, trans, n=2)
+    reasons = top_reasons(
+        channel_scores, mode, trans, n=2, weights=weights, reason_labels=reason_labels
+    )
     return {
         "asOf": as_of_date,
         "macroMode": mode,

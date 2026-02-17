@@ -28,14 +28,36 @@ from dotenv import load_dotenv
 load_dotenv('.env.local')
 
 from yahoo.macro_scores import compute_macro_scores
+from services.channels_config_service import ChannelsConfigService
 
 logger = logging.getLogger(__name__)
 
 # ~400 trading days; use 504 calendar days buffer
 LOOKBACK_CALENDAR_DAYS = 504
 
-MACRO_TICKERS = ["SPY", "HYG", "LQD", "UUP", "USO", "GLD", "TLT", "IEF"]
 VIX_TICKER = "^VIX"
+
+
+def load_channel_config() -> Dict[str, Any]:
+    """Load channel config from Firebase and derive tickers, weights, reason_labels."""
+    svc = ChannelsConfigService()
+    channels = svc.get_all_channels()
+    if not channels:
+        raise RuntimeError("No channel config found in macro/us_market/channels")
+    macro_tickers = svc.derive_macro_tickers(channels)
+    weights = svc.extract_weights(channels)
+    reason_labels = svc.extract_reason_labels(channels)
+    active_channels = list(channels.keys())
+    logger.info(
+        "Loaded %d channels from Firebase: %s (tickers: %s)",
+        len(channels), active_channels, macro_tickers,
+    )
+    return {
+        "macro_tickers": macro_tickers,
+        "active_channels": active_channels,
+        "weights": weights,
+        "reason_labels": reason_labels,
+    }
 
 
 def fetch_prices(
@@ -179,16 +201,19 @@ def refresh_macro_scores(
     """
     Fetch macro data, compute scores, optionally save to Firebase. Returns the payload dict.
     """
+    cfg = load_channel_config()
+    macro_tickers = cfg["macro_tickers"]
+
     end = datetime.now()
     start = end - timedelta(days=LOOKBACK_CALENDAR_DAYS)
 
     if verbose:
         logger.info("Fetching macro tickers from %s to %s", start.date(), end.date())
 
-    series_by_ticker = fetch_prices(MACRO_TICKERS, start, end, auto_adjust=True)
+    series_by_ticker = fetch_prices(macro_tickers, start, end, auto_adjust=True)
     vix = fetch_vix(start, end)
     if vix is not None:
-        series_by_ticker["^VIX"] = vix
+        series_by_ticker[VIX_TICKER] = vix
 
     if not series_by_ticker:
         raise RuntimeError("No macro price data returned")
@@ -208,6 +233,9 @@ def refresh_macro_scores(
         series_as_of,
         as_of,
         series_by_ticker_10d_ago=series_10d_ago,
+        active_channels=cfg["active_channels"],
+        weights=cfg["weights"],
+        reason_labels=cfg["reason_labels"],
     )
 
     if save_to_firebase:
@@ -226,16 +254,19 @@ def refresh_macro_scores_weekly_backfill(
     Compute risk score for the last trading day of each week in the past year.
     Fetches data once, then iterates over weekly dates. Returns list of payload dicts.
     """
+    cfg = load_channel_config()
+    macro_tickers = cfg["macro_tickers"]
+
     end = datetime.now()
     start = end - timedelta(days=LOOKBACK_CALENDAR_DAYS)
 
     if verbose:
         logger.info("Fetching macro tickers from %s to %s (weekly backfill)", start.date(), end.date())
 
-    series_by_ticker = fetch_prices(MACRO_TICKERS, start, end, auto_adjust=True)
+    series_by_ticker = fetch_prices(macro_tickers, start, end, auto_adjust=True)
     vix = fetch_vix(start, end)
     if vix is not None:
-        series_by_ticker["^VIX"] = vix
+        series_by_ticker[VIX_TICKER] = vix
 
     if not series_by_ticker:
         raise RuntimeError("No macro price data returned")
@@ -260,6 +291,9 @@ def refresh_macro_scores_weekly_backfill(
             series_as_of,
             as_of,
             series_by_ticker_10d_ago=series_10d_ago,
+            active_channels=cfg["active_channels"],
+            weights=cfg["weights"],
+            reason_labels=cfg["reason_labels"],
         )
         results.append(result)
         if save_to_firebase:
@@ -270,7 +304,6 @@ def refresh_macro_scores_weekly_backfill(
                 logger.info("Saved %d/%d weeks", i + 1, len(weekly_dates))
 
     if save_to_firebase and results:
-        # Ensure "latest" is the most recent week we computed
         from services.macro_scores_service import MacroScoresService
 
         MacroScoresService().save_macro_scores(results[-1], verbose=verbose)

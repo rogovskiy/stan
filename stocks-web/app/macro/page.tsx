@@ -175,7 +175,7 @@ export default function MacroPage() {
                 </h2>
                 <p className="text-lg font-medium text-gray-900">{data.latest.transition}</p>
                 <p className="text-sm text-gray-500 mt-1">
-                  Confidence: {(data.latest.confidence * 100).toFixed(0)}%
+                  Signal strength: {(data.latest.confidence * 100).toFixed(0)}%
                 </p>
               </div>
 

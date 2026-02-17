@@ -114,6 +114,16 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
                 Analysis
               </Link>
               <Link
+                href="/macro"
+                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
+                  pathname === '/macro' || pathname?.startsWith('/macro')
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-700 hover:text-gray-900'
+                }`}
+              >
+                Macro
+              </Link>
+              <Link
                 href="/portfolios"
                 className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
                   pathname === '/portfolios' || pathname?.startsWith('/portfolios')

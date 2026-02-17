@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
 from yahoo.refresh_driver import refresh_yahoo_data
+from yahoo.refresh_macro_scores import refresh_macro_scores
 from services.pubsub_message_service import PubSubMessageService
 
 # Initialize logging (Cloud Run or local dev)
@@ -174,6 +175,52 @@ def handle_yahoo_refresh():
         }), 500
 
 
+@app.route('/refresh-macro', methods=['POST'])
+def handle_refresh_macro():
+    """Handle Pub/Sub push messages for macro risk score refresh (no ticker required)."""
+    envelope = request.get_json()
+
+    if not envelope:
+        return render_error('No Pub/Sub message received')
+
+    pubsub_message = envelope.get('message', {})
+    message_id = pubsub_message.get('messageId') or str(uuid.uuid4())
+    publish_time = pubsub_message.get('publishTime')
+    attributes = pubsub_message.get('attributes', {})
+
+    mdc_execution_id.set(message_id)
+    logger.info('Received Pub/Sub message for macro refresh: %s at %s', message_id, publish_time)
+
+    if 'data' in pubsub_message:
+        try:
+            data = base64.b64decode(pubsub_message['data']).decode('utf-8')
+            try:
+                message_data = json.loads(data) if data.strip() else {}
+            except json.JSONDecodeError:
+                message_data = {}
+        except Exception as e:
+            return render_error(f'Failed to decode message data: {e}')
+    else:
+        message_data = {}
+
+    verbose = True
+    try:
+        result = refresh_macro_scores(verbose=verbose, save_to_firebase=True)
+        return jsonify({
+            'status': 'success',
+            'asOf': result.get('asOf'),
+            'macroMode': result.get('macroMode'),
+            'execution_id': message_id,
+        }), 200
+    except Exception as e:
+        logger.error('Error refreshing macro scores: %s', e, operation='macro_refresh_error', error=str(e), exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'execution_id': message_id,
+        }), 500
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -189,6 +236,7 @@ def root():
         'endpoints': {
             '/scan': 'POST - Handle Pub/Sub scan requests',
             '/refresh-yahoo': 'POST - Handle Pub/Sub Yahoo Finance refresh requests',
+            '/refresh-macro': 'POST - Handle Pub/Sub macro risk score refresh',
             '/health': 'GET - Health check'
         }
     }), 200

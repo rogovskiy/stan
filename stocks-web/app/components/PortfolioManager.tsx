@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { Position, Portfolio, type Band, type PortfolioAccountType, type Transaction } from '../lib/services/portfolioService';
 import { WatchlistItem } from '../lib/services/watchlistService';
+import { TAX_RATES, computeTaxImpactFromLots, type Lot } from '../lib/taxEstimator';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 import PortfolioConcerns from './PortfolioConcerns';
 import TodoPopover from './TodoPopover';
@@ -70,6 +71,32 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [cashTransactions, setCashTransactions] = useState<Transaction[]>([]);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Tax summary (taxable portfolios only)
+  type TaxSummary = {
+    taxable: boolean;
+    year?: number;
+    firstTransactionYear?: number;
+    message?: string;
+    realizedGainsYtd?: number;
+    dividendIncomeYtd?: number;
+    taxOnGains?: number;
+    taxOnDividends?: number;
+    estimatedTaxDue?: number;
+    disclaimer?: string;
+  };
+  const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
+  const [taxSummaryLoading, setTaxSummaryLoading] = useState(false);
+  const [taxDrawerOpen, setTaxDrawerOpen] = useState(false);
+  const [taxDrawerYear, setTaxDrawerYear] = useState(() => new Date().getFullYear());
+  const [taxDrawerSummary, setTaxDrawerSummary] = useState<TaxSummary | null>(null);
+  const [taxDrawerLoading, setTaxDrawerLoading] = useState(false);
+  const [taxImpactTicker, setTaxImpactTicker] = useState('');
+  const [taxImpactShares, setTaxImpactShares] = useState('');
+  const [taxImpactPrice, setTaxImpactPrice] = useState('');
+  const [taxImpactLots, setTaxImpactLots] = useState<Lot[] | null>(null);
+  const [taxImpactLotsLoading, setTaxImpactLotsLoading] = useState(false);
+  const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
+
   // Fetch data on mount and when view mode changes
   useEffect(() => {
     if (viewMode === 'portfolios') {
@@ -97,6 +124,81 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       setCashTransactions([]);
     }
   }, [selectedPortfolio?.id]);
+
+  // Fetch tax summary when a portfolio is selected
+  useEffect(() => {
+    if (!selectedPortfolio?.id) {
+      setTaxSummary(null);
+      setTaxDrawerOpen(false);
+      setTaxDrawerSummary(null);
+      setCashDrawerOpen(false);
+      setTaxImpactTicker('');
+      setTaxImpactShares('');
+      setTaxImpactPrice('');
+      setTaxImpactLots(null);
+      return;
+    }
+    let cancelled = false;
+    setTaxSummaryLoading(true);
+    fetch(`/api/portfolios/${selectedPortfolio.id}/tax`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json.success && json.data) setTaxSummary(json.data as TaxSummary);
+        else setTaxSummary(null);
+      })
+      .catch(() => {
+        if (!cancelled) setTaxSummary(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTaxSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio?.id]);
+
+  // Fetch open lots for the selected position (for lot-based tax impact)
+  useEffect(() => {
+    const ticker = taxImpactTicker.trim();
+    if (!ticker || !selectedPortfolio?.id) {
+      setTaxImpactLots(null);
+      return;
+    }
+    let cancelled = false;
+    setTaxImpactLotsLoading(true);
+    fetch(`/api/portfolios/${selectedPortfolio.id}/lots?ticker=${encodeURIComponent(ticker)}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json.success && Array.isArray(json.data?.lots)) setTaxImpactLots(json.data.lots as Lot[]);
+        else setTaxImpactLots(null);
+      })
+      .catch(() => {
+        if (!cancelled) setTaxImpactLots(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTaxImpactLotsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio?.id, taxImpactTicker]);
+
+  const fetchTaxForYear = async (year: number) => {
+    if (!selectedPortfolio?.id) return;
+    setTaxDrawerLoading(true);
+    try {
+      const res = await fetch(`/api/portfolios/${selectedPortfolio.id}/tax?year=${year}`);
+      const json = await res.json();
+      if (json.success && json.data) setTaxDrawerSummary(json.data as TaxSummary);
+      else setTaxDrawerSummary(null);
+    } catch {
+      setTaxDrawerSummary(null);
+    } finally {
+      setTaxDrawerLoading(false);
+    }
+  };
 
   // Fetch latest price for each position ticker (for total value / total return)
   useEffect(() => {
@@ -140,6 +242,59 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     }
     return total > 0 ? total : null;
   }, [selectedPortfolio?.positions, positionPrices]);
+
+  // Tax impact of potential sell (lot-based when lots available, else average cost fallback)
+  const taxImpactResult = useMemo(() => {
+    const positions = selectedPortfolio?.positions ?? [];
+    if (!taxImpactTicker.trim() || positions.length === 0) return null;
+    const position = positions.find((p) => p.ticker.toUpperCase() === taxImpactTicker.toUpperCase());
+    if (!position) return null;
+    const shares = parseFloat(taxImpactShares);
+    if (!Number.isFinite(shares) || shares <= 0 || shares > position.quantity) return null;
+    const priceRaw = taxImpactPrice.trim() ? parseFloat(taxImpactPrice) : positionPrices[position.ticker.toUpperCase()];
+    const price = priceRaw != null && Number.isFinite(priceRaw) ? priceRaw : null;
+    if (price == null || price <= 0) return null;
+    const saleDate = new Date().toISOString().slice(0, 10);
+
+    if (taxImpactLots && taxImpactLots.length > 0) {
+      const totalSharesInLots = taxImpactLots.reduce((s, l) => s + l.quantity, 0);
+      if (totalSharesInLots >= shares) {
+        const result = computeTaxImpactFromLots(taxImpactLots, shares, price, saleDate, TAX_RATES);
+        return {
+          gain: result.totalGain,
+          estimatedTax: result.estimatedTax,
+          shortTermGain: result.shortTermGain,
+          longTermGain: result.longTermGain,
+          breakdown: result.breakdown,
+          useLots: true,
+        };
+      }
+    }
+
+    // Fallback: average cost and earliest purchase date
+    const costBasis = position.purchasePrice ?? 0;
+    const gain = (price - costBasis) * shares;
+    const purchaseDate = position.purchaseDate ? new Date(position.purchaseDate) : null;
+    const oneYearMs = 365.25 * 24 * 60 * 60 * 1000;
+    const isLongTerm = purchaseDate ? Date.now() - purchaseDate.getTime() > oneYearMs : false;
+    const rate = isLongTerm ? TAX_RATES.longTermCapitalGains : TAX_RATES.shortTermCapitalGains;
+    const estimatedTax = gain > 0 ? gain * rate : 0;
+    return {
+      gain,
+      estimatedTax,
+      shortTermGain: isLongTerm ? 0 : gain,
+      longTermGain: isLongTerm ? gain : 0,
+      breakdown: [],
+      useLots: false,
+    };
+  }, [
+    selectedPortfolio?.positions,
+    taxImpactTicker,
+    taxImpactShares,
+    taxImpactPrice,
+    positionPrices,
+    taxImpactLots,
+  ]);
 
   const fetchPortfolios = async () => {
     try {
@@ -965,14 +1120,52 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       <p className="text-sm text-gray-600 mt-1">{selectedPortfolio.description}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-4">
-                    <p className="text-lg font-semibold text-gray-900">
-                      Cash: ${((selectedPortfolio.cashBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </p>
+                  <div className="flex items-center gap-6 flex-wrap">
                     {totalPortfolioValue != null && (
-                      <p className="text-lg font-semibold text-gray-900">
-                        Total value: ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total value</span>
+                        <span className="text-2xl font-bold text-gray-900 tracking-tight">
+                          ${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCashDrawerOpen(true)}
+                      className="flex flex-col items-start rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 hover:bg-blue-50 hover:border-blue-200 hover:shadow-sm transition-colors text-left min-w-[7rem] group"
+                      title="View cash transactions"
+                    >
+                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-1 group-hover:text-blue-600">
+                        Cash
+                        <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </span>
+                      <span className="text-lg font-semibold text-gray-900 group-hover:text-blue-700">
+                        ${((selectedPortfolio.cashBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </button>
+                    {taxSummary?.taxable && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTaxDrawerYear(new Date().getFullYear());
+                          setTaxDrawerSummary(taxSummary);
+                          setTaxDrawerOpen(true);
+                        }}
+                        className="flex flex-col items-start rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 hover:bg-blue-50 hover:border-blue-200 hover:shadow-sm transition-colors text-left min-w-[7rem] group"
+                        title="View tax details and pick year"
+                      >
+                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-1 group-hover:text-blue-600">
+                          Tax (YTD)
+                          <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </span>
+                        <span className="text-lg font-semibold text-gray-900 group-hover:text-blue-700">
+                          ${(taxSummary.estimatedTaxDue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </button>
                     )}
                     <TodoPopover />
                     <button
@@ -1527,36 +1720,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     )}
                   </div>
                 )}
-                {selectedPortfolio.id && cashTransactions.length > 0 && (
-                  <div className="mt-6">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Cash transactions</h4>
-                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-200 bg-gray-50">
-                            <th className="text-left py-2 px-4 font-medium text-gray-700">Date</th>
-                            <th className="text-left py-2 px-4 font-medium text-gray-700">Description</th>
-                            <th className="text-right py-2 px-4 font-medium text-gray-700">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {cashTransactions.map((tx) => (
-                            <tr key={tx.id} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 px-4 text-gray-700">{tx.date}</td>
-                              <td className="py-2 px-4 text-gray-700">{tx.notes || '—'}</td>
-                              <td className="py-2 px-4 text-right font-medium">
-                                <span className={tx.amount >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                  {tx.amount >= 0 ? '+' : ''}${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
@@ -2093,6 +2257,208 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       Cancel
                     </button>
                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tax details drawer – same pattern as transaction history drawer (no backdrop, close via X) */}
+      {taxDrawerOpen && (
+        <div className="fixed inset-0 flex justify-end z-50 pointer-events-none">
+          <div className="pointer-events-auto bg-white w-full max-w-lg shadow-2xl border-l border-gray-200 overflow-y-auto h-full">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-900">Tax</h3>
+                <button onClick={() => setTaxDrawerOpen(false)} className="text-gray-600 hover:text-gray-900 p-1" aria-label="Close">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                <select
+                  value={taxDrawerYear}
+                  onChange={(e) => {
+                    const y = parseInt(e.target.value, 10);
+                    setTaxDrawerYear(y);
+                    fetchTaxForYear(y);
+                  }}
+                  className="w-full max-w-[8rem] text-sm border border-gray-300 rounded px-3 py-2 text-gray-900 bg-white"
+                >
+                  {(() => {
+                    const currentYear = new Date().getFullYear();
+                    const firstYear = taxDrawerSummary?.firstTransactionYear ?? taxSummary?.firstTransactionYear ?? currentYear - 30;
+                    const minYear = Math.max(2000, firstYear);
+                    const years: number[] = [];
+                    for (let y = currentYear; y >= minYear; y--) years.push(y);
+                    return years.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ));
+                  })()}
+                </select>
+              </div>
+              {taxDrawerLoading ? (
+                <p className="text-sm text-gray-500">Loading…</p>
+              ) : taxDrawerSummary && !taxDrawerSummary.taxable ? (
+                <p className="text-sm text-gray-600">{taxDrawerSummary.message ?? 'No taxable events'}</p>
+              ) : taxDrawerSummary?.taxable ? (
+                <div className="space-y-4">
+                  <p className="text-sm font-medium text-gray-900">
+                    Estimated taxes due ({taxDrawerSummary.year ?? taxDrawerYear}): ${(taxDrawerSummary.estimatedTaxDue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  <dl className="text-sm text-gray-600 space-y-1">
+                    <div className="flex justify-between gap-4">
+                      <dt>Realized gains YTD</dt>
+                      <dd>${(taxDrawerSummary.realizedGainsYtd ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt>Dividend income YTD</dt>
+                      <dd>${(taxDrawerSummary.dividendIncomeYtd ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt>Tax on gains</dt>
+                      <dd>${(taxDrawerSummary.taxOnGains ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt>Tax on dividends</dt>
+                      <dd>${(taxDrawerSummary.taxOnDividends ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                    </div>
+                  </dl>
+                  {taxDrawerSummary.disclaimer && (
+                    <p className="text-xs text-gray-500 pt-2 border-t border-gray-100">{taxDrawerSummary.disclaimer}</p>
+                  )}
+                  <div className="pt-4 border-t border-gray-200">
+                    <h4 className="text-sm font-medium text-gray-800 mb-2">Tax impact of potential actions</h4>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">Position</span>
+                        <select
+                          value={taxImpactTicker}
+                          onChange={(e) => {
+                            setTaxImpactTicker(e.target.value);
+                            const pos = selectedPortfolio?.positions?.find((p) => p.ticker.toUpperCase() === e.target.value.toUpperCase());
+                            if (pos) setTaxImpactShares(String(pos.quantity));
+                          }}
+                          className="text-sm border border-gray-300 rounded px-2 py-1.5 text-gray-900 min-w-[6rem]"
+                        >
+                          <option value="">Select…</option>
+                          {(selectedPortfolio?.positions ?? []).map((p) => (
+                            <option key={p.ticker} value={p.ticker}>{p.ticker}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">Shares</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={selectedPortfolio?.positions?.find((p) => p.ticker.toUpperCase() === taxImpactTicker.toUpperCase())?.quantity ?? 0}
+                          value={taxImpactShares}
+                          onChange={(e) => setTaxImpactShares(e.target.value)}
+                          className="w-24 text-sm border border-gray-300 rounded px-2 py-1.5 text-gray-900"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">Price (optional)</span>
+                        <input
+                          type="number"
+                          step={0.01}
+                          min={0}
+                          placeholder="Current"
+                          value={taxImpactPrice}
+                          onChange={(e) => setTaxImpactPrice(e.target.value)}
+                          className="w-24 text-sm border border-gray-300 rounded px-2 py-1.5 text-gray-900"
+                        />
+                      </label>
+                    </div>
+                    {taxImpactLotsLoading && taxImpactTicker && (
+                      <p className="mt-2 text-xs text-gray-500">Loading lots…</p>
+                    )}
+                    {taxImpactResult && !taxImpactLotsLoading && (
+                      <div className="mt-3 text-sm text-gray-700 space-y-1">
+                        <p className="font-medium">Estimated gain: ${taxImpactResult.gain.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        {taxImpactResult.useLots && (taxImpactResult.shortTermGain !== 0 || taxImpactResult.longTermGain !== 0) ? (
+                          <>
+                            {taxImpactResult.shortTermGain !== 0 && (
+                              <p className="text-gray-600">Short-term gain: ${taxImpactResult.shortTermGain.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                            )}
+                            {taxImpactResult.longTermGain !== 0 && (
+                              <p className="text-gray-600">Long-term gain: ${taxImpactResult.longTermGain.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                            )}
+                            {taxImpactResult.breakdown && taxImpactResult.breakdown.length > 1 && (
+                              <details className="mt-1">
+                                <summary className="text-xs text-gray-500 cursor-pointer">By lot (FIFO)</summary>
+                                <ul className="mt-1 text-xs text-gray-600 list-disc list-inside space-y-0.5">
+                                  {taxImpactResult.breakdown.map((chunk, i) => (
+                                    <li key={i}>
+                                      {chunk.quantity} sh @ {chunk.purchaseDate} → ${chunk.gain.toFixed(2)} {chunk.longTerm ? 'LT' : 'ST'}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </>
+                        ) : null}
+                        <p className="font-medium">Estimated tax: ${taxImpactResult.estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        {!taxImpactResult.useLots && (
+                          <p className="text-xs text-gray-500">Using average cost. Add buy/sell history for lot-level (FIFO) accuracy.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash drawer – same pattern as tax drawer */}
+      {cashDrawerOpen && (
+        <div className="fixed inset-0 flex justify-end z-50 pointer-events-none">
+          <div className="pointer-events-auto bg-white w-full max-w-lg shadow-2xl border-l border-gray-200 overflow-y-auto h-full">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-900">Cash</h3>
+                <button onClick={() => setCashDrawerOpen(false)} className="text-gray-600 hover:text-gray-900 p-1" aria-label="Close">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <p className="text-lg font-semibold text-gray-900 mb-4">
+                Balance: ${((selectedPortfolio?.cashBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">Cash transactions</h4>
+              {cashTransactions.length === 0 ? (
+                <p className="text-sm text-gray-500">No cash transactions yet.</p>
+              ) : (
+                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="text-left py-2 px-4 font-medium text-gray-700">Date</th>
+                        <th className="text-left py-2 px-4 font-medium text-gray-700">Description</th>
+                        <th className="text-right py-2 px-4 font-medium text-gray-700">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cashTransactions.map((tx) => (
+                        <tr key={tx.id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 text-gray-700">{tx.date}</td>
+                          <td className="py-2 px-4 text-gray-700">{tx.notes || '—'}</td>
+                          <td className="py-2 px-4 text-right font-medium">
+                            <span className={tx.amount >= 0 ? 'text-green-600' : 'text-red-600'}>
+                              {tx.amount >= 0 ? '+' : ''}${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

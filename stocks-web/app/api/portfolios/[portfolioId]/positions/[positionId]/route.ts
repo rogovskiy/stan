@@ -20,13 +20,13 @@ export async function PUT(
 
     const updates: Partial<Position> = {};
     if (thesisId !== undefined) {
-      updates.thesisId = thesisId === null || thesisId === '' ? null : String(thesisId);
+      updates.thesisId = thesisId === null || thesisId === '' ? undefined : String(thesisId);
     }
     if (notes !== undefined) {
       updates.notes = typeof notes === 'string' ? notes : '';
     }
     if (bandId !== undefined) {
-      updates.bandId = bandId === null || bandId === '' ? null : String(bandId);
+      updates.bandId = bandId === null || bandId === '' ? undefined : String(bandId);
     }
 
     if (Object.keys(updates).length === 0) {

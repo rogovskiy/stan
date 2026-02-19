@@ -1198,12 +1198,22 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   const channels = selectedPortfolio.channelExposures?.channels;
                   const systematicRisks: { label: string; level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' }[] = channels
                     ? Object.entries(channels)
-                        .map(([ch, exp]) => ({
-                          label: CHANNEL_LABELS[ch] ?? ch,
-                          absBeta: Math.abs(exp.beta),
-                          level: (Math.abs(exp.beta) >= 0.8 ? 'HIGH' : Math.abs(exp.beta) >= 0.4 ? 'MED' : Math.abs(exp.beta) >= 0.2 ? 'LOW-MED' : 'LOW') as 'HIGH' | 'MED' | 'LOW-MED' | 'LOW',
-                        }))
-                        .sort((a, b) => b.absBeta - a.absBeta)
+                        .map(([ch, exp]) => {
+                          const absBeta = Math.abs(exp.beta);
+                          const r2 = exp.rSquared ?? 0;
+                          const reliableImpact = absBeta * r2;
+                          const level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' =
+                            reliableImpact >= 0.03 ? 'HIGH'
+                            : reliableImpact >= 0.005 ? 'MED'
+                            : reliableImpact >= 0.001 ? 'LOW-MED'
+                            : 'LOW';
+                          return {
+                            label: CHANNEL_LABELS[ch] ?? ch,
+                            reliableImpact,
+                            level,
+                          };
+                        })
+                        .sort((a, b) => b.reliableImpact - a.reliableImpact)
                         .slice(0, 5)
                         .map(({ label, level }) => ({ label, level }))
                     : [];

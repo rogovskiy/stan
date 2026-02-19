@@ -2,8 +2,11 @@
 """
 Refresh Macro Risk Scores
 
-Fetches ~400 trading days of price data for macro tickers (SPY, HYG, LQD, UUP, USO, VIX, etc.),
+Fetches ~400 trading days of price data for macro channel tickers,
 computes risk-on/risk-off score, and saves to Firebase at macro/us_market/risk_scores.
+
+All channel definitions (tickers, weights, scoring types, params) are read from
+Firebase at macro/us_market/channels -- no hardcoded channel config.
 
 Invocation:
 - CLI: python yahoo/refresh_macro_scores.py [--out path] [--verbose] [--no-firebase]
@@ -35,11 +38,9 @@ logger = logging.getLogger(__name__)
 # ~400 trading days; use 504 calendar days buffer
 LOOKBACK_CALENDAR_DAYS = 504
 
-VIX_TICKER = "^VIX"
-
 
 def load_channel_config() -> Dict[str, Any]:
-    """Load channel config from Firebase and derive tickers, weights, reason_labels."""
+    """Load channel config from Firebase and derive tickers, weights, reason_labels, channel_configs."""
     svc = ChannelsConfigService()
     channels = svc.get_all_channels()
     if not channels:
@@ -47,14 +48,14 @@ def load_channel_config() -> Dict[str, Any]:
     macro_tickers = svc.derive_macro_tickers(channels)
     weights = svc.extract_weights(channels)
     reason_labels = svc.extract_reason_labels(channels)
-    active_channels = list(channels.keys())
+    channel_configs = svc.extract_channel_configs(channels)
     logger.info(
         "Loaded %d channels from Firebase: %s (tickers: %s)",
-        len(channels), active_channels, macro_tickers,
+        len(channels), list(channels.keys()), macro_tickers,
     )
     return {
         "macro_tickers": macro_tickers,
-        "active_channels": active_channels,
+        "channel_configs": channel_configs,
         "weights": weights,
         "reason_labels": reason_labels,
     }
@@ -86,21 +87,6 @@ def fetch_prices(
         except Exception as e:
             logger.warning("Skip ticker %s: %s", t, e)
     return out
-
-
-def fetch_vix(start: datetime, end: datetime) -> Optional[pd.Series]:
-    """Fetch VIX; optional, skip if unavailable."""
-    try:
-        for sym in ("^VIX", "VIX"):
-            obj = yf.Ticker(sym)
-            hist = obj.history(start=start, end=end, interval="1d")
-            if hist is not None and not hist.empty and len(hist) >= 5:
-                s = hist["Close"].dropna()
-                if len(s) > 0:
-                    return s
-    except Exception as e:
-        logger.debug("VIX not available: %s", e)
-    return None
 
 
 def build_series_as_of(
@@ -211,9 +197,6 @@ def refresh_macro_scores(
         logger.info("Fetching macro tickers from %s to %s", start.date(), end.date())
 
     series_by_ticker = fetch_prices(macro_tickers, start, end, auto_adjust=True)
-    vix = fetch_vix(start, end)
-    if vix is not None:
-        series_by_ticker[VIX_TICKER] = vix
 
     if not series_by_ticker:
         raise RuntimeError("No macro price data returned")
@@ -232,10 +215,10 @@ def refresh_macro_scores(
     result = compute_macro_scores(
         series_as_of,
         as_of,
-        series_by_ticker_10d_ago=series_10d_ago,
-        active_channels=cfg["active_channels"],
+        channel_configs=cfg["channel_configs"],
         weights=cfg["weights"],
         reason_labels=cfg["reason_labels"],
+        series_by_ticker_10d_ago=series_10d_ago,
     )
 
     if save_to_firebase:
@@ -264,9 +247,6 @@ def refresh_macro_scores_weekly_backfill(
         logger.info("Fetching macro tickers from %s to %s (weekly backfill)", start.date(), end.date())
 
     series_by_ticker = fetch_prices(macro_tickers, start, end, auto_adjust=True)
-    vix = fetch_vix(start, end)
-    if vix is not None:
-        series_by_ticker[VIX_TICKER] = vix
 
     if not series_by_ticker:
         raise RuntimeError("No macro price data returned")
@@ -290,10 +270,10 @@ def refresh_macro_scores_weekly_backfill(
         result = compute_macro_scores(
             series_as_of,
             as_of,
-            series_by_ticker_10d_ago=series_10d_ago,
-            active_channels=cfg["active_channels"],
+            channel_configs=cfg["channel_configs"],
             weights=cfg["weights"],
             reason_labels=cfg["reason_labels"],
+            series_by_ticker_10d_ago=series_10d_ago,
         )
         results.append(result)
         if save_to_firebase:

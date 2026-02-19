@@ -78,6 +78,19 @@ export interface PortfolioSnapshot {
   positions: SnapshotPosition[];
 }
 
+/** Channel exposure from portfolio_channel_exposure.py. */
+export interface ChannelExposure {
+  proxy: string;
+  beta: number;
+  rSquared: number;
+}
+export interface ChannelExposures {
+  asOf?: string;
+  periodStart?: string;
+  tradingDays?: number;
+  channels?: Record<string, ChannelExposure>;
+}
+
 export interface Portfolio {
   id?: string;
   name: string;
@@ -86,6 +99,8 @@ export interface Portfolio {
   cashBalance?: number; // Stored aggregate; updated by recomputeAndWriteAggregates
   /** Risk bands (portfolio size ranges and limits), defined in portfolio settings. */
   bands?: Band[];
+  /** Channel exposures (from portfolio_channel_exposure.py). */
+  channelExposures?: ChannelExposures;
   positions?: Position[];
   createdAt?: string;
   updatedAt?: string;
@@ -171,6 +186,8 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
         }))
       : [];
 
+    const channelExposures = portfolioData.channelExposures ?? undefined;
+
     return {
       id: portfolioSnap.id,
       name: portfolioData.name,
@@ -178,6 +195,7 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       accountType: portfolioData.accountType === 'ira' ? 'ira' : 'taxable',
       cashBalance,
       bands,
+      channelExposures,
       positions: positions.sort((a, b) => a.ticker.localeCompare(b.ticker)),
       createdAt: portfolioData.createdAt?.toDate?.()?.toISOString() || portfolioData.createdAt,
       updatedAt: portfolioData.updatedAt?.toDate?.()?.toISOString() || portfolioData.updatedAt,

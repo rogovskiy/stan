@@ -132,7 +132,7 @@ export default function MacroPage() {
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Macro</h1>
           <p className="text-sm text-gray-600 mt-2">
-            US market risk-on / risk-off score based on equities, credit, volatility, USD, and oil.
+            US market risk-on / risk-off score across 10 channels: equities, credit, volatility, short &amp; long rates, USD, oil, gold, inflation, and global risk.
           </p>
         </div>
 

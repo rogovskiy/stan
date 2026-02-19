@@ -164,6 +164,30 @@ export async function GET(
 
     const dateMax = dates[dates.length - 1];
     const snapshotsAsc = await getSnapshotsUpToDate(portfolioId, dateMax);
+
+    // Require price data for all position tickers; otherwise return error
+    const positionTickers = new Set<string>();
+    for (const snap of snapshotsAsc) {
+      for (const p of snap.positions) {
+        if (p.quantity > 0) positionTickers.add(p.ticker);
+      }
+    }
+    const missingPriceTickers = [...positionTickers].filter((ticker) => {
+      const map = priceMaps.get(ticker);
+      return !map || map.size === 0;
+    });
+    if (missingPriceTickers.length > 0) {
+      const tickerList = missingPriceTickers.sort().join(', ');
+      return NextResponse.json(
+        {
+          error: 'Price data is not available for some holdings. Cannot calculate performance.',
+          missingTickers: missingPriceTickers,
+          details: `The following tickers have no price data in the selected period: ${tickerList}. Please bootstrap price data for these tickers before viewing performance.`,
+        },
+        { status: 503 }
+      );
+    }
+
     const portfolioValues = dates.map((d) => {
       const snap = getSnapshotForDate(snapshotsAsc, d);
       return snap ? valueFromSnapshot(snap, d, priceMaps) : 0;

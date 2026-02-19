@@ -24,7 +24,12 @@ logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 # parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
 set_global_options(max_instances=10)
 
-benchmarks = [ 'SPY', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLC', "GLD", 'QQQ' ]
+benchmarks = [
+    # Sector ETFs
+    'SPY', 'QQQ', 'IWM', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLC',
+    # Macro risk channel tickers
+    'HYG', 'LQD', 'UUP', 'USO', 'GLD', 'IEF', 'TLT', 'TIP', 'EEM',
+]
 initialize_app()
 
 # Scheduled function that runs daily at midnight UTC

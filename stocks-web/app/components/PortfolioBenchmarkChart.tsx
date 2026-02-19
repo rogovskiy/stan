@@ -107,7 +107,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
         if (cancelled) return;
 
         if (!res.ok) {
-          setError(json.error || 'Failed to load performance data');
+          const msg = json.error || 'Failed to load performance data';
+          const fix = json.details ?? (json.missingTickers?.length
+            ? `Missing price data for: ${json.missingTickers.join(', ')}. Run the data fetcher to bootstrap these tickers.`
+            : null);
+          setError(fix ? `${msg}\n\n${fix}` : msg);
           setData(null);
           return;
         }
@@ -285,7 +289,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className="flex items-center justify-center h-80 text-red-600">
-          <p>{error}</p>
+          <p className="whitespace-pre-wrap max-w-lg">{error}</p>
         </div>
       </div>
     );

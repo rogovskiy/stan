@@ -27,11 +27,13 @@ class ChannelsConfigService(FirebaseBaseService):
         Read all channel documents from macro/us_market/channels.
 
         Returns:
-            Dict mapping channel key (e.g. "EQUITIES") to its config:
+            Dict mapping channel key (e.g. "EQUITIES_US") to its config:
             {
                 "weight": float,
                 "tickers": list[str],
                 "reasonLabels": dict[str, str | None],
+                "scoringType": str,
+                "params": dict[str, Any],
             }
         """
         channels = {}
@@ -76,4 +78,23 @@ class ChannelsConfigService(FirebaseBaseService):
         for key, cfg in channels.items():
             raw = cfg.get("reasonLabels", {})
             result[key] = {float(k): v for k, v in raw.items()}
+        return result
+
+    @staticmethod
+    def extract_channel_configs(
+        channels: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract per-channel scoring configs for the scoring engine.
+
+        Returns:
+            {channel_key: {"scoringType": str, "tickers": list, "params": dict}}
+        """
+        result = {}
+        for key, cfg in channels.items():
+            result[key] = {
+                "scoringType": cfg.get("scoringType"),
+                "tickers": cfg.get("tickers", []),
+                "params": cfg.get("params", {}),
+            }
         return result

@@ -82,6 +82,10 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     taxOnGains?: number;
     taxOnDividends?: number;
     estimatedTaxDue?: number;
+    gainsByTicker?: Record<
+      string,
+      { realizedGain: number; shortTermGain: number; longTermGain: number; termType: 'short-term' | 'long-term' | 'mixed'; taxOnGains: number }
+    >;
     disclaimer?: string;
   };
   const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
@@ -2353,6 +2357,26 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       <dt>Tax on gains</dt>
                       <dd>${(taxDrawerSummary.taxOnGains ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
                     </div>
+                    {taxDrawerSummary.gainsByTicker && Object.keys(taxDrawerSummary.gainsByTicker).length > 0 && (
+                      <div className="pl-2 border-l-2 border-gray-200 mt-2 space-y-1.5">
+                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">By ticker</span>
+                        {Object.entries(taxDrawerSummary.gainsByTicker)
+                          .sort(([, a], [, b]) => (b.taxOnGains ?? 0) - (a.taxOnGains ?? 0))
+                          .map(([ticker, { realizedGain, shortTermGain, longTermGain, termType, taxOnGains }]) => (
+                            <div key={ticker} className="flex justify-between gap-4 text-xs">
+                              <dt className="font-medium text-gray-700">
+                                {ticker}
+                                <span className="ml-1.5 text-gray-500 font-normal normal-case">({termType?.replace(/-/g, ' ') ?? '—'})</span>
+                              </dt>
+                              <dd className="text-right">
+                                <span className="text-gray-600">${(realizedGain ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gain</span>
+                                <span className="mx-1.5 text-gray-400">→</span>
+                                <span className="font-medium">${(taxOnGains ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} tax</span>
+                              </dd>
+                            </div>
+                          ))}
+                      </div>
+                    )}
                     <div className="flex justify-between gap-4">
                       <dt>Tax on dividends</dt>
                       <dd>${(taxDrawerSummary.taxOnDividends ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>

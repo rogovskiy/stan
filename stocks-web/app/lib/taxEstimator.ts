@@ -147,6 +147,102 @@ function getCostBasisFromSnapshot(snapshot: PortfolioSnapshot | null, ticker: st
   return pos?.costBasis ?? 0;
 }
 
+export type TermType = 'short-term' | 'long-term' | 'mixed';
+
+export interface GainsByTicker {
+  realizedGain: number;
+  shortTermGain: number;
+  longTermGain: number;
+  termType: TermType;
+  taxOnGains: number;
+}
+
+/**
+ * Compute YTD realized capital gains from sell transactions, grouped by ticker.
+ * Uses lot-level FIFO to attribute gains as short-term vs long-term.
+ */
+export function computeYtdRealizedGainsByTicker(
+  transactions: Transaction[],
+  _snapshotsAsc: PortfolioSnapshot[],
+  currentYear: number,
+  rates: typeof TAX_RATES = TAX_RATES
+): { total: number; totalShortTerm: number; totalLongTerm: number; byTicker: Record<string, GainsByTicker> } {
+  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  const lotsByTicker: Record<string, Lot[]> = {};
+  const byTicker: Record<string, { shortTermGain: number; longTermGain: number }> = {};
+
+  for (const tx of sorted) {
+    if (!tx.ticker) continue;
+    const ticker = tx.ticker.toUpperCase();
+
+    if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
+      if (!lotsByTicker[ticker]) lotsByTicker[ticker] = [];
+      lotsByTicker[ticker].push({
+        purchaseDate: tx.date,
+        quantity: tx.quantity,
+        costBasisPerShare: tx.price,
+      });
+    } else if (tx.type === 'sell' && tx.quantity < 0 && tx.price != null) {
+      const txYear = new Date(tx.date).getFullYear();
+      const saleDate = tx.date;
+      let toSell = Math.abs(tx.quantity);
+      const lots = lotsByTicker[ticker] ?? [];
+      if (!lotsByTicker[ticker]) lotsByTicker[ticker] = lots;
+
+      if (txYear === currentYear) {
+        if (!byTicker[ticker]) byTicker[ticker] = { shortTermGain: 0, longTermGain: 0 };
+      }
+
+      while (toSell > 0 && lots.length > 0) {
+        const lot = lots[0];
+        const sellFromLot = Math.min(toSell, lot.quantity);
+        const costBasis = sellFromLot * lot.costBasisPerShare;
+        const proceeds = sellFromLot * tx.price!;
+        const gain = proceeds - costBasis;
+        if (txYear === currentYear) {
+          const lt = isLongTerm(lot.purchaseDate, saleDate);
+          if (lt) byTicker[ticker].longTermGain += gain;
+          else byTicker[ticker].shortTermGain += gain;
+        }
+        toSell -= sellFromLot;
+        if (lot.quantity <= sellFromLot) {
+          lots.shift();
+        } else {
+          lot.quantity -= sellFromLot;
+        }
+      }
+    }
+  }
+
+  let total = 0;
+  let totalShortTerm = 0;
+  let totalLongTerm = 0;
+  const result: Record<string, GainsByTicker> = {};
+  for (const [ticker, { shortTermGain, longTermGain }] of Object.entries(byTicker)) {
+    const realizedGain = shortTermGain + longTermGain;
+    total += realizedGain;
+    totalShortTerm += shortTermGain;
+    totalLongTerm += longTermGain;
+    const termType: TermType =
+      shortTermGain !== 0 && longTermGain !== 0
+        ? 'mixed'
+        : shortTermGain !== 0
+          ? 'short-term'
+          : 'long-term';
+    const taxOnGains =
+      Math.max(0, shortTermGain) * rates.shortTermCapitalGains +
+      Math.max(0, longTermGain) * rates.longTermCapitalGains;
+    result[ticker] = {
+      realizedGain,
+      shortTermGain,
+      longTermGain,
+      termType,
+      taxOnGains,
+    };
+  }
+  return { total, totalShortTerm, totalLongTerm, byTicker: result };
+}
+
 /**
  * Compute YTD realized capital gains from sell transactions.
  * Uses snapshot before each sell date for cost basis (average cost method).
@@ -156,19 +252,11 @@ export function computeYtdRealizedGains(
   snapshotsAsc: PortfolioSnapshot[],
   currentYear: number
 ): number {
-  let total = 0;
-  for (const tx of transactions) {
-    if (tx.type !== 'sell' || !tx.ticker || tx.price == null) continue;
-    const txYear = new Date(tx.date).getFullYear();
-    if (txYear !== currentYear) continue;
-    const sharesSold = Math.abs(tx.quantity);
-    if (sharesSold <= 0) continue;
-    const snapshotBefore = getSnapshotBeforeDate(snapshotsAsc, tx.date);
-    const costBasis = getCostBasisFromSnapshot(snapshotBefore, tx.ticker);
-    const proceeds = sharesSold * tx.price;
-    const cost = sharesSold * costBasis;
-    total += proceeds - cost;
-  }
+  const { total } = computeYtdRealizedGainsByTicker(
+    transactions,
+    snapshotsAsc,
+    currentYear
+  );
   return total;
 }
 
@@ -190,14 +278,20 @@ export function computeYtdDividendIncome(
 
 /**
  * Apply placeholder rates to get estimated federal tax on gains and dividends.
- * Realized gains are treated as one bucket (no ST/LT split in v1).
+ * Uses short-term vs long-term split when provided for accurate tax estimate.
  */
 export function estimateTaxDue(
   realizedGainsYtd: number,
   dividendIncomeYtd: number,
-  rates: typeof TAX_RATES = TAX_RATES
+  rates: typeof TAX_RATES = TAX_RATES,
+  shortTermGains?: number,
+  longTermGains?: number
 ): { taxOnGains: number; taxOnDividends: number; estimatedTaxDue: number } {
-  const taxOnGains = Math.max(0, realizedGainsYtd) * rates.shortTermCapitalGains;
+  const taxOnGains =
+    shortTermGains != null && longTermGains != null
+      ? Math.max(0, shortTermGains) * rates.shortTermCapitalGains +
+        Math.max(0, longTermGains) * rates.longTermCapitalGains
+      : Math.max(0, realizedGainsYtd) * rates.shortTermCapitalGains;
   const taxOnDividends = Math.max(0, dividendIncomeYtd) * rates.qualifiedDividend;
   return {
     taxOnGains,

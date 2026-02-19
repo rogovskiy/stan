@@ -1182,6 +1182,78 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     </button>
                   </div>
                 </div>
+                {(() => {
+                  const CHANNEL_LABELS: Record<string, string> = {
+                    EQUITIES_US: 'Equity market',
+                    CREDIT: 'Credit',
+                    VOL: 'Volatility',
+                    RATES_SHORT: 'Short rates',
+                    RATES_LONG: 'Long rates',
+                    USD: 'USD',
+                    OIL: 'Oil',
+                    GOLD: 'Gold',
+                    INFLATION: 'Inflation',
+                    GLOBAL_RISK: 'Global risk',
+                  };
+                  const channels = selectedPortfolio.channelExposures?.channels;
+                  const systematicRisks: { label: string; level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' }[] = channels
+                    ? Object.entries(channels)
+                        .map(([ch, exp]) => ({
+                          label: CHANNEL_LABELS[ch] ?? ch,
+                          absBeta: Math.abs(exp.beta),
+                          level: (Math.abs(exp.beta) >= 0.8 ? 'HIGH' : Math.abs(exp.beta) >= 0.4 ? 'MED' : Math.abs(exp.beta) >= 0.2 ? 'LOW-MED' : 'LOW') as 'HIGH' | 'MED' | 'LOW-MED' | 'LOW',
+                        }))
+                        .sort((a, b) => b.absBeta - a.absBeta)
+                        .slice(0, 5)
+                        .map(({ label, level }) => ({ label, level }))
+                    : [];
+                  const levelBars: Record<string, number> = { HIGH: 3, MED: 2, 'LOW-MED': 2, LOW: 1 };
+                  const levelColors: Record<string, string> = {
+                    HIGH: '#dc2626',
+                    MED: '#d97706',
+                    'LOW-MED': '#ca8a04',
+                    LOW: '#16a34a',
+                  };
+                  const RiskBars = ({ level }: { level: keyof typeof levelBars }) => {
+                    const n = levelBars[level];
+                    const color = levelColors[level];
+                    const halfSecond = level === 'LOW-MED';
+                    return (
+                      <span className="inline-flex items-end gap-0.5" title={level} aria-label={level}>
+                        {[1, 2, 3].map((i) => {
+                          const filled = i < n;
+                          const half = i === n && halfSecond;
+                          const show = filled || half;
+                          return (
+                            <span
+                              key={i}
+                              className="w-1 rounded-sm"
+                              style={{
+                                height: 10,
+                                backgroundColor: show ? color : '#e5e7eb',
+                                opacity: half ? 0.5 : 1,
+                              }}
+                            />
+                          );
+                        })}
+                      </span>
+                    );
+                  };
+                  return (
+                    <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                      <span className="font-medium text-gray-400">Systematic risks:</span>
+                      {systematicRisks.length > 0 ? (
+                        systematicRisks.map(({ label, level }) => (
+                          <span key={label} className="inline-flex items-center gap-1.5">
+                            {label} <RiskBars level={level} />
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-gray-400">Run portfolio channel exposure to see systematic risks</span>
+                      )}
+                    </div>
+                  );
+                })()}
                 {settingsOpen && (
                   <div className="mt-4 pt-4 border-t border-gray-200">
                     <h3 className="text-sm font-semibold text-gray-800 mb-3">Portfolio settings</h3>
@@ -1410,58 +1482,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     </div>
                   </>
                 )}
-                {selectedPortfolio.id && (() => {
-                  const systematicRisks: { label: string; level: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW' }[] = [
-                    { label: 'Interest rates (duration)', level: 'HIGH' },
-                    { label: 'Equity market (SPY)', level: 'MED' },
-                    { label: 'Oil / energy', level: 'MED' },
-                    { label: 'Inflation hedge (gold)', level: 'LOW-MED' },
-                    { label: 'Crypto beta', level: 'LOW' },
-                  ];
-                  const levelBars: Record<string, number> = { HIGH: 3, MED: 2, 'LOW-MED': 2, LOW: 1 };
-                  const levelColors: Record<string, string> = {
-                    HIGH: '#dc2626',
-                    MED: '#d97706',
-                    'LOW-MED': '#ca8a04',
-                    LOW: '#16a34a',
-                  };
-                  const RiskBars = ({ level }: { level: keyof typeof levelBars }) => {
-                    const n = levelBars[level];
-                    const color = levelColors[level];
-                    const halfSecond = level === 'LOW-MED';
-                    return (
-                      <span className="inline-flex items-end gap-0.5" title={level} aria-label={level}>
-                        {[1, 2, 3].map((i) => {
-                          const filled = i < n;
-                          const half = i === n && halfSecond;
-                          const show = filled || half;
-                          return (
-                            <span
-                              key={i}
-                              className="w-1 rounded-sm"
-                              style={{
-                                height: 10,
-                                backgroundColor: show ? color : '#e5e7eb',
-                                opacity: half ? 0.5 : 1,
-                              }}
-                            />
-                          );
-                        })}
-                      </span>
-                    );
-                  };
-                  return (
-                    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-                      <span className="font-medium text-gray-400">Systematic risks:</span>
-                      {systematicRisks.map(({ label, level }) => (
-                        <span key={label} className="inline-flex items-center gap-1.5">
-                          {label} <RiskBars level={level} />
-                        </span>
-                      ))}
-                    </div>
-                  );
-                })()}
-                {selectedPortfolio.positions && selectedPortfolio.positions.length > 0 ? (
+                {(selectedPortfolio.positions ?? []).filter((p) => (Number(p.quantity) || 0) > 0.0001).length > 0 ? (
                   <div>
                     <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">
                       <input
@@ -1515,7 +1536,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                       <tbody>
                         {(() => {
                           const bands = selectedPortfolio.bands ?? [];
-                          const positions = selectedPortfolio.positions ?? [];
+                          const positions = (selectedPortfolio.positions ?? []).filter((p) => (Number(p.quantity) || 0) > 0.0001);
                           type Section = { bandId: string | null; bandLabel: string; band: Band | null; positions: Position[] };
                           const sections: Section[] = [];
                           for (const band of bands) {
@@ -2345,7 +2366,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                           className="text-sm border border-gray-300 rounded px-2 py-1.5 text-gray-900 min-w-[6rem]"
                         >
                           <option value="">Select…</option>
-                          {(selectedPortfolio?.positions ?? []).map((p) => (
+                          {(selectedPortfolio?.positions ?? []).filter((p) => (Number(p.quantity) || 0) > 0.0001).map((p) => (
                             <option key={p.ticker} value={p.ticker}>{p.ticker}</option>
                           ))}
                         </select>

@@ -1255,7 +1255,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                   );
                 })()}
                 {settingsOpen && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="mt-4 pt-4 border-t border-gray-200 max-h-[min(60vh,500px)] overflow-y-auto">
                     <h3 className="text-sm font-semibold text-gray-800 mb-3">Portfolio settings</h3>
                     <div className="grid gap-3 max-w-xl">
                       <label className="block">

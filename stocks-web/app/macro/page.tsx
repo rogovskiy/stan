@@ -29,6 +29,24 @@ interface MacroRiskScoresResponse {
   history: MacroScorePayload[];
 }
 
+interface MarketShift {
+  id: string;
+  type: string;
+  category: string;
+  headline: string;
+  summary: string;
+  channelIds: string[];
+  status: string;
+  articleRefs: { url?: string; title?: string; source?: string; publishedAt?: string }[];
+  asOf?: string;
+  fetchedAt?: string;
+}
+
+interface MarketShiftsResponse {
+  shifts: MarketShift[];
+  meta: { asOf?: string; count?: number } | null;
+}
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -47,6 +65,11 @@ export default function MacroPage() {
     useState<SectorRotationData | null>(null);
   const [sectorRotationLoading, setSectorRotationLoading] = useState(true);
   const [sectorRotationError, setSectorRotationError] = useState<string | null>(null);
+
+  const [marketShifts, setMarketShifts] = useState<MarketShift[] | null>(null);
+  const [marketShiftsMeta, setMarketShiftsMeta] = useState<MarketShiftsResponse['meta']>(null);
+  const [marketShiftsLoading, setMarketShiftsLoading] = useState(true);
+  const [marketShiftsError, setMarketShiftsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +128,39 @@ export default function MacroPage() {
       }
     }
     fetchSectorRotation();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchMarketShifts() {
+      setMarketShiftsLoading(true);
+      setMarketShiftsError(null);
+      try {
+        const res = await fetch('/api/macro/market-shifts');
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setMarketShiftsError(json.error || 'Failed to load market shifts');
+          setMarketShifts(null);
+          setMarketShiftsMeta(null);
+          return;
+        }
+        setMarketShifts(json.shifts ?? null);
+        setMarketShiftsMeta(json.meta ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setMarketShiftsError(
+            err instanceof Error ? err.message : 'Failed to load market shifts'
+          );
+          setMarketShifts(null);
+          setMarketShiftsMeta(null);
+        }
+      } finally {
+        if (!cancelled) setMarketShiftsLoading(false);
+      }
+    }
+    fetchMarketShifts();
     return () => { cancelled = true; };
   }, []);
 
@@ -234,6 +290,81 @@ export default function MacroPage() {
                     />
                   </LineChart>
                 </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="mt-8 rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Market shifts
+              </h2>
+              {marketShiftsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+                </div>
+              ) : marketShiftsError ? (
+                <div className="rounded-lg bg-red-50 p-4 text-red-700">
+                  {marketShiftsError}
+                </div>
+              ) : !marketShifts?.length ? (
+                <div className="rounded-lg bg-gray-100 p-6 text-gray-600">
+                  No market shifts available. Run the market shift scanner to populate data.
+                </div>
+              ) : (
+                <>
+                  {marketShiftsMeta?.asOf != null && (
+                    <p className="text-sm text-gray-500 mb-4">
+                      As of {formatDate(marketShiftsMeta.asOf)}
+                      {marketShiftsMeta.count != null && ` · ${marketShiftsMeta.count} shifts`}
+                    </p>
+                  )}
+                  <div className="space-y-4">
+                    {(['RISK', 'TAILWIND'] as const).map((type) => {
+                      const ofType = marketShifts.filter((s) => s.type === type);
+                      if (ofType.length === 0) return null;
+                      return (
+                        <div key={type}>
+                          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
+                            {type === 'RISK' ? 'Risks' : 'Tailwinds'}
+                          </h3>
+                          <ul className="space-y-3">
+                            {ofType.map((shift) => (
+                              <li
+                                key={shift.id}
+                                className="rounded-lg border border-gray-200 p-4 bg-gray-50/50"
+                              >
+                                <p className="font-medium text-gray-900">
+                                  {shift.headline}
+                                </p>
+                                {shift.summary && (
+                                  <p className="text-sm text-gray-600 mt-1">
+                                    {shift.summary}
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap gap-1.5 mt-2">
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                      shift.type === 'TAILWIND'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-red-100 text-red-800'
+                                    }`}
+                                  >
+                                    {shift.type}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
+                                    {shift.category.replace(/_/g, ' ')}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                                    {shift.status}
+                                  </span>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           </>

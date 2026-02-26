@@ -128,16 +128,24 @@ const MOOD_STYLES: Record<string, { badge: string; border: string }> = {
   Fearful: { badge: 'bg-red-200 text-red-900', border: 'border-red-400' },
 };
 
+const MODE_COLORS: Record<string, string> = {
+  RISK_ON: 'bg-green-100 text-green-800',
+  RISK_OFF: 'bg-red-100 text-red-800',
+  MIXED: 'bg-amber-100 text-amber-800',
+};
+
 function SummaryCard({
   summaries,
   summaryTab,
   onTabChange,
   reasons,
+  latest,
 }: {
   summaries: MarketSummariesResponse | null;
   summaryTab: 'today' | 'week';
   onTabChange: (tab: 'today' | 'week') => void;
   reasons?: string[];
+  latest?: MacroScorePayload | null;
 }) {
   const active = summaryTab === 'today' ? summaries?.yesterdayToday : summaries?.lastWeek;
 
@@ -145,6 +153,24 @@ function SummaryCard({
     if (reasons && reasons.length > 0) {
       return (
         <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+          {latest && (
+            <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-gray-100">
+              <div className="flex items-baseline gap-2">
+                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Score</span>
+                <span className="text-xl font-bold text-gray-900 tabular-nums">
+                  {latest.globalScore >= 0 ? '+' : ''}{latest.globalScore.toFixed(2)}
+                </span>
+                <span className={`px-2 py-0.5 rounded text-xs font-semibold ${MODE_COLORS[latest.macroMode] ?? 'bg-gray-100 text-gray-800'}`}>
+                  {latest.macroMode.replace('_', ' ')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transition</span>
+                <span className="text-sm font-semibold text-gray-900">{latest.transition}</span>
+                <span className="text-xs text-gray-500">({(latest.confidence * 100).toFixed(0)}%)</span>
+              </div>
+            </div>
+          )}
           <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
             Top drivers
           </h2>
@@ -161,6 +187,24 @@ function SummaryCard({
     }
     return (
       <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+        {latest && (
+          <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-gray-100">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Score</span>
+              <span className="text-xl font-bold text-gray-900 tabular-nums">
+                {latest.globalScore >= 0 ? '+' : ''}{latest.globalScore.toFixed(2)}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${MODE_COLORS[latest.macroMode] ?? 'bg-gray-100 text-gray-800'}`}>
+                {latest.macroMode.replace('_', ' ')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transition</span>
+              <span className="text-sm font-semibold text-gray-900">{latest.transition}</span>
+              <span className="text-xs text-gray-500">({(latest.confidence * 100).toFixed(0)}%)</span>
+            </div>
+          </div>
+        )}
         <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
           Market summary
         </h2>
@@ -177,6 +221,24 @@ function SummaryCard({
 
   return (
     <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+      {latest && (
+        <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-gray-100">
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Score</span>
+            <span className="text-xl font-bold text-gray-900 tabular-nums">
+              {latest.globalScore >= 0 ? '+' : ''}{latest.globalScore.toFixed(2)}
+            </span>
+            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${MODE_COLORS[latest.macroMode] ?? 'bg-gray-100 text-gray-800'}`}>
+              {latest.macroMode.replace('_', ' ')}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transition</span>
+            <span className="text-sm font-semibold text-gray-900">{latest.transition}</span>
+            <span className="text-xs text-gray-500">({(latest.confidence * 100).toFixed(0)}%)</span>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
           Market summary
@@ -230,11 +292,6 @@ function SummaryCard({
             </div>
           )}
 
-          {summaries?.asOf && (
-            <p className="text-xs text-gray-400 mt-3">
-              Generated {formatDate(summaries.asOf)}
-            </p>
-          )}
         </>
       ) : (
         <p className="text-sm text-gray-400">
@@ -384,23 +441,19 @@ export default function MacroPage() {
     }));
   }, [data?.history]);
 
-  const modeColors: Record<string, string> = {
-    RISK_ON: 'bg-green-100 text-green-800',
-    RISK_OFF: 'bg-red-100 text-red-800',
-    MIXED: 'bg-amber-100 text-amber-800',
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 font-sans antialiased">
       <AppNavigation selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} />
 
       <div className="w-full max-w-none px-6 py-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Macro</h1>
-          <p className="text-sm text-gray-600 mt-2">
-            US market risk-on / risk-off score across 10 channels: equities, credit, volatility, short &amp; long rates, USD, oil, gold, inflation, and global risk.
-          </p>
-        </div>
+        {!loading && !error && data?.latest && (
+          <div className="mb-6">
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Macro</h1>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Risk-on/off score · 10 channels: equities, credit, vol, rates, USD, oil, gold, inflation, global
+            </p>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-16">
@@ -414,47 +467,16 @@ export default function MacroPage() {
           </div>
         ) : (
           <>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-8">
-              <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
-                <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-1">
-                  Risk-On Score
-                </h2>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-4xl font-bold text-gray-900">
-                    {data.latest.globalScore >= 0 ? '+' : ''}
-                    {data.latest.globalScore.toFixed(2)}
-                  </span>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                      modeColors[data.latest.macroMode] ?? 'bg-gray-100 text-gray-800'
-                    }`}
-                  >
-                    {data.latest.macroMode.replace('_', ' ')}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-500 mt-2">As of {formatDate(data.latest.asOf)}</p>
-              </div>
-
-              <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
-                <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-1">
-                  Transition
-                </h2>
-                <p className="text-lg font-medium text-gray-900">{data.latest.transition}</p>
-                <p className="text-sm text-gray-500 mt-1">
-                  Signal strength: {(data.latest.confidence * 100).toFixed(0)}%
-                </p>
-              </div>
-
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
               <SummaryCard
                 summaries={summaries}
                 summaryTab={summaryTab}
                 onTabChange={setSummaryTab}
                 reasons={data.latest.reasons}
+                latest={data.latest}
               />
-            </div>
-
-            <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Score progression</h2>
+              <div className="lg:col-span-2 rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Score progression</h2>
               {chartData.length === 0 ? (
                 <div className="flex items-center justify-center h-80 text-gray-500">
                   No history available. Run weekly backfill to populate the chart.
@@ -492,6 +514,7 @@ export default function MacroPage() {
                   </LineChart>
                 </ResponsiveContainer>
               )}
+              </div>
             </div>
 
             <div className="mt-8 rounded-lg bg-white border border-gray-200 p-6 shadow-sm">

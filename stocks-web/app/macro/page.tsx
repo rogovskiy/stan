@@ -48,17 +48,38 @@ interface MarketShift {
   headline: string;
   summary: string;
   channelIds: string[];
-  status: string;
   articleRefs: { url?: string; title?: string; source?: string; publishedAt?: string }[];
   asOf?: string;
   fetchedAt?: string;
   timeline?: MarketShiftTimeline;
   analyzedAt?: string;
+  momentumScore: number;
+  momentumScorePrev: number;
+  momentumLabel: string;
+  firstSeenAt?: string;
 }
 
 interface MarketShiftsResponse {
   shifts: MarketShift[];
   meta: { asOf?: string; count?: number } | null;
+}
+
+interface SummaryDriver {
+  headline: string;
+  detail: string;
+}
+
+interface MarketSummary {
+  mood: string;
+  moodDetail: string;
+  drivers: SummaryDriver[];
+}
+
+interface MarketSummariesResponse {
+  asOf: string | null;
+  fetchedAt: string | null;
+  yesterdayToday: MarketSummary | null;
+  lastWeek: MarketSummary | null;
 }
 
 function formatDate(dateStr: string): string {
@@ -67,6 +88,161 @@ function formatDate(dateStr: string): string {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function daysAgo(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+const MOMENTUM_LABEL_STYLES: Record<string, string> = {
+  'Accelerating': 'bg-amber-100 text-amber-800',
+  'Entrenched': 'bg-orange-100 text-orange-800',
+  'Picking up steam': 'bg-blue-100 text-blue-800',
+  'Fading — was strong': 'bg-gray-200 text-gray-500',
+  'Fading': 'bg-gray-100 text-gray-500',
+  'Just surfaced': 'bg-gray-100 text-gray-400',
+};
+
+function MomentumBadge({ label }: { label: string }) {
+  const cls = MOMENTUM_LABEL_STYLES[label] ?? 'bg-gray-100 text-gray-600';
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+const MOOD_STYLES: Record<string, { badge: string; border: string }> = {
+  Confident: { badge: 'bg-green-100 text-green-800', border: 'border-green-300' },
+  Optimistic: { badge: 'bg-emerald-100 text-emerald-800', border: 'border-emerald-300' },
+  Calm: { badge: 'bg-sky-100 text-sky-800', border: 'border-sky-300' },
+  Mixed: { badge: 'bg-gray-100 text-gray-700', border: 'border-gray-300' },
+  Cautious: { badge: 'bg-amber-100 text-amber-800', border: 'border-amber-300' },
+  Nervous: { badge: 'bg-orange-100 text-orange-800', border: 'border-orange-300' },
+  Worried: { badge: 'bg-red-100 text-red-800', border: 'border-red-300' },
+  Fearful: { badge: 'bg-red-200 text-red-900', border: 'border-red-400' },
+};
+
+function SummaryCard({
+  summaries,
+  summaryTab,
+  onTabChange,
+  reasons,
+}: {
+  summaries: MarketSummariesResponse | null;
+  summaryTab: 'today' | 'week';
+  onTabChange: (tab: 'today' | 'week') => void;
+  reasons?: string[];
+}) {
+  const active = summaryTab === 'today' ? summaries?.yesterdayToday : summaries?.lastWeek;
+
+  if (!summaries?.yesterdayToday && !summaries?.lastWeek) {
+    if (reasons && reasons.length > 0) {
+      return (
+        <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
+            Top drivers
+          </h2>
+          <ul className="text-sm text-gray-700 space-y-1">
+            {reasons.map((r, i) => (
+              <li key={i} className="flex gap-1">
+                <span className="text-gray-400">&bull;</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+        <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
+          Market summary
+        </h2>
+        <p className="text-sm text-gray-400">
+          No summary available yet. Run the market shift scanner to generate.
+        </p>
+      </div>
+    );
+  }
+
+  const moodStyle = active?.mood
+    ? MOOD_STYLES[active.mood] ?? { badge: 'bg-gray-100 text-gray-700', border: 'border-gray-300' }
+    : { badge: 'bg-gray-100 text-gray-700', border: 'border-gray-300' };
+
+  return (
+    <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+          Market summary
+        </h2>
+        <div className="flex rounded-md border border-gray-200 text-xs">
+          <button
+            type="button"
+            onClick={() => onTabChange('today')}
+            className={`px-2.5 py-1 rounded-l-md font-medium transition-colors ${
+              summaryTab === 'today'
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange('week')}
+            className={`px-2.5 py-1 rounded-r-md font-medium transition-colors ${
+              summaryTab === 'week'
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            This week
+          </button>
+        </div>
+      </div>
+
+      {active ? (
+        <>
+          <div className="flex items-center gap-2 mb-3">
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${moodStyle.badge}`}>
+              {active.mood}
+            </span>
+            <span className="text-sm text-gray-600">{active.moodDetail}</span>
+          </div>
+
+          {active.drivers.length > 0 && (
+            <div className="space-y-2">
+              {active.drivers.map((d, i) => (
+                <div
+                  key={i}
+                  className={`border-l-2 ${moodStyle.border} pl-3 py-1`}
+                >
+                  <p className="text-sm font-medium text-gray-900">{d.headline}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{d.detail}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {summaries?.asOf && (
+            <p className="text-xs text-gray-400 mt-3">
+              Generated {formatDate(summaries.asOf)}
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-gray-400">
+          No summary for this period yet.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function MacroPage() {
@@ -85,6 +261,9 @@ export default function MacroPage() {
   const [marketShiftsLoading, setMarketShiftsLoading] = useState(true);
   const [marketShiftsError, setMarketShiftsError] = useState<string | null>(null);
   const [selectedShift, setSelectedShift] = useState<MarketShift | null>(null);
+
+  const [summaries, setSummaries] = useState<MarketSummariesResponse | null>(null);
+  const [summaryTab, setSummaryTab] = useState<'today' | 'week'>('today');
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +358,22 @@ export default function MacroPage() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSummaries() {
+      try {
+        const res = await fetch('/api/macro/market-summaries');
+        if (!res.ok || cancelled) return;
+        const json = await res.json();
+        if (!cancelled) setSummaries(json);
+      } catch {
+        // non-critical — summaries card just won't render
+      }
+    }
+    fetchSummaries();
+    return () => { cancelled = true; };
+  }, []);
+
   const chartData = useMemo(() => {
     if (!data?.history?.length) return [];
     return data.history.map((h) => ({
@@ -250,21 +445,12 @@ export default function MacroPage() {
                 </p>
               </div>
 
-              {data.latest.reasons && data.latest.reasons.length > 0 && (
-                <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm md:col-span-2 lg:col-span-1">
-                  <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
-                    Top drivers
-                  </h2>
-                  <ul className="text-sm text-gray-700 space-y-1">
-                    {data.latest.reasons.map((r, i) => (
-                      <li key={i} className="flex gap-1">
-                        <span className="text-gray-400">•</span>
-                        {r}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <SummaryCard
+                summaries={summaries}
+                summaryTab={summaryTab}
+                onTabChange={setSummaryTab}
+                reasons={data.latest.reasons}
+              />
             </div>
 
             <div className="rounded-lg bg-white border border-gray-200 p-6 shadow-sm">
@@ -370,9 +556,12 @@ export default function MacroPage() {
                                     <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
                                       {shift.category.replace(/_/g, ' ')}
                                     </span>
-                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                                      {shift.status}
-                                    </span>
+                                    <MomentumBadge label={shift.momentumLabel} />
+                                    {shift.firstSeenAt && (
+                                      <span className="text-xs text-gray-400">
+                                        First detected {daysAgo(shift.firstSeenAt)}
+                                      </span>
+                                    )}
                                     <span className="text-xs text-gray-500 ml-auto">
                                       View timeline →
                                     </span>

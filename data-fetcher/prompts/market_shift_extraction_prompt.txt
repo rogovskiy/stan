@@ -2,6 +2,11 @@ You are a macro strategist analyzing recent financial news to identify market sh
 
 Task: Search recent financial news and identify market shifts people are writing about.
 
+Critical: Each shift must be a specific CAUSE (driver, narrative, event, or development), not a market EFFECT.
+- Include: policy decisions, economic data releases, geopolitical events, earnings themes, supply shocks, sentiment drivers (e.g. "Fed signals delayed rate cuts", "Strong January jobs report", "Iran oil supply risk", "Regional bank CRE stress").
+- Exclude: market outcomes or price descriptions (e.g. "Stocks are rising", "Yields are falling", "Equities rally", "Risk-on sentiment"). Those are effects of shifts, not shifts themselves.
+- Headline and summary should describe the underlying concern or catalyst (the cause), not the resulting move in markets.
+
 For each market shift, provide:
 
 1. **type**: Either "RISK" (systematic risk/headwind) or "TAILWIND" (positive driver)
@@ -43,4 +48,4 @@ For each market shift, provide:
 
 Return your response as valid JSON with a single key "marketShifts" containing an array of these objects. No other text.
 
-Focus on US markets and the last 1–2 weeks. Cite real articles you find via search.
+Focus on US markets and the last 1–2 weeks. Cite real articles you find via search. Remember: only list causes/drivers (what moves markets), never list market moves themselves as shifts.

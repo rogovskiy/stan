@@ -101,6 +101,25 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [taxImpactLotsLoading, setTaxImpactLotsLoading] = useState(false);
   const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
 
+  // Risk warnings
+  type RiskWarningShift = {
+    id: string;
+    headline: string;
+    summary: string;
+    momentumScore: number;
+    momentumLabel: string;
+    firstSeenAt?: string;
+  };
+  type RiskWarning = {
+    channelId: string;
+    channelLabel: string;
+    reliableImpact: number;
+    exposureLevel: 'HIGH' | 'MED' | 'LOW-MED' | 'LOW';
+    shifts: RiskWarningShift[];
+  };
+  const [riskWarnings, setRiskWarnings] = useState<RiskWarning[]>([]);
+  const [riskWarningsLoading, setRiskWarningsLoading] = useState(false);
+
   // Fetch data on mount and when view mode changes
   useEffect(() => {
     if (viewMode === 'portfolios') {
@@ -156,6 +175,31 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       })
       .finally(() => {
         if (!cancelled) setTaxSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio?.id]);
+
+  // Fetch risk warnings when a portfolio is selected
+  useEffect(() => {
+    if (!selectedPortfolio?.id) {
+      setRiskWarnings([]);
+      return;
+    }
+    let cancelled = false;
+    setRiskWarningsLoading(true);
+    fetch(`/api/portfolios/${selectedPortfolio.id}/risk-warnings`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        setRiskWarnings(Array.isArray(json.warnings) ? json.warnings : []);
+      })
+      .catch(() => {
+        if (!cancelled) setRiskWarnings([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRiskWarningsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1268,6 +1312,44 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     </div>
                   );
                 })()}
+                {/* Risk warnings: strong market shifts hitting channels this portfolio is exposed to */}
+                {riskWarningsLoading ? null : riskWarnings.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="text-xs font-medium text-gray-400 mb-2">Risk warnings</div>
+                    <div className="space-y-2">
+                      {riskWarnings.map((w) => (
+                        <div key={w.channelId} className="rounded-md bg-amber-50 border border-amber-100 px-3 py-2 text-xs">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="font-medium text-amber-900">{w.channelLabel}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                              w.exposureLevel === 'HIGH'
+                                ? 'bg-red-100 text-red-700'
+                                : w.exposureLevel === 'MED'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-yellow-50 text-yellow-700'
+                            }`}>
+                              {w.exposureLevel} exposure
+                            </span>
+                          </div>
+                          <ul className="space-y-1">
+                            {w.shifts.map((s) => (
+                              <li key={s.id} className="flex items-start gap-1.5 text-amber-800">
+                                <span className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
+                                  s.momentumLabel === 'Accelerating' ? 'bg-amber-200 text-amber-900'
+                                  : s.momentumLabel === 'Entrenched' ? 'bg-orange-100 text-orange-800'
+                                  : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {s.momentumLabel}
+                                </span>
+                                <span>{s.headline}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {settingsOpen && (
                   <div className="mt-4 pt-4 border-t border-gray-200 max-h-[min(60vh,500px)] overflow-y-auto">
                     <h3 className="text-sm font-semibold text-gray-800 mb-3">Portfolio settings</h3>

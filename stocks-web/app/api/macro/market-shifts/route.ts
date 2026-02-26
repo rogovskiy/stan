@@ -12,6 +12,30 @@ export interface ArticleRef {
   publishedAt?: string;
 }
 
+export interface MajorDevelopment {
+  date: string;
+  description: string;
+  articleRef?: {
+    url?: string;
+    title?: string;
+    source?: string;
+    publishedAt?: string;
+  };
+}
+
+export interface MarketShiftTimeline {
+  firstSurfacedAt: string;
+  majorDevelopments: MajorDevelopment[];
+}
+
+export type MomentumLabel =
+  | 'Just surfaced'
+  | 'Picking up steam'
+  | 'Accelerating'
+  | 'Entrenched'
+  | 'Fading'
+  | 'Fading — was strong';
+
 export interface MarketShift {
   id: string;
   type: string;
@@ -19,10 +43,16 @@ export interface MarketShift {
   headline: string;
   summary: string;
   channelIds: string[];
-  status: string;
   articleRefs: ArticleRef[];
   asOf?: string;
   fetchedAt?: string;
+  timeline?: MarketShiftTimeline;
+  analyzedAt?: string;
+  momentumScore: number;
+  momentumScorePrev: number;
+  momentumUpdatedAt?: string;
+  firstSeenAt?: string;
+  momentumLabel: MomentumLabel;
 }
 
 export interface MarketShiftsMeta {
@@ -34,6 +64,16 @@ export interface MarketShiftsMeta {
 export interface MarketShiftsResponse {
   shifts: MarketShift[];
   meta: MarketShiftsMeta | null;
+}
+
+function computeMomentumLabel(score: number, prev: number): MomentumLabel {
+  const delta = score - prev;
+  if (score < 5) return 'Just surfaced';
+  if (prev > 10 && delta < -3) return 'Fading — was strong';
+  if (score > 15) {
+    return delta > 1 ? 'Accelerating' : 'Entrenched';
+  }
+  return delta >= 0 ? 'Picking up steam' : 'Fading';
 }
 
 export async function GET() {
@@ -59,6 +99,8 @@ export async function GET() {
 
     const shifts: MarketShift[] = shiftsSnap.docs.map((d) => {
       const data = d.data();
+      const momentumScore: number = typeof data.momentumScore === 'number' ? data.momentumScore : 0;
+      const momentumScorePrev: number = typeof data.momentumScorePrev === 'number' ? data.momentumScorePrev : 0;
       return {
         id: d.id,
         type: data.type ?? 'RISK',
@@ -66,12 +108,21 @@ export async function GET() {
         headline: data.headline ?? '',
         summary: data.summary ?? '',
         channelIds: Array.isArray(data.channelIds) ? data.channelIds : [],
-        status: data.status ?? 'EMERGING',
         articleRefs: Array.isArray(data.articleRefs) ? data.articleRefs : [],
         asOf: data.asOf,
         fetchedAt: data.fetchedAt,
+        timeline: data.timeline,
+        analyzedAt: data.analyzedAt,
+        momentumScore,
+        momentumScorePrev,
+        momentumUpdatedAt: data.momentumUpdatedAt,
+        firstSeenAt: data.firstSeenAt,
+        momentumLabel: computeMomentumLabel(momentumScore, momentumScorePrev),
       };
     });
+
+    // Sort highest momentum first within each type
+    shifts.sort((a, b) => b.momentumScore - a.momentumScore);
 
     const meta: MarketShiftsMeta | null = metaSnap.exists()
       ? (metaSnap.data() as MarketShiftsMeta)

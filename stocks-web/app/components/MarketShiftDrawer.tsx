@@ -18,17 +18,47 @@ interface MarketShift {
   headline: string;
   summary: string;
   channelIds: string[];
-  status: string;
   articleRefs: { url?: string; title?: string; source?: string; publishedAt?: string }[];
   asOf?: string;
   fetchedAt?: string;
   timeline?: MarketShiftTimeline;
   analyzedAt?: string;
+  momentumScore: number;
+  momentumScorePrev: number;
+  momentumLabel: string;
+  firstSeenAt?: string;
 }
 
 interface MarketShiftDrawerProps {
   shift: MarketShift;
   onClose: () => void;
+}
+
+function daysAgo(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+const MOMENTUM_LABEL_STYLES: Record<string, string> = {
+  'Accelerating': 'bg-amber-100 text-amber-800',
+  'Entrenched': 'bg-orange-100 text-orange-800',
+  'Picking up steam': 'bg-blue-100 text-blue-800',
+  'Fading — was strong': 'bg-gray-200 text-gray-500',
+  'Fading': 'bg-gray-100 text-gray-500',
+  'Just surfaced': 'bg-gray-100 text-gray-400',
+};
+
+function MomentumBadge({ label }: { label: string }) {
+  const cls = MOMENTUM_LABEL_STYLES[label] ?? 'bg-gray-100 text-gray-600';
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+      {label}
+    </span>
+  );
 }
 
 function formatFriendlyDate(dateStr: string): string {
@@ -80,9 +110,12 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
             <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
               {shift.category.replace(/_/g, ' ')}
             </span>
-            <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-              {shift.status}
-            </span>
+            <MomentumBadge label={shift.momentumLabel} />
+            {shift.firstSeenAt && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">
+                First detected {daysAgo(shift.firstSeenAt)}
+              </span>
+            )}
           </div>
 
           {shift.summary && (

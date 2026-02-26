@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import AppNavigation from '../components/AppNavigation';
+import { MarketShiftDrawer } from '../components/MarketShiftDrawer';
 import SectorRotationChart from '../components/SectorRotationChart';
 import type { SectorRotationData } from '../components/SectorRotationChart';
 import {
@@ -29,6 +30,17 @@ interface MacroRiskScoresResponse {
   history: MacroScorePayload[];
 }
 
+interface MajorDevelopment {
+  date: string;
+  description: string;
+  articleRef?: { url?: string; title?: string; source?: string; publishedAt?: string };
+}
+
+interface MarketShiftTimeline {
+  firstSurfacedAt: string;
+  majorDevelopments: MajorDevelopment[];
+}
+
 interface MarketShift {
   id: string;
   type: string;
@@ -40,6 +52,8 @@ interface MarketShift {
   articleRefs: { url?: string; title?: string; source?: string; publishedAt?: string }[];
   asOf?: string;
   fetchedAt?: string;
+  timeline?: MarketShiftTimeline;
+  analyzedAt?: string;
 }
 
 interface MarketShiftsResponse {
@@ -70,6 +84,7 @@ export default function MacroPage() {
   const [marketShiftsMeta, setMarketShiftsMeta] = useState<MarketShiftsResponse['meta']>(null);
   const [marketShiftsLoading, setMarketShiftsLoading] = useState(true);
   const [marketShiftsError, setMarketShiftsError] = useState<string | null>(null);
+  const [selectedShift, setSelectedShift] = useState<MarketShift | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,35 +343,41 @@ export default function MacroPage() {
                           </h3>
                           <ul className="space-y-3">
                             {ofType.map((shift) => (
-                              <li
-                                key={shift.id}
-                                className="rounded-lg border border-gray-200 p-4 bg-gray-50/50"
-                              >
-                                <p className="font-medium text-gray-900">
-                                  {shift.headline}
-                                </p>
-                                {shift.summary && (
-                                  <p className="text-sm text-gray-600 mt-1">
-                                    {shift.summary}
+                              <li key={shift.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedShift(shift)}
+                                  className="w-full text-left rounded-lg border border-gray-200 p-4 bg-gray-50/50 hover:bg-gray-100/80 cursor-pointer transition-colors"
+                                >
+                                  <p className="font-medium text-gray-900">
+                                    {shift.headline}
                                   </p>
-                                )}
-                                <div className="flex flex-wrap gap-1.5 mt-2">
-                                  <span
-                                    className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                      shift.type === 'TAILWIND'
-                                        ? 'bg-green-100 text-green-800'
-                                        : 'bg-red-100 text-red-800'
-                                    }`}
-                                  >
-                                    {shift.type}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
-                                    {shift.category.replace(/_/g, ' ')}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                                    {shift.status}
-                                  </span>
-                                </div>
+                                  {shift.summary && (
+                                    <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+                                      {shift.summary}
+                                    </p>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                        shift.type === 'TAILWIND'
+                                          ? 'bg-green-100 text-green-800'
+                                          : 'bg-red-100 text-red-800'
+                                      }`}
+                                    >
+                                      {shift.type}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
+                                      {shift.category.replace(/_/g, ' ')}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                                      {shift.status}
+                                    </span>
+                                    <span className="text-xs text-gray-500 ml-auto">
+                                      View timeline →
+                                    </span>
+                                  </div>
+                                </button>
                               </li>
                             ))}
                           </ul>
@@ -367,6 +388,13 @@ export default function MacroPage() {
                 </>
               )}
             </div>
+
+            {selectedShift && (
+              <MarketShiftDrawer
+                shift={selectedShift}
+                onClose={() => setSelectedShift(null)}
+              />
+            )}
           </>
         )}
 

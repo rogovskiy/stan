@@ -33,3 +33,6 @@ export * from './portfolioService';
 // Watchlist service
 export * from './watchlistService';
 
+// YouTube subscriptions and videos
+export * from './youtubeSubscriptionService';
+

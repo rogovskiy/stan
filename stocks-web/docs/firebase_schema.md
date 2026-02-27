@@ -342,6 +342,68 @@ Watchlist items are stocks you're watching or considering for investment but hav
 
 ---
 
+### `/youtube_subscriptions/{subscriptionId}` (YouTube Sources)
+
+User-registered YouTube channel or playlist URLs that are refreshed by a background job to discover new videos.
+
+**Structure:**
+```
+/youtube_subscriptions/{subscriptionId}  (Subscription document)
+```
+
+**Example: `/youtube_subscriptions/abc123`**
+```json
+{
+  "url": "https://www.youtube.com/@SomeChannel",
+  "label": "Some Channel",
+  "userId": null,
+  "createdAt": "2024-11-20T10:00:00Z"
+}
+```
+
+**Fields:**
+- `url` (string, required): YouTube channel or playlist URL
+- `label` (string, optional): Display name (e.g. channel name)
+- `userId` (string, optional): User ID for multi-user support (future)
+- `createdAt` (timestamp): Creation timestamp
+
+---
+
+### `/youtube_videos/{videoId}` (YouTube Videos)
+
+Videos discovered from subscribed channels/playlists. Document ID is the YouTube video ID for stable upserts.
+
+**Structure:**
+```
+/youtube_videos/{videoId}  (Video document)
+```
+
+**Example: `/youtube_videos/nSqHIGSjywo`**
+```json
+{
+  "videoId": "nSqHIGSjywo",
+  "url": "https://www.youtube.com/watch?v=nSqHIGSjywo",
+  "title": "Tariffs, Cybersecurity sell-off, Private Credit fears",
+  "publishedAt": "2024-11-18T14:00:00Z",
+  "subscriptionId": "abc123",
+  "userId": null,
+  "createdAt": "2024-11-20T10:00:00Z"
+}
+```
+
+**Fields:**
+- `videoId` (string, required): YouTube video ID (same as document ID)
+- `url` (string, required): Full watch URL
+- `title` (string, required): Video title
+- `publishedAt` (string or timestamp): When the video was published
+- `subscriptionId` (string, required): Reference to the subscription doc that produced this video
+- `userId` (string, optional): Denormalized from subscription for easy "my videos" queries
+- `createdAt` (timestamp): When the video was first stored
+
+**Index:** Composite index on `youtube_videos`: `userId` (asc) + `publishedAt` (desc) for listing a user's videos by date. Firestore will suggest creating the index when you first run the query.
+
+---
+
 ## Query Patterns
 
 ### **Get stock metadata:**
@@ -547,4 +609,27 @@ const highPriorityItems = snapshot.docs.map(doc => ({
   id: doc.id,
   ...doc.data()
 }));
+```
+
+### **Get all YouTube subscriptions:**
+```javascript
+const subsRef = collection(db, 'youtube_subscriptions');
+const q = query(subsRef, orderBy('createdAt', 'desc'));
+const snapshot = await getDocs(q);
+const subscriptions = snapshot.docs.map(doc => ({
+  id: doc.id,
+  ...doc.data()
+}));
+```
+
+### **Get YouTube videos (by user, newest first):**
+```javascript
+const videosRef = collection(db, 'youtube_videos');
+const q = query(
+  videosRef,
+  where('userId', '==', userIdOrNull),
+  orderBy('publishedAt', 'desc')
+);
+const snapshot = await getDocs(q);
+const videos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 ```

@@ -90,29 +90,33 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function daysAgo(dateStr: string): string {
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-  if (days === 0) return 'today';
-  if (days === 1) return '1 day ago';
-  return `${days} days ago`;
+function TypeDot({ type }: { type: string }) {
+  const cls = type === 'TAILWIND' ? 'bg-green-500' : 'bg-red-500';
+  return (
+    <span
+      className={`w-1.5 h-1.5 rounded-full shrink-0 ${cls}`}
+      title={type}
+      aria-hidden
+    />
+  );
 }
 
-const MOMENTUM_LABEL_STYLES: Record<string, string> = {
-  'Accelerating': 'bg-amber-100 text-amber-800',
-  'Entrenched': 'bg-orange-100 text-orange-800',
-  'Picking up steam': 'bg-blue-100 text-blue-800',
-  'Fading — was strong': 'bg-gray-200 text-gray-500',
-  'Fading': 'bg-gray-100 text-gray-500',
-  'Just surfaced': 'bg-gray-100 text-gray-400',
+const MOMENTUM_STATUS: Record<string, { short: string; cls: string; order: number }> = {
+  'Accelerating': { short: 'Accel', cls: 'text-amber-600', order: 0 },
+  'Entrenched': { short: 'Strong', cls: 'text-orange-600', order: 1 },
+  'Picking up steam': { short: 'Rising', cls: 'text-blue-600', order: 2 },
+  'Just surfaced': { short: 'New', cls: 'text-gray-500', order: 3 },
+  'Fading': { short: 'Fading', cls: 'text-gray-500', order: 4 },
+  'Fading — was strong': { short: 'Was strong', cls: 'text-gray-500', order: 5 },
 };
 
-function MomentumBadge({ label }: { label: string }) {
-  const cls = MOMENTUM_LABEL_STYLES[label] ?? 'bg-gray-100 text-gray-600';
+function MomentumDelta({ score, prev }: { score: number; prev: number }) {
+  const delta = (score ?? 0) - (prev ?? 0);
+  const deltaStr = delta === 0 ? '—' : delta > 0 ? `+${delta}` : `${delta}`;
+  const deltaCls = delta === 0 ? 'text-gray-400' : delta > 0 ? 'text-green-600' : 'text-red-600';
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {label}
+    <span className={`shrink-0 w-6 text-center text-xs font-medium tabular-nums ${deltaCls}`}>
+      {deltaStr}
     </span>
   );
 }
@@ -535,68 +539,41 @@ export default function MacroPage() {
                 </div>
               ) : (
                 <>
-                  {marketShiftsMeta?.asOf != null && (
-                    <p className="text-sm text-gray-500 mb-4">
-                      As of {formatDate(marketShiftsMeta.asOf)}
-                      {marketShiftsMeta.count != null && ` · ${marketShiftsMeta.count} shifts`}
-                    </p>
-                  )}
-                  <div className="space-y-4">
-                    {(['RISK', 'TAILWIND'] as const).map((type) => {
-                      const ofType = marketShifts.filter((s) => s.type === type);
-                      if (ofType.length === 0) return null;
+                  {Object.entries(MOMENTUM_STATUS)
+                    .sort(([, a], [, b]) => a.order - b.order)
+                    .map(([label, { short, cls }]) => {
+                      const ofStatus = marketShifts.filter((s) => s.momentumLabel === label);
+                      if (ofStatus.length === 0) return null;
+                      const sorted = [...ofStatus].sort(
+                        (a, b) => (b.momentumScore ?? 0) - (a.momentumScore ?? 0)
+                      );
                       return (
-                        <div key={type}>
-                          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
-                            {type === 'RISK' ? 'Risks' : 'Tailwinds'}
+                        <div key={label} className="mb-4 last:mb-0">
+                          <h3 className={`text-xs font-medium uppercase tracking-wide mb-2 ${cls}`}>
+                            {short}
                           </h3>
-                          <ul className="space-y-3">
-                            {ofType.map((shift) => (
-                              <li key={shift.id}>
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedShift(shift)}
-                                  className="w-full text-left rounded-lg border border-gray-200 p-4 bg-gray-50/50 hover:bg-gray-100/80 cursor-pointer transition-colors"
-                                >
-                                  <p className="font-medium text-gray-900">
-                                    {shift.headline}
-                                  </p>
-                                  {shift.summary && (
-                                    <p className="text-sm text-gray-600 mt-1 line-clamp-2">
-                                      {shift.summary}
-                                    </p>
-                                  )}
-                                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                                    <span
-                                      className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                        shift.type === 'TAILWIND'
-                                          ? 'bg-green-100 text-green-800'
-                                          : 'bg-red-100 text-red-800'
-                                      }`}
-                                    >
-                                      {shift.type}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700">
-                                      {shift.category.replace(/_/g, ' ')}
-                                    </span>
-                                    <MomentumBadge label={shift.momentumLabel} />
-                                    {shift.firstSeenAt && (
-                                      <span className="text-xs text-gray-400">
-                                        First detected {daysAgo(shift.firstSeenAt)}
-                                      </span>
-                                    )}
-                                    <span className="text-xs text-gray-500 ml-auto">
-                                      View timeline →
-                                    </span>
-                                  </div>
-                                </button>
-                              </li>
+                          <div className="flex flex-wrap gap-2">
+                            {sorted.map((shift) => (
+                              <button
+                                key={shift.id}
+                                type="button"
+                                onClick={() => setSelectedShift(shift)}
+                                className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-2 py-1.5 bg-gray-50/50 hover:bg-gray-100/80 cursor-pointer transition-colors text-left"
+                              >
+                                <TypeDot type={shift.type} />
+                                <MomentumDelta
+                                  score={shift.momentumScore}
+                                  prev={shift.momentumScorePrev}
+                                />
+                                <span className="text-sm font-medium text-gray-900">
+                                  {shift.headline}
+                                </span>
+                              </button>
                             ))}
-                          </ul>
+                          </div>
                         </div>
                       );
                     })}
-                  </div>
                 </>
               )}
             </div>

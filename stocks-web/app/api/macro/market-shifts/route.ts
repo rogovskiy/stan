@@ -5,6 +5,9 @@ import { db } from '../../../lib/firebase';
 const MARKET_SHIFTS_PATH = ['macro', 'us_market', 'market_shifts'] as const;
 const META_PATH = ['macro', 'us_market', 'market_shifts_meta'] as const;
 
+/** Shifts with momentumScore below this are considered inactive and are not returned (hidden from UI). */
+const MOMENTUM_ACTIVE_THRESHOLD = 2;
+
 export interface ArticleRef {
   url?: string;
   title?: string;
@@ -121,14 +124,17 @@ export async function GET() {
       };
     });
 
+    // Exclude inactive shifts (score below threshold); do not display in UI
+    const activeShifts = shifts.filter((s) => s.momentumScore >= MOMENTUM_ACTIVE_THRESHOLD);
+
     // Sort highest momentum first within each type
-    shifts.sort((a, b) => b.momentumScore - a.momentumScore);
+    activeShifts.sort((a, b) => b.momentumScore - a.momentumScore);
 
     const meta: MarketShiftsMeta | null = metaSnap.exists()
       ? (metaSnap.data() as MarketShiftsMeta)
       : null;
 
-    const response: MarketShiftsResponse = { shifts, meta };
+    const response: MarketShiftsResponse = { shifts: activeShifts, meta };
     return NextResponse.json(response);
   } catch (error) {
     console.error('Market shifts API error:', error);

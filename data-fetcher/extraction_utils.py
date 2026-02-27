@@ -4,42 +4,128 @@ Extraction Utilities
 
 Generic utility functions for LLM-based extraction tasks using prompts and schemas.
 These utilities can be used by any extraction script (KPI extraction, summaries, etc.)
+Uses the google.genai package (not the deprecated google.generativeai).
 """
 
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
-import google.generativeai as genai
+
+import base64
+from google import genai
+from google.genai import types
 
 
 def get_gemini_model() -> str:
-    """Get Gemini model from env var or return default
-    
+    """Get Gemini model from env var or return default.
+
     Returns:
         Gemini model name (default: 'gemini-2.5-pro')
     """
     return os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
 
 
-def initialize_gemini_model(model_name: str = None, generation_config: Optional[Dict[str, Any]] = None) -> genai.GenerativeModel:
-    """Initialize and return a configured Gemini GenerativeModel instance.
-    
-    Reads API key from environment variables (GEMINI_API_KEY or GOOGLE_AI_API_KEY),
-    configures the genai client, and returns a model instance.
-    
+def get_genai_client() -> genai.Client:
+    """Create and return a Gemini API client using env API key.
+
     Returns:
-        Configured GenerativeModel instance
-        
+        genai.Client instance
+
     Raises:
         ValueError: If API key is not set in environment variables
     """
-    gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
-    if not gemini_api_key:
+    api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
+    if not api_key:
         raise ValueError('GEMINI_API_KEY or GOOGLE_AI_API_KEY environment variable is not set')
-    
-    genai.configure(api_key=gemini_api_key)
-    return genai.GenerativeModel(model_name or get_gemini_model(), generation_config=generation_config)
+    return genai.Client(api_key=api_key)
+
+
+def initialize_gemini_model(
+    model_name: Optional[str] = None,
+    generation_config: Optional[Dict[str, Any]] = None,
+) -> "GenaiModelAdapter":
+    """Backward-compatible wrapper: returns an adapter that uses the google.genai client.
+
+    Callers can use model.generate_content(contents, generation_config=...) as with the
+    deprecated google.generativeai package. Prefer get_genai_client() and
+    client.models.generate_content() for new code.
+    """
+    client = get_genai_client()
+    model = model_name or get_gemini_model()
+    return GenaiModelAdapter(client=client, model=model)
+
+
+class GenaiModelAdapter:
+    """Adapter so generate_content(contents, generation_config) works like the old SDK."""
+
+    def __init__(self, client: genai.Client, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    def generate_content(
+        self,
+        contents: Any,
+        generation_config: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        # Normalize generation_config: support dict or object with attributes (e.g. old SDK GenerationConfig)
+        g = generation_config or {}
+        if not isinstance(g, dict):
+            g = {
+                k: getattr(g, k)
+                for k in ("temperature", "max_output_tokens", "response_mime_type", "response_schema")
+                if hasattr(g, k)
+            }
+        config = types.GenerateContentConfig(
+            temperature=g.get("temperature", 0.3),
+            max_output_tokens=g.get("max_output_tokens", 8192),
+            response_mime_type=g.get("response_mime_type"),
+            response_json_schema=g.get("response_schema"),
+        )
+        if isinstance(contents, str):
+            parts = [types.Part(text=contents)]
+        else:
+            parts = []
+            for p in contents:
+                if isinstance(p, str):
+                    parts.append(types.Part(text=p))
+                elif isinstance(p, dict) and "data" in p:
+                    data = p["data"]
+                    if isinstance(data, str):
+                        data = base64.b64decode(data)
+                    parts.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                mime_type=p.get("mime_type", "application/pdf"),
+                                data=data,
+                            )
+                        )
+                    )
+                elif isinstance(p, dict) and "uri" in p:
+                    parts.append(
+                        types.Part(
+                            file_data=types.FileData(
+                                file_uri=p["uri"],
+                                mime_type=p.get("mime_type"),
+                            )
+                        )
+                    )
+                elif hasattr(p, "uri"):
+                    parts.append(
+                        types.Part(
+                            file_data=types.FileData(
+                                file_uri=p.uri,
+                                mime_type=getattr(p, "mime_type", None),
+                            )
+                        )
+                    )
+                else:
+                    parts.append(types.Part(text=str(p)))
+        return self._client.models.generate_content(
+            model=self._model,
+            contents=parts,
+            config=config,
+        )
 
 
 def extract_json_from_llm_response(response_text: str) -> str:

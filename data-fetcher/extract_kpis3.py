@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google.genai import types
 
 from services.ir_document_service import IRDocumentService
 from services.prompt_fragment_service import PromptFragmentService
@@ -22,6 +22,7 @@ from document_text_extractor import extract_text_from_html
 from pathlib import Path
 from extraction_utils import (
     get_gemini_model,
+    get_genai_client,
     extract_json_from_llm_response,
     load_prompt_template,
     load_json_schema,
@@ -181,41 +182,37 @@ def extract_kpis(
             print(prompt)
             print(f'{"="*80}\n')
         
-        # Initialize Gemini
-        gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
-        if not gemini_api_key:
-            print('Error: GEMINI_API_KEY or GOOGLE_AI_API_KEY not set')
-            return None
-        
-        genai.configure(api_key=gemini_api_key)
+        # Initialize Gemini (google.genai client)
+        client = get_genai_client()
         model_name = get_gemini_model()
-        model = genai.GenerativeModel(model_name)
-        
-        # Prepare content parts
-        content_parts = [prompt]
-        
-        # Add PDF files
+
+        # Build content parts: text prompt + optional PDF blobs
+        parts = [types.Part(text=prompt)]
         for pdf_content, doc_meta in pdf_files:
-            pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
-            content_parts.append({
-                'mime_type': 'application/pdf',
-                'data': pdf_base64
-            })
+            parts.append(
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type='application/pdf',
+                        data=pdf_content,
+                    )
+                )
+            )
             if verbose:
                 print(f'  📄 Added PDF: {doc_meta.get("title", "Unknown")} ({len(pdf_content) / 1024:.1f}KB)')
-        
+
         if verbose:
             print(f'\nCalling Gemini API for KPI extraction with {len(pdf_files)} PDF(s) and {len(html_texts)} text document(s)...')
-        
-        # Generate with structured output
-        response = model.generate_content(
-            content_parts,
-            generation_config={
-                'temperature': 0.3,
-                'max_output_tokens': 65536,
-                'response_mime_type': 'application/json',
-                'response_schema': array_schema
-            }
+
+        config = types.GenerateContentConfig(
+            temperature=0.3,
+            max_output_tokens=65536,
+            response_mime_type='application/json',
+            response_json_schema=array_schema,
+        )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=parts,
+            config=config,
         )
         
         # Parse JSON response

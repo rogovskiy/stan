@@ -9,7 +9,7 @@ macro/us_market/market_shifts.
 Uses the google-genai package (google.genai). Requires GEMINI_API_KEY or GOOGLE_AI_API_KEY.
 
 Invocation:
-- CLI: python scan_market_shifts.py [--dry-run] [--skip-deep-analysis] [--verbose]
+- CLI: python scan_market_shifts.py [--dry-run] [--merge-only] [--skip-merge] [--skip-deep-analysis] [--verbose]
 """
 
 import argparse
@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add parent directory so we can import modules
@@ -30,18 +30,46 @@ load_dotenv(".env.local")
 from google import genai
 from google.genai import types
 
+from extraction_utils import get_gemini_model
 from services.market_shift_service import MarketShiftService, slug_from_headline
+from services.market_shift_merge import run_merge_step
 
 logger = logging.getLogger(__name__)
 
+# Suppress noisy HTTP and genai client logs (e.g. "HTTP Request: POST ...", "AFC is enabled")
+for _logger_name in ("urllib3", "urllib3.connectionpool", "httpcore", "httpx", "google", "google.genai"):
+    logging.getLogger(_logger_name).setLevel(logging.WARNING)
+
+# Production Gemini settings (align with scan_ir_website / ir_crawler: low temperature, sufficient tokens)
+def _gemini_temperature() -> float:
+    return float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
+
+
+def _gemini_max_output_tokens(default: int) -> int:
+    return int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", str(default)))
+
 
 def _extract_json_from_response(response_text: str) -> str:
-    """Extract JSON from LLM response (handles markdown code blocks)."""
-    if "```json" in response_text:
-        return response_text.split("```json")[1].split("```")[0].strip()
-    if "```" in response_text:
-        return response_text.split("```")[1].split("```")[0].strip()
-    return response_text.strip()
+    """Extract JSON from LLM response (handles markdown code blocks and stray text)."""
+    if not response_text:
+        return ""
+    text = response_text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    # Isolate a single JSON object (handles trailing garbage / partial output)
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return text
 
 
 def load_prompt() -> str:
@@ -54,7 +82,7 @@ def load_prompt() -> str:
 
 
 def load_timeline_prompt_template() -> str:
-    """Load the market shift timeline prompt template (expects {headline}, {summary}, {type}, {category})."""
+    """Load the market shift timeline prompt template (expects {headline}, {summary}, {type}, {category}, {current_date}, {cutoff_date})."""
     prompts_dir = Path(__file__).parent / "prompts"
     prompt_path = prompts_dir / "market_shift_timeline_prompt.txt"
     if not prompt_path.exists():
@@ -72,13 +100,13 @@ def fetch_market_shifts(prompt: str, verbose: bool = False) -> list[dict]:
         raise ValueError("GEMINI_API_KEY or GOOGLE_AI_API_KEY environment variable is not set")
 
     client = genai.Client(api_key=api_key)
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    model = get_gemini_model()
     max_remote_calls = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "50"))
 
     config = types.GenerateContentConfig(
         tools=[types.Tool(google_search=types.GoogleSearch())],
-        temperature=0.2,
-        max_output_tokens=8192,
+        temperature=_gemini_temperature(),
+        max_output_tokens=_gemini_max_output_tokens(8192),
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
             maximum_remote_calls=max_remote_calls,
         ),
@@ -113,24 +141,28 @@ def fetch_shift_timeline(
     shift: dict,
     timeline_prompt_template: str,
     client: genai.Client,
+    current_date: str,
+    cutoff_date: str,
     verbose: bool = False,
 ) -> dict | None:
     """
     Call Gemini with Google Search grounding to research timeline for one shift.
     Returns timeline dict with firstSurfacedAt and majorDevelopments, or None on failure.
     """
-    model = os.getenv("GEMINI_TIMELINE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+    model = os.getenv("GEMINI_TIMELINE_MODEL", get_gemini_model())
     max_remote_calls = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "50"))
     prompt = timeline_prompt_template.format(
         type=shift.get("type", "RISK"),
         category=shift.get("category", "MARKET_SENTIMENT"),
         headline=shift.get("headline", ""),
         summary=shift.get("summary", ""),
+        current_date=current_date,
+        cutoff_date=cutoff_date,
     )
     config = types.GenerateContentConfig(
         tools=[types.Tool(google_search=types.GoogleSearch())],
-        temperature=0.2,
-        max_output_tokens=4096,
+        temperature=_gemini_temperature(),
+        max_output_tokens=_gemini_max_output_tokens(4096),
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
             maximum_remote_calls=max_remote_calls,
         ),
@@ -197,30 +229,39 @@ def fetch_market_summary(
     prompt = prompt.replace("{channel_scores_json}", json.dumps(channel_scores, indent=2))
     prompt = prompt.replace("{date_range}", date_range)
 
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    model = get_gemini_model()
     config = types.GenerateContentConfig(
-        temperature=0.3,
-        max_output_tokens=1024,
+        temperature=_gemini_temperature(),
+        max_output_tokens=_gemini_max_output_tokens(4096),
     )
     if verbose:
         logger.info("Generating market summary for: %s", date_range)
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=config,
-        )
-        if not response.text:
-            logger.warning("Gemini returned empty response for summary (%s)", date_range)
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+            if not response.text:
+                if attempt == 0 and verbose:
+                    logger.info("Summary empty, retrying once for: %s", date_range)
+                else:
+                    logger.warning("Gemini returned empty response for summary (%s)", date_range)
+                if attempt == 0:
+                    continue
+                return None
+            json_str = _extract_json_from_response(response.text)
+            data = json.loads(json_str)
+            if "mood" in data and "drivers" in data:
+                return data
             return None
-        json_str = _extract_json_from_response(response.text)
-        data = json.loads(json_str)
-        if "mood" in data and "drivers" in data:
-            return data
-        return None
-    except (json.JSONDecodeError, KeyError, RuntimeError) as e:
-        logger.warning("Summary generation error (%s): %s", date_range, e)
-        return None
+        except (json.JSONDecodeError, KeyError, RuntimeError) as e:
+            logger.warning("Summary generation error (%s): %s", date_range, e)
+            if attempt == 0:
+                continue
+            return None
+    return None
 
 
 def normalize_shift(shift: dict) -> dict:
@@ -254,9 +295,89 @@ def _compute_shift_ids(normalized: list[dict]) -> None:
         shift["_shift_id"] = shift_id
 
 
+def run_extraction(
+    svc: MarketShiftService,
+    current_date: str,
+    cutoff_date: str,
+    skip_deep_analysis: bool,
+    verbose: bool = False,
+) -> list[dict]:
+    """
+    Fetch market shifts via Gemini, normalize, optionally run deep (timeline) analysis.
+    Returns list of normalized shift dicts ready for save_market_shifts (no _shift_id).
+    """
+    extraction_prompt = load_prompt()
+    extraction_prompt = extraction_prompt.replace("{current_date}", current_date).replace(
+        "{cutoff_date}", cutoff_date
+    )
+    market_shifts = fetch_market_shifts(extraction_prompt, verbose=verbose)
+    normalized = [normalize_shift(s) for s in market_shifts]
+    _compute_shift_ids(normalized)
+
+    if not skip_deep_analysis:
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
+        if not api_key:
+            logger.warning("No API key; skipping deep analysis")
+        else:
+            client = genai.Client(api_key=api_key)
+            timeline_template = load_timeline_prompt_template()
+            existing_with_timeline = svc.get_existing_shift_ids_with_timeline()
+            done = 0
+            for shift in normalized:
+                if done >= MAX_DEEP_ANALYSIS_PER_RUN:
+                    break
+                shift_id = shift.get("_shift_id")
+                if shift_id and shift_id not in existing_with_timeline:
+                    timeline = fetch_shift_timeline(
+                        shift, timeline_template, client, current_date, cutoff_date, verbose=verbose
+                    )
+                    if timeline:
+                        shift["timeline"] = timeline
+                        shift["analyzedAt"] = datetime.utcnow().isoformat() + "Z"
+                        done += 1
+                        existing_with_timeline.add(shift_id)
+
+    for s in normalized:
+        s.pop("_shift_id", None)
+    return normalized
+
+
+def run_summaries(
+    svc: MarketShiftService,
+    as_of: str,
+    client: genai.Client,
+    verbose: bool = False,
+) -> None:
+    """
+    Load current shifts from Firestore, generate AI market state summaries, and save.
+    Call after extract+save+merge so summaries reflect the final (possibly merged) set.
+    """
+    shifts = svc.get_all_shifts()
+    if not shifts:
+        logger.warning("No shifts in Firestore; skipping summary generation")
+        return
+    try:
+        summary_template = load_summary_prompt_template()
+        risk_scores = svc.get_risk_scores_history(limit=10)
+        latest_scores = risk_scores[-1] if risk_scores else {}
+        channel_scores = latest_scores.get("channelScores") or {}
+        summaries = {}
+        for key, label in [("yesterdayToday", "yesterday and today"), ("lastWeek", "last 7 days")]:
+            result = fetch_market_summary(
+                shifts, risk_scores, channel_scores, label, summary_template,
+                client, verbose=verbose,
+            )
+            summaries[key] = result
+        svc.save_market_summaries(as_of, summaries, verbose=verbose)
+    except Exception as e:
+        logger.warning("Market summary generation failed (non-fatal): %s", e)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch market shifts via Gemini and save to Firestore")
     parser.add_argument("--dry-run", action="store_true", help="Call Gemini, print JSON, do not write to Firestore")
+    parser.add_argument("--merge-only", action="store_true", help="Skip extract/save; run only merge on current Firestore state, then summaries if merge changed anything")
+    parser.add_argument("--skip-merge", action="store_true", help="Skip the merge step (full run only)")
     parser.add_argument("--skip-deep-analysis", action="store_true", help="Skip timeline deep analysis (faster runs)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -264,31 +385,49 @@ def main() -> None:
     if args.verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    prompt = load_prompt()
-    market_shifts = fetch_market_shifts(prompt, verbose=args.verbose)
+    now = datetime.utcnow()
+    current_date = now.strftime("%Y-%m-%d")
+    cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    as_of = current_date
+    svc = MarketShiftService()
 
-    normalized = [normalize_shift(s) for s in market_shifts]
-    _compute_shift_ids(normalized)
+    # --- Merge-only mode: load shifts, merge, then regenerate summaries if merge changed anything ---
+    if args.merge_only:
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
+        if not api_key:
+            logger.warning("No API key; cannot run merge (needs Gemini)")
+        else:
+            client = genai.Client(api_key=api_key)
+            merge_changed = run_merge_step(svc, as_of, client, verbose=args.verbose, dry_run=args.dry_run)
+            if merge_changed and not args.dry_run:
+                run_summaries(svc, as_of, client, verbose=args.verbose)
+            if args.verbose:
+                logger.info("Merge-only run complete (merge_changed=%s)", merge_changed)
+        return
+
+    # --- Full pipeline: extract -> save -> merge (optional) -> summaries ---
+    normalized = run_extraction(svc, current_date, cutoff_date, args.skip_deep_analysis, verbose=args.verbose)
 
     if args.dry_run:
-        # Remove internal key for output
-        out = [{"type": s["type"], "category": s["category"], "headline": s["headline"], "summary": s["summary"], "channelIds": s["channelIds"], "status": s["status"], "articleRefs": s["articleRefs"]} for s in normalized]
+        out = [
+            {"type": s["type"], "category": s["category"], "headline": s["headline"], "summary": s["summary"], "channelIds": s["channelIds"], "status": s["status"], "articleRefs": s["articleRefs"]}
+            for s in normalized
+        ]
         print(json.dumps({"marketShifts": out}, indent=2))
         print(f"\n[DRY RUN] Would save {len(normalized)} market shifts to Firestore")
         if not args.skip_deep_analysis and normalized:
-            # Run deep analysis for first shift to verify prompt/parsing
             api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
             if api_key:
                 client = genai.Client(api_key=api_key)
                 timeline_template = load_timeline_prompt_template()
                 first = normalized[0]
                 logger.info("Running deep analysis for first shift (dry-run)...")
-                timeline = fetch_shift_timeline(first, timeline_template, client, verbose=args.verbose)
+                timeline = fetch_shift_timeline(
+                    first, timeline_template, client, current_date, cutoff_date, verbose=args.verbose
+                )
                 if timeline:
                     print("\n[DRY RUN] Timeline for first shift:")
                     print(json.dumps(timeline, indent=2))
-
-                # Preview summary generation
                 try:
                     summary_template = load_summary_prompt_template()
                     channel_scores = {}
@@ -303,59 +442,24 @@ def main() -> None:
                     logger.warning("Dry-run summary failed: %s", e)
         return
 
-    as_of = datetime.utcnow().strftime("%Y-%m-%d")
-    svc = MarketShiftService()
-    existing_with_timeline = svc.get_existing_shift_ids_with_timeline()
-
-    if not args.skip_deep_analysis:
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
-        if not api_key:
-            logger.warning("No API key; skipping deep analysis")
-        else:
-            client = genai.Client(api_key=api_key)
-            timeline_template = load_timeline_prompt_template()
-            done = 0
-            for shift in normalized:
-                if done >= MAX_DEEP_ANALYSIS_PER_RUN:
-                    break
-                shift_id = shift.get("_shift_id")
-                if shift_id and shift_id not in existing_with_timeline:
-                    timeline = fetch_shift_timeline(shift, timeline_template, client, verbose=args.verbose)
-                    if timeline:
-                        shift["timeline"] = timeline
-                        shift["analyzedAt"] = datetime.utcnow().isoformat() + "Z"
-                        done += 1
-                        existing_with_timeline.add(shift_id)
-
-    for s in normalized:
-        s.pop("_shift_id", None)
-
     svc.save_market_shifts(as_of, normalized, verbose=args.verbose)
 
-    # --- Generate AI market state summaries ---
+    merge_changed = False
+    if not args.skip_merge:
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
+        if api_key:
+            client = genai.Client(api_key=api_key)
+            merge_changed = run_merge_step(svc, as_of, client, verbose=args.verbose, dry_run=False)
+        else:
+            logger.warning("No API key; skipping merge step")
+
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
-    if api_key and normalized:
-        try:
-            summary_template = load_summary_prompt_template()
-            risk_scores = svc.get_risk_scores_history(limit=10)
-            latest_scores = risk_scores[-1] if risk_scores else {}
-            channel_scores = latest_scores.get("channelScores") or {}
-            summary_client = genai.Client(api_key=api_key)
-
-            summaries = {}
-            for key, label in [("yesterdayToday", "yesterday and today"), ("lastWeek", "last 7 days")]:
-                result = fetch_market_summary(
-                    normalized, risk_scores, channel_scores, label, summary_template,
-                    summary_client, verbose=args.verbose,
-                )
-                summaries[key] = result
-
-            svc.save_market_summaries(as_of, summaries, verbose=args.verbose)
-        except Exception as e:
-            logger.warning("Market summary generation failed (non-fatal): %s", e)
+    if api_key:
+        client = genai.Client(api_key=api_key)
+        run_summaries(svc, as_of, client, verbose=args.verbose)
 
     if args.verbose:
-        logger.info("Done. Saved %d market shifts for %s", len(normalized), as_of)
+        logger.info("Done. Saved %d market shifts for %s (merge_changed=%s)", len(normalized), as_of, merge_changed)
 
 
 if __name__ == "__main__":

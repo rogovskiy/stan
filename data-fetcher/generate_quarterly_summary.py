@@ -11,11 +11,10 @@ import os
 import json
 import argparse
 import sys
-import base64
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google.genai import types
 
 from services.ir_document_service import IRDocumentService
 from services.quarterly_analysis_service import QuarterlyAnalysisService
@@ -23,6 +22,7 @@ from extraction_utils import (
     load_prompt_template,
     load_json_schema,
     get_gemini_model,
+    get_genai_client,
     extract_json_from_llm_response,
     clean_schema_for_gemini
 )
@@ -249,16 +249,10 @@ def generate_quarterly_summary(
             print(f'No documents available for {ticker} {quarter_key}')
             return None
         
-        # Initialize Gemini
-        gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_AI_API_KEY')
-        if not gemini_api_key:
-            print('Error: GEMINI_API_KEY or GOOGLE_AI_API_KEY not set')
-            return None
-        
-        genai.configure(api_key=gemini_api_key)
+        # Initialize Gemini (google.genai client)
+        client = get_genai_client()
         model_name = get_gemini_model()
-        model = genai.GenerativeModel(model_name)
-        
+
         # Load schema for structured output
         schema = load_json_schema('quarterly_analysis_schema.json')
         cleaned_schema = clean_schema_for_gemini(schema)
@@ -329,31 +323,33 @@ Use this previous quarter context to:
             print(prompt[:2000] + '...' if len(prompt) > 2000 else prompt)
             print('='*80 + '\n')
         
-        # Prepare content parts
-        content_parts = [prompt]
-        
-        # Add PDF files
+        # Build content parts: text prompt + optional PDF blobs
+        parts = [types.Part(text=prompt)]
         for pdf_content, doc_meta in pdf_files:
-            pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
-            content_parts.append({
-                'mime_type': 'application/pdf',
-                'data': pdf_base64
-            })
+            parts.append(
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type='application/pdf',
+                        data=pdf_content,
+                    )
+                )
+            )
             if verbose:
                 print(f'  📄 Added PDF: {doc_meta.get("title", "Unknown")} ({len(pdf_content) / 1024:.1f}KB)')
-        
+
         if verbose:
             print(f'\nCalling Gemini API for quarterly summary with {len(pdf_files)} PDF(s) and {len(html_texts)} text document(s)...')
-        
-        # Generate with structured output
-        response = model.generate_content(
-            content_parts,
-            generation_config={
-                'temperature': 0.3,
-                'max_output_tokens': 4000,
-                'response_mime_type': 'application/json',
-                'response_schema': cleaned_schema
-            }
+
+        config = types.GenerateContentConfig(
+            temperature=0.3,
+            max_output_tokens=4000,
+            response_mime_type='application/json',
+            response_json_schema=cleaned_schema,
+        )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=parts,
+            config=config,
         )
         
         # Parse JSON response

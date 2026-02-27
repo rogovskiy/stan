@@ -65,6 +65,19 @@ class MarketShiftService(FirebaseBaseService):
                 out.add(doc.id)
         return out
 
+    def get_all_shifts(self) -> List[Dict[str, Any]]:
+        """
+        Return all market shift documents with full data.
+        Each item is a dict with "id" (document id) plus all stored fields.
+        Used by the merge step and tests.
+        """
+        out: List[Dict[str, Any]] = []
+        for doc in self._shifts_ref().stream():
+            data = doc.to_dict() or {}
+            data["id"] = doc.id
+            out.append(data)
+        return out
+
     def save_market_shifts(
         self,
         as_of: str,

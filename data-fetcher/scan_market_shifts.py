@@ -170,6 +170,7 @@ def load_summary_prompt_template() -> str:
 def fetch_market_summary(
     shifts: list[dict],
     risk_scores: list[dict],
+    channel_scores: dict[str, float],
     date_range: str,
     summary_template: str,
     client: genai.Client,
@@ -193,6 +194,7 @@ def fetch_market_summary(
     ]
     prompt = summary_template.replace("{shifts_json}", json.dumps(compact_shifts, indent=2))
     prompt = prompt.replace("{risk_scores_json}", json.dumps(risk_scores, indent=2))
+    prompt = prompt.replace("{channel_scores_json}", json.dumps(channel_scores, indent=2))
     prompt = prompt.replace("{date_range}", date_range)
 
     model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
@@ -289,8 +291,9 @@ def main() -> None:
                 # Preview summary generation
                 try:
                     summary_template = load_summary_prompt_template()
+                    channel_scores = {}
                     summary = fetch_market_summary(
-                        normalized, [], "yesterday and today",
+                        normalized, [], channel_scores, "yesterday and today",
                         summary_template, client, verbose=args.verbose,
                     )
                     if summary:
@@ -335,13 +338,15 @@ def main() -> None:
         try:
             summary_template = load_summary_prompt_template()
             risk_scores = svc.get_risk_scores_history(limit=10)
+            latest_scores = risk_scores[-1] if risk_scores else {}
+            channel_scores = latest_scores.get("channelScores") or {}
             summary_client = genai.Client(api_key=api_key)
 
             summaries = {}
             for key, label in [("yesterdayToday", "yesterday and today"), ("lastWeek", "last 7 days")]:
                 result = fetch_market_summary(
-                    normalized, risk_scores, label, summary_template, summary_client,
-                    verbose=args.verbose,
+                    normalized, risk_scores, channel_scores, label, summary_template,
+                    summary_client, verbose=args.verbose,
                 )
                 summaries[key] = result
 

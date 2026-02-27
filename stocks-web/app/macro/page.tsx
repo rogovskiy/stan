@@ -138,6 +138,31 @@ const MODE_COLORS: Record<string, string> = {
   MIXED: 'bg-amber-100 text-amber-800',
 };
 
+const CHANNEL_LABELS: Record<string, string> = {
+  EQUITIES_US: 'Equity market',
+  CREDIT: 'Credit',
+  VOL: 'Volatility',
+  RATES_SHORT: 'Short rates',
+  RATES_LONG: 'Long rates',
+  USD: 'USD',
+  OIL: 'Oil',
+  GOLD: 'Gold',
+  INFLATION: 'Inflation',
+  GLOBAL_RISK: 'Global risk',
+};
+
+function getRiskLevel(score: number): 'HIGH' | 'MED' | 'LOW' {
+  if (score <= -0.5) return 'HIGH';
+  if (score < -0.2) return 'MED';
+  return 'LOW';
+}
+
+const RISK_LEVEL_STYLES: Record<string, string> = {
+  HIGH: 'bg-red-100 text-red-800',
+  MED: 'bg-amber-100 text-amber-800',
+  LOW: 'bg-gray-100 text-gray-700',
+};
+
 function SummaryCard({
   summaries,
   summaryTab,
@@ -152,6 +177,32 @@ function SummaryCard({
   latest?: MacroScorePayload | null;
 }) {
   const active = summaryTab === 'today' ? summaries?.yesterdayToday : summaries?.lastWeek;
+
+  const TopRiskyChannels = latest?.channelScores && Object.keys(latest.channelScores).length > 0 ? (
+    <div className="mt-4 pt-4 border-t border-gray-100">
+      <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+        Top risky channels
+      </h3>
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(latest.channelScores)
+          .filter(([, score]) => typeof score === 'number' && score < 0)
+          .sort(([, a], [, b]) => (a as number) - (b as number))
+          .slice(0, 5)
+          .map(([ch, score]) => {
+            const s = score as number;
+            const level = getRiskLevel(s);
+            return (
+              <span
+                key={ch}
+                className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-medium ${RISK_LEVEL_STYLES[level]}`}
+              >
+                <span>{CHANNEL_LABELS[ch] ?? ch}</span>
+              </span>
+            );
+          })}
+      </div>
+    </div>
+  ) : null;
 
   if (!summaries?.yesterdayToday && !summaries?.lastWeek) {
     if (reasons && reasons.length > 0) {
@@ -186,6 +237,7 @@ function SummaryCard({
               </li>
             ))}
           </ul>
+          {TopRiskyChannels}
         </div>
       );
     }
@@ -215,6 +267,7 @@ function SummaryCard({
         <p className="text-sm text-gray-400">
           No summary available yet. Run the market shift scanner to generate.
         </p>
+        {TopRiskyChannels}
       </div>
     );
   }
@@ -302,6 +355,7 @@ function SummaryCard({
           No summary for this period yet.
         </p>
       )}
+      {TopRiskyChannels}
     </div>
   );
 }
@@ -453,9 +507,6 @@ export default function MacroPage() {
         {!loading && !error && data?.latest && (
           <div className="mb-6">
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">Macro</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Risk-on/off score · 10 channels: equities, credit, vol, rates, USD, oil, gold, inflation, global
-            </p>
           </div>
         )}
 

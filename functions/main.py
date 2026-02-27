@@ -75,10 +75,10 @@ def scheduled_daily_refresh(event: scheduler_fn.ScheduledEvent) -> None:
         # Initialize Pub/Sub publisher
         publisher = pubsub_v1.PublisherClient()
         
-        # Topic paths for the two topics
+        # Topic paths: ticker refresh (benchmarks also feed sector-rotation charts)
         ir_topic_path = 'projects/stan-1464e/topics/ir-scan-requests'
         yf_topic_path = 'projects/stan-1464e/topics/yf-refresh-requests'
-        
+
         ir_published_count = 0
         yf_published_count = 0
         
@@ -108,8 +108,51 @@ def scheduled_daily_refresh(event: scheduler_fn.ScheduledEvent) -> None:
             message_id_yf = future_yf.result()
             yf_published_count += 1
             logging.info(f"Published refresh message for ticker {ticker} to {yf_topic_path} with message ID: {message_id_yf}")
-        
+
     except Exception as e:
         error_msg = f"Error fetching tickers or publishing message: {e}"
         logging.error(error_msg)
+
+
+# YouTube subscriptions refresh at 01:00 UTC (separate hour from main refresh).
+@scheduler_fn.on_schedule(schedule="0 1 * * *")
+def scheduled_youtube_refresh(event: scheduler_fn.ScheduledEvent) -> None:
+    """Publish one message per YouTube subscription to youtube-refresh-requests."""
+    logging.info("Scheduled YouTube refresh at: %s", event.schedule_time)
+    try:
+        db = firestore.client()
+        publisher = pubsub_v1.PublisherClient()
+        youtube_topic_path = "projects/stan-1464e/topics/youtube-refresh-requests"
+        subs_ref = db.collection("youtube_subscriptions")
+        youtube_published_count = 0
+        for sub_doc in subs_ref.stream():
+            sub_id = sub_doc.id
+            sub_data = sub_doc.to_dict() or {}
+            if not (sub_data.get("url") or "").strip():
+                logging.warning("YouTube subscription %s has no URL; skipping publish.", sub_id)
+                continue
+            message_data = {"subscriptionId": sub_id}
+            message_json = json.dumps(message_data).encode("utf-8")
+            publisher.publish(youtube_topic_path, message_json).result()
+            youtube_published_count += 1
+            logging.info("Published YouTube refresh message for subscription %s to %s", sub_id, youtube_topic_path)
+        logging.info("Published %d messages to %s", youtube_published_count, youtube_topic_path)
+    except Exception as e:
+        logging.error("YouTube refresh publish failed: %s", e)
+
+
+# Macro + market shifts at a separate hour (e.g. after Yahoo data is fresh).
+# Change the schedule to run at your desired UTC hour: "0 H * * *" = daily at H:00 UTC.
+@scheduler_fn.on_schedule(schedule="0 6 * * *")
+def scheduled_macro_refresh(event: scheduler_fn.ScheduledEvent) -> None:
+    """Publish one message to macro-refresh-requests (macro scores then shifts + summaries)."""
+    logging.info("Scheduled macro refresh at: %s", event.schedule_time)
+    try:
+        publisher = pubsub_v1.PublisherClient()
+        macro_topic_path = "projects/stan-1464e/topics/macro-refresh-requests"
+        macro_message_json = json.dumps({}).encode("utf-8")
+        publisher.publish(macro_topic_path, macro_message_json)
+        logging.info("Published macro/shifts refresh message to %s", macro_topic_path)
+    except Exception as e:
+        logging.error("Macro refresh publish failed: %s", e)
 

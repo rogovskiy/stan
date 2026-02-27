@@ -127,15 +127,26 @@ def build_merge_prompt(cluster: List[Dict[str, Any]], template: str) -> str:
     return template.replace("{shifts_json}", json.dumps(compact, indent=2))
 
 
+def _usage_from_response(response) -> Dict[str, int]:
+    """Extract token usage from a Gemini GenerateContent response."""
+    u = getattr(response, "usage_metadata", None)
+    if u is None:
+        return {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
+    return {
+        "prompt_tokens": getattr(u, "prompt_token_count", 0) or 0,
+        "response_tokens": getattr(u, "candidates_token_count", 0) or 0,
+        "total_tokens": getattr(u, "total_token_count", 0) or 0,
+    }
+
+
 def merge_cluster_via_llm(
     cluster: List[Dict[str, Any]],
     client: genai.Client,
     prompt_template: str,
     verbose: bool = False,
-) -> Dict[str, Any] | None:
+) -> tuple[Dict[str, Any] | None, Dict[str, int]]:
     """
-    Call Gemini to decide how to merge the cluster. Returns parsed merge decision dict
-    (with noMerge, canonicalId, etc.) or None on parse/API failure.
+    Call Gemini to decide how to merge the cluster. Returns (merge decision dict or None, usage dict).
     """
     prompt = build_merge_prompt(cluster, prompt_template)
     model = os.getenv("GEMINI_MERGE_MODEL", get_gemini_model())
@@ -145,6 +156,7 @@ def merge_cluster_via_llm(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
     )
+    zero_usage: Dict[str, int] = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     if verbose:
         logger.info("  Merge LLM for cluster of %d shifts", len(cluster))
     for attempt in range(2):
@@ -154,23 +166,24 @@ def merge_cluster_via_llm(
                 contents=prompt,
                 config=config,
             )
+            usage = _usage_from_response(response)
             if not response.text:
                 if attempt == 0:
                     if verbose:
                         logger.info("  Merge LLM empty response, retrying once")
                     continue
                 logger.warning("Merge LLM returned empty response")
-                return None
+                return None, usage
             json_str = _extract_json_from_response(response.text)
             data = json.loads(json_str)
             if data.get("noMerge") is True:
                 if verbose:
                     logger.info("  LLM chose noMerge for this cluster")
-                return None  # No merge to apply
+                return None, usage  # No merge to apply
             if not data.get("canonicalId") or not isinstance(data.get("mergeIntoCanonical"), list):
                 logger.warning("Merge LLM response missing canonicalId or mergeIntoCanonical")
-                return None
-            return data
+                return None, usage
+            return data, usage
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             raw_snippet = (response.text or "")[:400] if response.text else ""
             if verbose and raw_snippet:
@@ -181,8 +194,8 @@ def merge_cluster_via_llm(
                 if verbose:
                     logger.info("  Retrying merge LLM once")
                 continue
-            return None
-    return None
+            return None, zero_usage
+    return None, zero_usage
 
 
 def apply_merge(
@@ -263,17 +276,18 @@ def run_merge_step(
     client: genai.Client,
     verbose: bool = False,
     dry_run: bool = False,
-) -> bool:
+) -> tuple[bool, int, Dict[str, int]]:
     """
     Load all shifts from Firestore, cluster them, run merge LLM on each cluster
-    with more than one shift, and apply merges. Returns True if at least one
-    merge was applied (so caller can regenerate summaries).
+    with more than one shift, and apply merges. Returns (merge_changed, merges_applied, usage_dict).
+    merge_changed is True if at least one merge was applied (so caller can regenerate summaries).
     """
+    zero_usage: Dict[str, int] = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     shifts = svc.get_all_shifts()
     if not shifts:
         if verbose:
             logger.info("No shifts to merge")
-        return False
+        return False, 0, zero_usage
 
     template = load_merge_prompt_template()
     clusters = cluster_shifts(shifts)
@@ -292,15 +306,19 @@ def run_merge_step(
     if not multi_clusters:
         if verbose:
             logger.info("No clusters with duplicates to merge")
-        return False
+        return False, 0, zero_usage
 
     merges_applied = 0
+    merge_usage: Dict[str, int] = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     for cluster_key, cluster in multi_clusters.items():
-        decision = merge_cluster_via_llm(cluster, client, template, verbose=verbose)
+        decision, u = merge_cluster_via_llm(cluster, client, template, verbose=verbose)
+        merge_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
+        merge_usage["response_tokens"] += u.get("response_tokens", 0)
+        merge_usage["total_tokens"] += u.get("total_tokens", 0)
         if decision and not dry_run:
             apply_merge(svc, decision, cluster, as_of, verbose=verbose)
             merges_applied += 1
         elif decision and dry_run and verbose:
             logger.info("[DRY RUN] Would merge cluster (canonical=%s)", decision.get("canonicalId"))
 
-    return merges_applied > 0
+    return merges_applied > 0, merges_applied, merge_usage

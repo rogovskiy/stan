@@ -122,6 +122,51 @@ def fetch_feed_entries(
     return entries
 
 
+def refresh_one_subscription(
+    subscription_id: str,
+    *,
+    max_videos_per_feed: int = DEFAULT_MAX_VIDEOS_PER_FEED,
+    timeout_seconds: int = 300,
+    yt_dlp_path: str = "yt-dlp",
+    verbose: bool = False,
+) -> dict:
+    """
+    Refresh a single subscription by ID: fetch recent videos via yt-dlp and upsert to Firestore.
+    Returns {"ok": True, "subscriptionId": id, "upserted": N} or {"ok": False, "reason": "..."}.
+    """
+    service = YouTubeSubscriptionService()
+    sub = service.get_subscription(subscription_id)
+    if not sub:
+        logger.warning("Subscription %s not found.", subscription_id)
+        return {"ok": False, "reason": "not_found"}
+    url = (sub.get("url") or "").strip()
+    if not url:
+        logger.warning("Subscription %s has no URL; skipping.", subscription_id)
+        return {"ok": False, "reason": "no_url"}
+    user_id = sub.get("userId")
+    entries = fetch_feed_entries(
+        url,
+        yt_dlp_path,
+        max_videos_per_feed,
+        timeout_seconds=timeout_seconds,
+        verbose=verbose,
+    )
+    upserted = 0
+    for ent in entries:
+        service.upsert_video(
+            video_id=ent["id"],
+            url=ent["url"],
+            title=ent["title"],
+            published_at=ent["publishedAt"],
+            subscription_id=subscription_id,
+            userId=user_id,
+        )
+        upserted += 1
+    if verbose or upserted:
+        logger.info("Refreshed subscription %s: %d video upserts.", subscription_id, upserted)
+    return {"ok": True, "subscriptionId": subscription_id, "upserted": upserted}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Refresh YouTube feeds from subscriptions and write new videos to Firestore",

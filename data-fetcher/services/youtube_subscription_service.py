@@ -63,6 +63,16 @@ class YouTubeSubscriptionService(FirebaseBaseService):
         """Remove a subscription by ID."""
         self._subs_ref().document(subscription_id).delete()
 
+    def get_subscription(self, subscription_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single subscription by ID. Returns dict with id, url, userId if exists, else None."""
+        doc_ref = self._subs_ref().document(subscription_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        data["id"] = doc.id
+        return data
+
     def list_videos(
         self,
         userId: Optional[str] = None,

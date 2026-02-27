@@ -17,6 +17,8 @@ from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
 from yahoo.refresh_driver import refresh_yahoo_data
 from yahoo.refresh_macro_scores import refresh_macro_scores
+from scan_market_shifts import run_scan_market_shifts
+from refresh_youtube_feeds import refresh_one_subscription
 from services.pubsub_message_service import PubSubMessageService
 
 # Initialize logging (Cloud Run or local dev)
@@ -177,7 +179,7 @@ def handle_yahoo_refresh():
 
 @app.route('/refresh-macro', methods=['POST'])
 def handle_refresh_macro():
-    """Handle Pub/Sub push messages for macro risk score refresh (no ticker required)."""
+    """Handle Pub/Sub push messages: macro risk score refresh then market shifts + summaries (same run so summaries use fresh macro data)."""
     envelope = request.get_json()
 
     if not envelope:
@@ -206,16 +208,87 @@ def handle_refresh_macro():
     verbose = True
     try:
         result = refresh_macro_scores(verbose=verbose, save_to_firebase=True)
+        shifts_result = run_scan_market_shifts(skip_deep_analysis=True, skip_merge=True, verbose=False)
+        emit_metric(
+            'macro_refresh_complete',
+            as_of=result.get('asOf'),
+            macro_mode=result.get('macroMode'),
+            shift_count=shifts_result.get('shift_count', 0),
+            merges_applied=shifts_result.get('merges_applied', 0),
+            prompt_tokens=shifts_result.get('prompt_tokens', 0),
+            response_tokens=shifts_result.get('response_tokens', 0),
+            total_tokens=shifts_result.get('total_tokens', 0),
+        )
         return jsonify({
             'status': 'success',
             'asOf': result.get('asOf'),
             'macroMode': result.get('macroMode'),
+            'shiftCount': shifts_result.get('shift_count'),
+            'mergesApplied': shifts_result.get('merges_applied'),
+            'promptTokens': shifts_result.get('prompt_tokens'),
+            'responseTokens': shifts_result.get('response_tokens'),
+            'totalTokens': shifts_result.get('total_tokens'),
             'execution_id': message_id,
         }), 200
     except Exception as e:
-        logger.error('Error refreshing macro scores: %s', e, operation='macro_refresh_error', error=str(e), exc_info=True)
+        logger.error('Error refreshing macro/shifts: %s', e, operation='macro_refresh_error', error=str(e), exc_info=True)
         return jsonify({
             'status': 'error',
+            'error': str(e),
+            'execution_id': message_id,
+        }), 500
+
+
+@app.route('/refresh-youtube', methods=['POST'])
+def handle_refresh_youtube():
+    """Handle Pub/Sub push messages: refresh one YouTube subscription by ID."""
+    envelope = request.get_json()
+    if not envelope:
+        return render_error('No Pub/Sub message received')
+
+    pubsub_message = envelope.get('message', {})
+    message_id = pubsub_message.get('messageId') or str(uuid.uuid4())
+    publish_time = pubsub_message.get('publishTime')
+    attributes = pubsub_message.get('attributes', {})
+
+    mdc_execution_id.set(message_id)
+    logger.info('Received Pub/Sub message for YouTube refresh: %s at %s', message_id, publish_time)
+
+    if 'data' in pubsub_message:
+        try:
+            data = base64.b64decode(pubsub_message['data']).decode('utf-8')
+            try:
+                message_data = json.loads(data) if data.strip() else {}
+            except json.JSONDecodeError:
+                message_data = {}
+        except Exception as e:
+            return render_error(f'Failed to decode message data: {e}')
+    else:
+        return render_error('No data in Pub/Sub message')
+
+    subscription_id = message_data.get('subscriptionId')
+    if not subscription_id:
+        return render_error('No subscriptionId in message')
+
+    try:
+        result = refresh_one_subscription(
+            subscription_id,
+            max_videos_per_feed=5,
+            timeout_seconds=300,
+            verbose=False,
+        )
+        return jsonify({
+            'status': 'success' if result.get('ok') else 'skipped',
+            'subscriptionId': subscription_id,
+            'upserted': result.get('upserted', 0),
+            'reason': result.get('reason'),
+            'execution_id': message_id,
+        }), 200
+    except Exception as e:
+        logger.error('Error refreshing YouTube subscription %s: %s', subscription_id, e, operation='youtube_refresh_error', error=str(e), exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'subscriptionId': subscription_id,
             'error': str(e),
             'execution_id': message_id,
         }), 500
@@ -236,7 +309,8 @@ def root():
         'endpoints': {
             '/scan': 'POST - Handle Pub/Sub scan requests',
             '/refresh-yahoo': 'POST - Handle Pub/Sub Yahoo Finance refresh requests',
-            '/refresh-macro': 'POST - Handle Pub/Sub macro risk score refresh',
+            '/refresh-macro': 'POST - Macro risk scores then market shifts + summaries (same run)',
+            '/refresh-youtube': 'POST - Handle Pub/Sub YouTube subscription refresh (one per message)',
             '/health': 'GET - Health check'
         }
     }), 200

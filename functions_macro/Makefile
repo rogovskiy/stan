@@ -8,6 +8,7 @@ DATA_FETCHER := ..
 VENDOR_SOURCES := $(DATA_FETCHER)/data-fetcher/extraction_utils.py \
 	$(DATA_FETCHER)/data-fetcher/services/firebase_base_service.py \
 	$(DATA_FETCHER)/data-fetcher/services/channels_config_service.py \
+	$(DATA_FETCHER)/data-fetcher/services/job_run_service.py \
 	$(DATA_FETCHER)/data-fetcher/services/__init__.py
 
 # Populate vendor from data-fetcher if missing (vendor/ is in .gitignore).
@@ -18,6 +19,7 @@ $(VENDOR_ROOT)/.stamp: $(VENDOR_SOURCES)
 	cp $(DATA_FETCHER)/data-fetcher/extraction_utils.py $(VENDOR_ROOT)/
 	cp $(DATA_FETCHER)/data-fetcher/services/firebase_base_service.py $(VENDOR_ROOT)/services/
 	cp $(DATA_FETCHER)/data-fetcher/services/channels_config_service.py $(VENDOR_ROOT)/services/
+	cp $(DATA_FETCHER)/data-fetcher/services/job_run_service.py $(VENDOR_ROOT)/services/
 	cp $(DATA_FETCHER)/data-fetcher/services/__init__.py $(VENDOR_ROOT)/services/
 	@touch $(VENDOR_ROOT)/.stamp
 

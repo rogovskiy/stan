@@ -240,8 +240,20 @@ export default function JobsPage() {
                   <h3 className="font-semibold text-gray-900 mb-2">Execution detail</h3>
                   <dl className="text-sm space-y-1.5">
                     <div>
-                      <dt className="text-gray-500">ID</dt>
-                      <dd className="font-mono text-gray-900 break-all">{detailRun.execution_id}</dd>
+                      <dt className="text-gray-500">Execution ID</dt>
+                      <dd className="font-mono text-gray-900 break-all flex items-center gap-2 flex-wrap">
+                        {detailRun.execution_id}
+                        {typeof process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID === 'string' && detailRun.job_type === 'macro' && (
+                          <a
+                            href={`https://console.cloud.google.com/logs/query?project=${encodeURIComponent(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID)}&query=${encodeURIComponent(`resource.labels.service_name="macro-refresh" AND labels.execution_id="${detailRun.execution_id}"`)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline text-xs"
+                          >
+                            View in Cloud Logging
+                          </a>
+                        )}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-gray-500">Job type</dt>

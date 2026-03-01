@@ -36,6 +36,21 @@ function formatDateCompact(isoDate: string): string {
   return `${m}/${d}`;
 }
 
+/** Human-readable duration from started/finished ISO strings, e.g. "2m 15s", "45s". */
+function formatDuration(startedAt: string, finishedAt?: string): string {
+  const start = Date.parse(startedAt);
+  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return '—';
+  const sec = Math.round((end - start) / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return min > 0 ? `${h}h ${min}m` : `${h}h`;
+}
+
 function useJobRuns(from: string, to: string) {
   const [runs, setRuns] = useState<JobRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,16 +236,17 @@ export default function JobsPage() {
                           <button
                             type="button"
                             onClick={() => setDetailRunId(r.id)}
-                            className={`text-left w-full text-sm px-2 py-1.5 rounded border truncate block ${
+                            className={`text-left w-full text-sm px-2 py-1.5 rounded border truncate block flex items-center gap-2 ${
                               detailRunId === r.id
                                 ? 'bg-blue-50 border-blue-300'
                                 : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                             }`}
                           >
-                            <span className={r.status === 'error' ? 'text-red-600' : 'text-green-700'}>
-                              {r.status}
-                            </span>
-                            {r.entity && ` · ${r.entity}`}
+                            <span
+                              className={`shrink-0 w-2 h-2 rounded-full ${r.status === 'error' ? 'bg-red-500' : 'bg-green-500'}`}
+                              title={r.status}
+                            />
+                            {r.entity && ` ${r.entity}`}
                             <span className="text-gray-500 ml-1 text-xs">{r.started_at.slice(0, 19)}</span>
                           </button>
                         </li>
@@ -279,15 +295,9 @@ export default function JobsPage() {
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-gray-500">Started</dt>
-                      <dd>{detailRun.started_at}</dd>
+                      <dt className="text-gray-500">Duration</dt>
+                      <dd>{formatDuration(detailRun.started_at, detailRun.finished_at)}</dd>
                     </div>
-                    {detailRun.finished_at && (
-                      <div>
-                        <dt className="text-gray-500">Finished</dt>
-                        <dd>{detailRun.finished_at}</dd>
-                      </div>
-                    )}
                     {detailRun.entity && (
                       <div>
                         <dt className="text-gray-500">Entity</dt>

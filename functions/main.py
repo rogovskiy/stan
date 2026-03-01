@@ -140,19 +140,3 @@ def scheduled_youtube_refresh(event: scheduler_fn.ScheduledEvent) -> None:
     except Exception as e:
         logging.error("YouTube refresh publish failed: %s", e)
 
-
-# Macro + market shifts at a separate hour (e.g. after Yahoo data is fresh).
-# Change the schedule to run at your desired UTC hour: "0 H * * *" = daily at H:00 UTC.
-@scheduler_fn.on_schedule(schedule="0 6 * * *")
-def scheduled_macro_refresh(event: scheduler_fn.ScheduledEvent) -> None:
-    """Publish one message to macro-refresh-requests (macro scores then shifts + summaries)."""
-    logging.info("Scheduled macro refresh at: %s", event.schedule_time)
-    try:
-        publisher = pubsub_v1.PublisherClient()
-        macro_topic_path = "projects/stan-1464e/topics/macro-refresh-requests"
-        macro_message_json = json.dumps({}).encode("utf-8")
-        publisher.publish(macro_topic_path, macro_message_json)
-        logging.info("Published macro/shifts refresh message to %s", macro_topic_path)
-    except Exception as e:
-        logging.error("Macro refresh publish failed: %s", e)
-

@@ -10,3 +10,4 @@ tsconfig.tsbuildinfo
 sec_data_cache/
 *.backup
 data-fetcher/storage/
+functions_macro/vendor/

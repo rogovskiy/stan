@@ -4,26 +4,21 @@
       "source": "functions",
       "codebase": "default",
       "disallowLegacyRuntimeConfig": true,
-      "ignore": [
-        "venv",
-        ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
-        "*.local"
-      ],
+      "ignore": ["venv", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"],
+      "runtime": "python311"
+    },
+    {
+      "source": "functions_macro",
+      "codebase": "macro",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": ["venv", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"],
       "runtime": "python311"
     }
   ],
   "apphosting": {
     "backendId": "stocks-web",
     "rootDir": "stocks-web",
-    "ignore": [
-      "node_modules",
-      ".git",
-      "firebase-debug.log",
-      "firebase-debug.*.log",
-      "functions"
-    ]
+    "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log", "functions"]
   },
   "storage": {
     "rules": "storage.rules"

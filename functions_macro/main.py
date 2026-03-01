@@ -12,9 +12,44 @@ try:
 except ImportError:
     flask = None  # type: ignore[assignment]
 
-# Configure logging first (same as functions/main.py) so logger.info etc. show in Cloud Logging
+# Bridge standard logging to firebase_functions.logger so all log output is JSON to stdout/stderr.
+from firebase_functions import logger as firebase_logger
+
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+
+_LEVEL_MAP = {
+    "DEBUG": firebase_logger.LogSeverity.DEBUG,
+    "INFO": firebase_logger.LogSeverity.INFO,
+    "WARNING": firebase_logger.LogSeverity.WARNING,
+    "ERROR": firebase_logger.LogSeverity.ERROR,
+    "CRITICAL": firebase_logger.LogSeverity.CRITICAL,
+}
+
+class FirebaseLoggerHandler(logging.Handler):
+    """Forward every log record to firebase_functions.logger.write() (JSON to stdout/stderr)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            severity = _LEVEL_MAP.get(
+                record.levelname, firebase_logger.LogSeverity.INFO
+            )
+            entry = {
+                "severity": severity,
+                "message": record.getMessage(),
+            }
+            execution_id = getattr(record, "execution_id", None)
+            if execution_id is not None:
+                entry["execution_id"] = execution_id
+            firebase_logger.write(entry)
+        except Exception:
+            self.handleError(record)
+
+
 logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
+root = logging.getLogger()
+handler = FirebaseLoggerHandler()
+root.handlers = [handler]
+root.setLevel(getattr(logging, log_level, logging.INFO))
 
 _root = os.path.dirname(os.path.abspath(__file__))
 _vendor = os.path.join(_root, "vendor")
@@ -48,25 +83,23 @@ logger = logging.getLogger(__name__)
 )
 def macro_refresh(event: scheduler_fn.ScheduledEvent) -> None:
     """Run macro risk scores then market shifts + summaries (daily at 06:00 UTC)."""
-    # Expose secret as GEMINI_API_KEY so extraction_utils / pipeline see it
-    logger.info("Event {}", event)
     os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY.value or ""
     started_at = datetime.utcnow()
-    # Use platform execution_id (Function-Execution-Id header) so it matches labels.execution_id in Cloud Logging
     execution_id = None
     if flask and flask.has_request_context():
         execution_id = flask.request.headers.get("Function-Execution-Id")
     if not execution_id:
         execution_id = str(uuid.uuid4())
-    logger.info("Macro refresh execution_id=%s started at: %s", execution_id, event.schedule_time)
     try:
+        logger.info("Event %s", event)
+        logger.info("Macro refresh started at: %s", event.schedule_time)
         result = refresh_macro_scores(verbose=True, save_to_firebase=True)
         print(f"refresh_macro_scores done: asOf={result.get('asOf')}", flush=True)
         print("Starting market shifts scan (extraction then summaries; may take 2-5 min)...", flush=True)
         sys.stdout.flush()
-        shifts_result = run_scan_market_shifts(
-            skip_deep_analysis=True, skip_merge=True, verbose=False
-        )
+        # shifts_result = run_scan_market_shifts(
+        #     skip_deep_analysis=True, skip_merge=True, verbose=False
+        # )
         print(
             f"run_scan_market_shifts done: shift_count={shifts_result.get('shift_count')}, merges_applied={shifts_result.get('merges_applied')}",
             flush=True,

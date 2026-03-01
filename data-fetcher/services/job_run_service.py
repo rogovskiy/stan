@@ -19,11 +19,14 @@ import logging
 from datetime import datetime
 from typing import Optional, Any
 
+from google.cloud.firestore_v1.transforms import Increment
+
 from services.firebase_base_service import FirebaseBaseService
 
 logger = logging.getLogger(__name__)
 
 COLLECTION = "job_runs"
+DAILY_AGGREGATE_COLLECTION = "job_run_daily"
 
 # Job types used by the UI and backend
 JOB_TYPE_PRICE_REFRESH = "price_refresh"
@@ -81,10 +84,27 @@ def record_job_run(
     if payload:
         doc_data["payload"] = payload
 
+    date_str = _date_utc(started)
+    is_error = status == "error"
+
     try:
         service = FirebaseBaseService()
         doc_ref = service.db.collection(COLLECTION).document(execution_id)
         doc_ref.set(doc_data)
+
+        # Update daily aggregate (success_count / error_count) for Jobs UI
+        daily_id = f"{job_type}_{date_str}"
+        daily_ref = service.db.collection(DAILY_AGGREGATE_COLLECTION).document(daily_id)
+        daily_ref.set(
+            {
+                "job_type": job_type,
+                "date": date_str,
+                "success_count": Increment(1) if not is_error else Increment(0),
+                "error_count": Increment(1) if is_error else Increment(0),
+            },
+            merge=True,
+        )
+
         logger.info("Recorded job run: job_type=%s execution_id=%s status=%s", job_type, execution_id, status)
     except Exception as e:
         logger.warning("Failed to record job run (non-fatal): job_type=%s execution_id=%s error=%s", job_type, execution_id, e)

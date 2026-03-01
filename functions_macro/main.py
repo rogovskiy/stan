@@ -97,9 +97,9 @@ def macro_refresh(event: scheduler_fn.ScheduledEvent) -> None:
         print(f"refresh_macro_scores done: asOf={result.get('asOf')}", flush=True)
         print("Starting market shifts scan (extraction then summaries; may take 2-5 min)...", flush=True)
         sys.stdout.flush()
-        # shifts_result = run_scan_market_shifts(
-        #     skip_deep_analysis=True, skip_merge=True, verbose=False
-        # )
+        shifts_result = run_scan_market_shifts(
+            skip_deep_analysis=True, skip_merge=True, verbose=False
+        )
         print(
             f"run_scan_market_shifts done: shift_count={shifts_result.get('shift_count')}, merges_applied={shifts_result.get('merges_applied')}",
             flush=True,

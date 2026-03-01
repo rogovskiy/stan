@@ -65,7 +65,8 @@ function useJobRuns(from: string, to: string) {
   return { runs, loading, error };
 }
 
-type CellState = 'success' | 'error' | 'none';
+/** Daily cell: green = all success, yellow = some failed, red = all failed. Computed on read from run statuses. */
+type CellState = 'success' | 'partial' | 'error' | 'none';
 
 function gridState(runs: JobRun[], dates: string[]): Map<string, Map<string, { state: CellState; runs: JobRun[] }>> {
   const byJob = new Map<string, Map<string, { state: CellState; runs: JobRun[] }>>();
@@ -73,8 +74,15 @@ function gridState(runs: JobRun[], dates: string[]): Map<string, Map<string, { s
     const byDate = new Map<string, { state: CellState; runs: JobRun[] }>();
     for (const date of dates) {
       const dayRuns = runs.filter((r) => r.job_type === jt && r.date === date);
-      const hasError = dayRuns.some((r) => r.status === 'error');
-      const state: CellState = dayRuns.length === 0 ? 'none' : hasError && dayRuns.every((r) => r.status === 'error') ? 'error' : 'success';
+      const errorCount = dayRuns.filter((r) => r.status === 'error').length;
+      const state: CellState =
+        dayRuns.length === 0
+          ? 'none'
+          : errorCount === 0
+            ? 'success'
+            : errorCount === dayRuns.length
+              ? 'error'
+              : 'partial';
       byDate.set(date, { state, runs: dayRuns });
     }
     byJob.set(jt, byDate);
@@ -181,6 +189,7 @@ export default function JobsPage() {
                                 w-8 h-8 rounded border flex items-center justify-center text-xs font-medium
                                 ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}
                                 ${state === 'success' ? 'bg-green-100 border-green-300 text-green-800' : ''}
+                                ${state === 'partial' ? 'bg-amber-100 border-amber-300 text-amber-800' : ''}
                                 ${state === 'error' ? 'bg-red-100 border-red-300 text-red-800' : ''}
                                 ${state === 'none' ? 'bg-gray-100 border-gray-200 text-gray-400' : ''}
                               `}

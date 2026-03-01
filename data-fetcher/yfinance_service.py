@@ -16,14 +16,6 @@ import logging
 from urllib.error import HTTPError
 from financial_data_validator import validate_financial_data_format
 
-# Try to import cloud_logging_setup for metrics (optional, may not be available in all contexts)
-try:
-    from cloud_logging_setup import emit_metric
-except ImportError:
-    # Fallback if cloud_logging_setup is not available
-    def emit_metric(*args, **kwargs):
-        pass
-
 logger = logging.getLogger(__name__)
 
 class YFinanceService:
@@ -778,11 +770,7 @@ def _handle_rate_limit_error(error: Exception, ticker: str, operation: str) -> N
             'is_rate_limit': True
         }
     )
-    emit_metric('yahoo_rate_limit_error', 
-               ticker=ticker, 
-               operation=operation,
-               error_type=error_type)
-    
+
     # Re-raise the exception so callers can handle it as a failure
     raise
 

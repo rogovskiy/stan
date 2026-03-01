@@ -278,6 +278,16 @@ export default function JobsPage() {
                             View in Cloud Logging
                           </a>
                         )}
+                        {typeof process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID === 'string' && detailRun.job_type === 'price_refresh' && (
+                          <a
+                            href={`https://console.cloud.google.com/logs/query?project=${encodeURIComponent(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID)}&query=${encodeURIComponent(`jsonPayload.execution_id="${detailRun.execution_id}"`)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline text-xs"
+                          >
+                            View in Cloud Logging
+                          </a>
+                        )}
                       </dd>
                     </div>
                     <div>

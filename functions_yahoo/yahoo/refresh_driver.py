@@ -15,17 +15,12 @@ import os
 import logging
 from typing import Dict, Any
 
-from cloud_logging_setup import setup_cloud_logging, mdc_ticker, mdc_execution_id, emit_metric
-
 from yahoo.refresh_daily_price import refresh_daily_price
 from yahoo.refresh_earnings_data import refresh_earnings_data
 from yahoo.refresh_analyst_data import refresh_analyst_data
 from yahoo.refresh_split_history import refresh_split_history
 
-# Initialize logging (caller sets up path so cloud_logging_setup is resolvable)
-setup_cloud_logging()
 logger = logging.getLogger(__name__)
-
 
 def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
     """Refresh all Yahoo Finance data for a ticker
@@ -38,7 +33,6 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         Dictionary with results from all refresh operations
     """
     ticker = ticker.upper()
-    mdc_ticker.set(ticker)
 
     results = {
         'ticker': ticker,
@@ -47,7 +41,6 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
     }
 
     logger.info(f'Starting Yahoo Finance refresh for {ticker}')
-    emit_metric('yahoo_refresh_start', ticker=ticker)
 
     # Refresh daily price data
     try:
@@ -117,15 +110,6 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         }
         results['success'] = False
 
-    # Emit completion metric
-    emit_metric('yahoo_refresh_complete',
-                ticker=ticker,
-                success=results['success'],
-                price_updated=results['results'].get('price', {}).get('updated', False),
-                earnings_updated=results['results'].get('earnings', {}).get('updated', False),
-                analyst_updated=results['results'].get('analyst', {}).get('updated', False),
-                splits_updated=results['results'].get('splits', {}).get('updated', False))
-
     if verbose:
         logger.info('\n' + '='*60)
         logger.info('REFRESH SUMMARY')
@@ -191,7 +175,6 @@ Examples:
     args = parser.parse_args()
 
     ticker = args.ticker.upper()
-    mdc_execution_id.set('local')
 
     try:
         results = refresh_yahoo_data(ticker, verbose=args.verbose)

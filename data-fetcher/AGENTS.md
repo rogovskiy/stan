@@ -70,7 +70,6 @@ python generate_quarterly_summary.py --ticker AAPL
 - `inspect_firebase_data.py` - Inspect Firebase data
 - `load_cached_sec_data.py` - Load cached SEC data
 - `save_filtered_sec_data.py` - Save filtered SEC data
-- `fetch_analyst_data.py` - Fetch analyst data
 - `scan_ir_website.py` - Scan investor relations websites
 - `quarterly_filings_summary.py` - Generate quarterly filings summary
 

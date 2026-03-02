@@ -24,8 +24,7 @@ export async function GET(
       return NextResponse.json(
         { 
           error: 'Analyst data not found',
-          message: `No analyst data found for ${ticker}. Run the analyst data fetcher script first.`,
-          suggestion: `python fetch_analyst_data.py ${ticker}`
+          message: `No analyst data found for ${ticker}. Analyst data is populated by the Yahoo refresh (functions_yahoo). Trigger via Pub/Sub topic yf-refresh-requests or run locally: cd functions_yahoo && make run TICKER=${ticker}.`
         },
         { status: 404 }
       );

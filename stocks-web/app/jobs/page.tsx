@@ -19,6 +19,16 @@ interface JobRun {
   payload?: Record<string, unknown>;
 }
 
+const LOGGING_SERVICE_BY_JOB_TYPE: Partial<Record<(typeof JOB_TYPES)[number], string>> = {
+  macro: 'macro-refresh',
+  // functions_yahoo deploys `yahoo_refresh` → Cloud Run service name is typically `yahoo-refresh`
+  price_refresh: 'yahoo-refresh',
+};
+
+function cloudLoggingUrl(projectId: string, query: string): string {
+  return `https://console.cloud.google.com/logs/query?project=${encodeURIComponent(projectId)}&query=${encodeURIComponent(query)}`;
+}
+
 function dateRange(): string[] {
   const out: string[] = [];
   const d = new Date();
@@ -268,26 +278,20 @@ export default function JobsPage() {
                       <dt className="text-gray-500">Execution ID</dt>
                       <dd className="font-mono text-gray-900 break-all flex items-center gap-2 flex-wrap">
                         {detailRun.execution_id}
-                        {typeof process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID === 'string' && detailRun.job_type === 'macro' && (
-                          <a
-                            href={`https://console.cloud.google.com/logs/query?project=${encodeURIComponent(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID)}&query=${encodeURIComponent(`resource.labels.service_name="macro-refresh" AND labels.execution_id="${detailRun.execution_id}"`)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline text-xs"
-                          >
-                            View in Cloud Logging
-                          </a>
-                        )}
-                        {typeof process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID === 'string' && detailRun.job_type === 'price_refresh' && (
-                          <a
-                            href={`https://console.cloud.google.com/logs/query?project=${encodeURIComponent(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID)}&query=${encodeURIComponent(`jsonPayload.execution_id="${detailRun.execution_id}"`)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline text-xs"
-                          >
-                            View in Cloud Logging
-                          </a>
-                        )}
+                        {typeof process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID === 'string' &&
+                          LOGGING_SERVICE_BY_JOB_TYPE[detailRun.job_type as (typeof JOB_TYPES)[number]] && (
+                            <a
+                              href={cloudLoggingUrl(
+                                process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+                                `resource.labels.service_name="${LOGGING_SERVICE_BY_JOB_TYPE[detailRun.job_type as (typeof JOB_TYPES)[number]]}" AND labels.execution_id="${detailRun.execution_id}"`,
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline text-xs"
+                            >
+                              View in Cloud Logging
+                            </a>
+                          )}
                       </dd>
                     </div>
                     <div>

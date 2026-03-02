@@ -19,8 +19,12 @@ from yahoo.refresh_daily_price import refresh_daily_price
 from yahoo.refresh_earnings_data import refresh_earnings_data
 from yahoo.refresh_analyst_data import refresh_analyst_data
 from yahoo.refresh_split_history import refresh_split_history
+from yfinance_service import YFinanceService
 
 logger = logging.getLogger(__name__)
+
+# Quote types for which we skip earnings and analyst refresh (no fundamentals from Yahoo)
+_SKIP_FUNDAMENTALS_QUOTE_TYPES = frozenset({'ETF', 'MUTUALFUND'})
 
 def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
     """Refresh all Yahoo Finance data for a ticker
@@ -42,6 +46,17 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
 
     logger.info(f'Starting Yahoo Finance refresh for {ticker}')
 
+    # Detect ETF / no-fundamentals so we skip earnings and analyst (Yahoo returns 404 for those)
+    skip_earnings_analyst = False
+    try:
+        quote_type = YFinanceService().get_quote_type(ticker)
+        if quote_type and quote_type.upper() in _SKIP_FUNDAMENTALS_QUOTE_TYPES:
+            skip_earnings_analyst = True
+            if verbose:
+                logger.info('\n📌 %s is %s; skipping earnings and analyst refresh', ticker, quote_type)
+    except Exception as e:
+        logger.debug('Could not get quote type for %s: %s', ticker, e)
+
     # Refresh daily price data
     try:
         if verbose:
@@ -59,39 +74,52 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         }
         results['success'] = False
 
-    # Refresh earnings data
-    try:
-        if verbose:
-            logger.info('\n📊 Refreshing earnings data...')
-        earnings_result = refresh_earnings_data(ticker, verbose=verbose)
-        results['results']['earnings'] = earnings_result
-        if not earnings_result.get('success'):
-            results['success'] = False
-    except Exception as e:
-        logger.error(f'Error in earnings refresh: {e}', exc_info=True)
+    if skip_earnings_analyst:
         results['results']['earnings'] = {
-            'success': False,
-            'error': str(e),
-            'error_type': type(e).__name__
+            'success': True,
+            'updated': False,
+            'reason': 'etf_or_no_fundamentals',
+            'quarters_cached': 0
         }
-        results['success'] = False
-
-    # Refresh analyst data
-    try:
-        if verbose:
-            logger.info('\n👥 Refreshing analyst data...')
-        analyst_result = refresh_analyst_data(ticker, verbose=verbose)
-        results['results']['analyst'] = analyst_result
-        if not analyst_result.get('success'):
-            results['success'] = False
-    except Exception as e:
-        logger.error(f'Error in analyst refresh: {e}', exc_info=True)
         results['results']['analyst'] = {
-            'success': False,
-            'error': str(e),
-            'error_type': type(e).__name__
+            'success': True,
+            'updated': False,
+            'reason': 'etf_or_no_fundamentals',
         }
-        results['success'] = False
+    else:
+        # Refresh earnings data
+        try:
+            if verbose:
+                logger.info('\n📊 Refreshing earnings data...')
+            earnings_result = refresh_earnings_data(ticker, verbose=verbose)
+            results['results']['earnings'] = earnings_result
+            if not earnings_result.get('success'):
+                results['success'] = False
+        except Exception as e:
+            logger.error(f'Error in earnings refresh: {e}', exc_info=True)
+            results['results']['earnings'] = {
+                'success': False,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
+            results['success'] = False
+
+        # Refresh analyst data
+        try:
+            if verbose:
+                logger.info('\n👥 Refreshing analyst data...')
+            analyst_result = refresh_analyst_data(ticker, verbose=verbose)
+            results['results']['analyst'] = analyst_result
+            if not analyst_result.get('success'):
+                results['success'] = False
+        except Exception as e:
+            logger.error(f'Error in analyst refresh: {e}', exc_info=True)
+            results['results']['analyst'] = {
+                'success': False,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
+            results['success'] = False
 
     # Refresh split history (may skip if cache is fresh)
     try:

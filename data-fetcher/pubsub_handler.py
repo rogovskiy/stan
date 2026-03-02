@@ -15,7 +15,6 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from scan_ir_website import scan_ir_website
 from cloud_logging_setup import setup_cloud_logging, mdc_execution_id, mdc_ticker, emit_metric
-from refresh_youtube_feeds import refresh_one_subscription
 from services.pubsub_message_service import PubSubMessageService
 
 # Initialize logging (Cloud Run or local dev)
@@ -112,61 +111,6 @@ def handle_pubsub():
         }), 500
 
 
-@app.route('/refresh-youtube', methods=['POST'])
-def handle_refresh_youtube():
-    """Handle Pub/Sub push messages: refresh one YouTube subscription by ID."""
-    envelope = request.get_json()
-    if not envelope:
-        return render_error('No Pub/Sub message received')
-
-    pubsub_message = envelope.get('message', {})
-    message_id = pubsub_message.get('messageId') or str(uuid.uuid4())
-    publish_time = pubsub_message.get('publishTime')
-    attributes = pubsub_message.get('attributes', {})
-
-    mdc_execution_id.set(message_id)
-    logger.info('Received Pub/Sub message for YouTube refresh: %s at %s', message_id, publish_time)
-
-    if 'data' in pubsub_message:
-        try:
-            data = base64.b64decode(pubsub_message['data']).decode('utf-8')
-            try:
-                message_data = json.loads(data) if data.strip() else {}
-            except json.JSONDecodeError:
-                message_data = {}
-        except Exception as e:
-            return render_error(f'Failed to decode message data: {e}')
-    else:
-        return render_error('No data in Pub/Sub message')
-
-    subscription_id = message_data.get('subscriptionId')
-    if not subscription_id:
-        return render_error('No subscriptionId in message')
-
-    try:
-        result = refresh_one_subscription(
-            subscription_id,
-            max_videos_per_feed=5,
-            timeout_seconds=300,
-            verbose=False,
-        )
-        return jsonify({
-            'status': 'success' if result.get('ok') else 'skipped',
-            'subscriptionId': subscription_id,
-            'upserted': result.get('upserted', 0),
-            'reason': result.get('reason'),
-            'execution_id': message_id,
-        }), 200
-    except Exception as e:
-        logger.error('Error refreshing YouTube subscription %s: %s', subscription_id, e, operation='youtube_refresh_error', error=str(e), exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'subscriptionId': subscription_id,
-            'error': str(e),
-            'execution_id': message_id,
-        }), 500
-
-
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -177,11 +121,11 @@ def health():
 def root():
     """Root endpoint with service info"""
     return jsonify({
-        'service': 'IR Scanner & YouTube Refresh',
+        'service': 'IR Scanner & Yahoo Refresh',
         'version': '1.0',
         'endpoints': {
             '/scan': 'POST - Handle Pub/Sub scan requests',
-            '/refresh-youtube': 'POST - Handle Pub/Sub YouTube subscription refresh (one per message)',
+            '/refresh-yahoo': 'POST - Handle Pub/Sub Yahoo Finance refresh requests',
             '/health': 'GET - Health check'
         }
     }), 200

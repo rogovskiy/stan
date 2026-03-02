@@ -11,3 +11,6 @@ sec_data_cache/
 *.backup
 data-fetcher/storage/
 functions_macro/vendor/
+functions_yahoo/vendor/
+run_youtube/vendor/
+run_youtube/cookies.txt

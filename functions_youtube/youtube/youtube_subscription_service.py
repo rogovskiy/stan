@@ -73,6 +73,16 @@ class YouTubeSubscriptionService(FirebaseBaseService):
         data["id"] = doc.id
         return data
 
+    def get_video(self, video_id: str) -> Optional[Dict[str, Any]]:
+        """Return the video document if it exists, else None. Document ID is video_id."""
+        ref = self._videos_ref().document(video_id)
+        doc = ref.get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        data["id"] = doc.id
+        return data
+
     def list_videos(
         self,
         userId: Optional[str] = None,

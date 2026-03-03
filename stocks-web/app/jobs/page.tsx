@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import AppNavigation from '../components/AppNavigation';
 
-const JOB_TYPES = ['price_refresh', 'macro', 'ir_scan', 'youtube'] as const;
+const JOB_TYPES = ['price_refresh', 'macro', 'ir_scan', 'youtube', 'youtube_transcript'] as const;
 const DAYS_RANGE = 14;
 
 interface JobRun {
@@ -23,6 +23,9 @@ const LOGGING_SERVICE_BY_JOB_TYPE: Partial<Record<(typeof JOB_TYPES)[number], st
   macro: 'macro-refresh',
   // functions_yahoo deploys `yahoo_refresh` → Cloud Run service name is typically `yahoo-refresh`
   price_refresh: 'yahoo-refresh',
+  // functions_youtube deploys `youtube_refresh` → Cloud Run service name is typically `youtube-refresh`
+  youtube: 'youtube-refresh',
+  youtube_transcript: 'youtube-transcript-analysis',
 };
 
 function cloudLoggingUrl(projectId: string, query: string): string {

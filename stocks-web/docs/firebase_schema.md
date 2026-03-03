@@ -387,7 +387,11 @@ Videos discovered from subscribed channels/playlists. Document ID is the YouTube
   "publishedAt": "2024-11-18T14:00:00Z",
   "subscriptionId": "abc123",
   "userId": null,
-  "createdAt": "2024-11-20T10:00:00Z"
+  "createdAt": "2024-11-20T10:00:00Z",
+  "transcriptStorageRef": "youtube_transcripts/nSqHIGSjywo.txt",
+  "transcriptUpdatedAt": "2024-11-20T12:00:00Z",
+  "transcriptSummary": "- Bullet summary from Gemini...",
+  "transcriptSummaryUpdatedAt": "2024-11-20T12:05:00Z"
 }
 ```
 
@@ -399,8 +403,27 @@ Videos discovered from subscribed channels/playlists. Document ID is the YouTube
 - `subscriptionId` (string, required): Reference to the subscription doc that produced this video
 - `userId` (string, optional): Denormalized from subscription for easy "my videos" queries
 - `createdAt` (timestamp): When the video was first stored
+- `transcriptStorageRef` (string, optional): Storage path for transcript text, e.g. `youtube_transcripts/{videoId}.txt`. Set by local transcript script; read by transcript-analysis function. Not exposed to UI.
+- `transcriptUpdatedAt` (string, optional): ISO timestamp when transcript was stored
+- `transcriptSummary` (string, optional): Bulleted economic summary from analysis (Gemini); shown in sources page drawer
+- `transcriptSummaryUpdatedAt` (string, optional): ISO timestamp when summary was written
 
 **Index:** Composite index on `youtube_videos`: `userId` (asc) + `publishedAt` (desc) for listing a user's videos by date. Firestore will suggest creating the index when you first run the query.
+
+---
+
+### `/youtube_transcript_reviews/{userId_videoId}` (Transcript reviewed by user)
+
+Tracks which videos a user has opened (reviewed) the transcript/summary for. Used to show a "New" badge in the Last 7 days section for unreviewed videos.
+
+**Structure:** Document ID is `{userId}_{videoId}` (e.g. `abc123_nSqHIGSjywo`).
+
+**Fields:**
+- `userId` (string, required): Firebase Auth UID
+- `videoId` (string, required): YouTube video ID (same as `youtube_videos` document ID)
+- `reviewedAt` (timestamp): When the user opened the transcript drawer
+
+**Query:** By `userId` to load all reviewed video IDs for the current user.
 
 ---
 

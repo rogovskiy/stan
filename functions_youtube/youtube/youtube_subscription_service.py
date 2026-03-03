@@ -120,6 +120,8 @@ class YouTubeSubscriptionService(FirebaseBaseService):
         """
         Insert or overwrite a video document by videoId.
         createdAt is set only on first write.
+        Transcript fields (transcriptStorageRef, transcriptUpdatedAt, transcriptSummary) are
+        preserved on update and not overwritten.
         """
         ref = self._videos_ref().document(video_id)
         existing = ref.get()
@@ -134,7 +136,25 @@ class YouTubeSubscriptionService(FirebaseBaseService):
             "userId": userId,
         }
         if existing.exists:
-            doc_data["createdAt"] = (existing.to_dict() or {}).get("createdAt") or created_at
+            existing_data = existing.to_dict() or {}
+            doc_data["createdAt"] = existing_data.get("createdAt") or created_at
+            # Preserve transcript fields on update
+            for key in ("transcriptStorageRef", "transcriptUpdatedAt", "transcriptSummary", "transcriptSummaryUpdatedAt"):
+                if key in existing_data and existing_data[key] is not None:
+                    doc_data[key] = existing_data[key]
         else:
             doc_data["createdAt"] = created_at
         ref.set(doc_data)
+
+    def update_video_transcript(self, video_id: str, storage_ref: str) -> None:
+        """
+        Update a video document with transcript storage ref and timestamp.
+        Used by the local transcript script after uploading to Storage.
+        """
+        ref = self._videos_ref().document(video_id)
+        now = datetime.now(timezone.utc)
+        transcript_updated_at = now.isoformat().replace("+00:00", "Z")
+        ref.update({
+            "transcriptStorageRef": storage_ref,
+            "transcriptUpdatedAt": transcript_updated_at,
+        })

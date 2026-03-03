@@ -19,21 +19,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_VIDEOS_PER_FEED = 5
 
 
-def _get_transcript_text(video_id: str) -> Optional[str]:
-    """Fetch transcript for video_id and return concatenated text, or None on failure."""
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        from youtube_transcript_api import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
-        api = YouTubeTranscriptApi()
-        transcript_list = api.list(video_id)
-        transcript = transcript_list.find_transcript([t.language_code for t in transcript_list])
-        fetched = transcript.fetch()
-        return " ".join(snippet.text for snippet in fetched).strip() if fetched else None
-    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable, Exception) as e:
-        logger.warning("Transcript unavailable for %s: %s", video_id, e)
-        return None
-
-
 def resolve_handle_to_channel_id(handle: str, api_key: str) -> str:
     """Resolve @handle (or handle without @) to channel ID via YouTube Data API v3."""
     handle = (handle or "").strip()
@@ -198,17 +183,4 @@ def refresh_one_subscription(
         "Subscription %s processing complete: ok=True, upserted=%d, entries_fetched=%d",
         subscription_id, new_count, len(entries),
     )
-    if entries:
-        last_ent = entries[-1]
-        last_video_id = last_ent["id"]
-        transcript_text = _get_transcript_text(last_video_id)
-        if transcript_text is not None:
-            length = len(transcript_text)
-            preview = transcript_text[:100] if length > 0 else ""
-            logger.info(
-                "Last video %s (%s): transcript length=%d chars, preview: %s",
-                last_video_id, last_ent.get("title", "")[:40], length, preview,
-            )
-        else:
-            logger.info("Last video %s: no transcript available", last_video_id)
     return {"ok": True, "subscriptionId": subscription_id, "upserted": new_count}

@@ -4,6 +4,7 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  setDoc,
   query,
   orderBy,
   where,
@@ -29,10 +30,13 @@ export interface YouTubeVideo {
   subscriptionId: string;
   userId?: string | null;
   createdAt?: string;
+  transcriptStorageRef?: string | null;
+  transcriptSummary?: string | null;
 }
 
 const SUBS_COLLECTION = 'youtube_subscriptions';
 const VIDEOS_COLLECTION = 'youtube_videos';
+const TRANSCRIPT_REVIEWS_COLLECTION = 'youtube_transcript_reviews';
 
 function toSubscription(docId: string, data: Record<string, unknown>): YouTubeSubscription {
   return {
@@ -47,10 +51,11 @@ function toSubscription(docId: string, data: Record<string, unknown>): YouTubeSu
 }
 
 function toVideo(docId: string, data: Record<string, unknown>): YouTubeVideo {
+  const videoId = (data.videoId as string) ?? docId;
   return {
     id: docId,
-    videoId: (data.videoId as string) ?? docId,
-    url: (data.url as string) ?? '',
+    videoId,
+    url: `https://www.youtube.com/watch?v=${videoId}`,
     title: (data.title as string) ?? '',
     publishedAt:
       (data.publishedAt as { toDate?: () => Date })?.toDate?.()?.toISOString() ??
@@ -60,6 +65,8 @@ function toVideo(docId: string, data: Record<string, unknown>): YouTubeVideo {
     createdAt:
       (data.createdAt as { toDate?: () => Date })?.toDate?.()?.toISOString() ??
       (typeof data.createdAt === 'string' ? data.createdAt : undefined),
+    transcriptStorageRef: (data.transcriptStorageRef as string) ?? null,
+    transcriptSummary: (data.transcriptSummary as string) ?? null,
   };
 }
 
@@ -110,4 +117,39 @@ export async function getVideos(
     : query(ref, orderBy('publishedAt', 'desc'), limit(limitCount));
   const snapshot = await getDocs(q);
   return snapshot.docs.map((d) => toVideo(d.id, d.data() as Record<string, unknown>));
+}
+
+/** Document ID for transcript review: one per user per video. */
+function transcriptReviewDocId(userId: string, videoId: string): string {
+  return `${userId}_${videoId}`;
+}
+
+/**
+ * Mark a video's transcript as reviewed by the user (e.g. when they open the transcript drawer).
+ * Requires a logged-in user.
+ */
+export async function markTranscriptReviewed(userId: string, videoId: string): Promise<void> {
+  const ref = doc(db, TRANSCRIPT_REVIEWS_COLLECTION, transcriptReviewDocId(userId, videoId));
+  await setDoc(ref, {
+    userId,
+    videoId,
+    reviewedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Return the set of video IDs that the user has reviewed (opened transcript/summary).
+ * Returns empty set if userId is missing.
+ */
+export async function getReviewedVideoIds(userId: string | undefined | null): Promise<Set<string>> {
+  if (!userId) return new Set();
+  const ref = collection(db, TRANSCRIPT_REVIEWS_COLLECTION);
+  const q = query(ref, where('userId', '==', userId));
+  const snapshot = await getDocs(q);
+  const ids = new Set<string>();
+  snapshot.docs.forEach((d) => {
+    const videoId = (d.data().videoId as string) ?? null;
+    if (videoId) ids.add(videoId);
+  });
+  return ids;
 }

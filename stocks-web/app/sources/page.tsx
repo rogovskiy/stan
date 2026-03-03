@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
 import AppNavigation from '../components/AppNavigation';
 import { useAuth } from '@/app/lib/authContext';
 import type { YouTubeVideo, YouTubeSubscription } from '../lib/services/youtubeSubscriptionService';
+import { getReviewedVideoIds, markTranscriptReviewed } from '../lib/services/youtubeSubscriptionService';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -25,35 +27,208 @@ function parsePublishedAt(iso: string): number {
   }
 }
 
-function VideoCard({ video, sourceLabel }: { video: YouTubeVideo; sourceLabel: string }) {
+type TranscriptStatus = 'none' | 'pending' | 'analyzed';
+
+function getTranscriptStatus(video: YouTubeVideo): TranscriptStatus {
+  if (video.transcriptSummary?.trim()) return 'analyzed';
+  if (video.transcriptStorageRef) return 'pending';
+  return 'none';
+}
+
+function TranscriptStatusBadge({ status }: { status: TranscriptStatus }) {
+  const config = {
+    none: { label: 'No transcript', className: 'bg-gray-200 text-gray-700' },
+    pending: { label: 'Pending analysis', className: 'bg-amber-100 text-amber-800' },
+    analyzed: { label: 'Analyzed', className: 'bg-emerald-100 text-emerald-800' },
+  };
+  const { label, className } = config[status];
   return (
-    <button
-      type="button"
-      onClick={() => window.open(video.url, '_blank', 'noopener,noreferrer')}
-      className="text-left rounded-lg border border-gray-200 bg-white overflow-hidden shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+    <span
+      className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded ${className}`}
+      title={label}
     >
-      <div className="aspect-video w-full bg-gray-100 relative">
-        <img
-          src={`https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`}
-          alt=""
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-      </div>
-      <div className="p-2">
-        <div className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight">{video.title}</div>
-        <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-600 min-w-0">
-          <span className="shrink-0 w-4 h-4 rounded-full bg-red-600 flex items-center justify-center" aria-hidden>
-            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+      {label}
+    </span>
+  );
+}
+
+function VideoCard({
+  video,
+  sourceLabel,
+  onTranscriptClick,
+  showNewBadge = false,
+}: {
+  video: YouTubeVideo;
+  sourceLabel: string;
+  onTranscriptClick?: (video: YouTubeVideo) => void;
+  showNewBadge?: boolean;
+}) {
+  const status = getTranscriptStatus(video);
+  return (
+    <div className="text-left rounded-lg border border-gray-200 bg-white overflow-hidden shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200 focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 relative">
+      {onTranscriptClick ? (
+        <button
+          type="button"
+          onClick={() => onTranscriptClick(video)}
+          className="block w-full text-left"
+        >
+          <div className="aspect-video w-full bg-gray-100 relative">
+            <div className="absolute top-1 left-1 z-10 flex flex-wrap gap-1">
+              <TranscriptStatusBadge status={status} />
+              {showNewBadge && (
+                <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-600 text-white" title="Not reviewed yet">
+                  New
+                </span>
+              )}
+            </div>
+            <img
+              src={`https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          </div>
+          <div className="p-2">
+            <div className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight">{video.title}</div>
+            <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-600 min-w-0">
+              <span className="shrink-0 w-4 h-4 rounded-full bg-red-600 flex items-center justify-center" aria-hidden>
+                <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                </svg>
+              </span>
+              <span className="truncate min-w-0" title={sourceLabel}>{sourceLabel}</span>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-0.5">
+              {formatDate(video.publishedAt)}
+            </div>
+            <a
+              href={video.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-gray-900 hover:underline"
+            >
+              Watch on YouTube
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+              </svg>
+            </a>
+          </div>
+        </button>
+      ) : (
+        <a
+          href={video.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full text-left"
+        >
+          <div className="aspect-video w-full bg-gray-100 relative">
+            <div className="absolute top-1 left-1 z-10 flex flex-wrap gap-1">
+              <TranscriptStatusBadge status={status} />
+              {showNewBadge && (
+                <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-600 text-white" title="Not reviewed yet">
+                  New
+                </span>
+              )}
+            </div>
+            <img
+              src={`https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          </div>
+          <div className="p-2">
+            <div className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight">{video.title}</div>
+            <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-600 min-w-0">
+              <span className="shrink-0 w-4 h-4 rounded-full bg-red-600 flex items-center justify-center" aria-hidden>
+                <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                </svg>
+              </span>
+              <span className="truncate min-w-0" title={sourceLabel}>{sourceLabel}</span>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-0.5">
+              {formatDate(video.publishedAt)}
+            </div>
+          </div>
+        </a>
+      )}
+    </div>
+  );
+}
+
+function TranscriptDrawer({
+  video,
+  onClose,
+}: {
+  video: YouTubeVideo;
+  onClose: () => void;
+}) {
+  const hasSummary = Boolean(video.transcriptSummary?.trim());
+  return (
+    <>
+      <div
+        className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-300"
+        onClick={onClose}
+        onKeyDown={(e) => e.key === 'Escape' && onClose()}
+        role="button"
+        tabIndex={0}
+        aria-label="Close drawer"
+      />
+      <div
+        className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-xl z-50 flex flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transcript-drawer-title"
+      >
+        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between shrink-0">
+          <h2 id="transcript-drawer-title" className="text-lg font-semibold text-gray-900 truncate pr-2">
+            Transcript summary
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"
+            aria-label="Close"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </span>
-          <span className="truncate min-w-0" title={sourceLabel}>{sourceLabel}</span>
+          </button>
         </div>
-        <div className="text-[11px] text-gray-500 mt-0.5">
-          {formatDate(video.publishedAt)}
+        <div className="p-4 overflow-y-auto flex-1">
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-blue-600 hover:underline line-clamp-2 mb-3 block"
+          >
+            {video.title}
+          </a>
+          <p className="text-xs text-gray-500 mb-3">Published {formatDate(video.publishedAt)}</p>
+          {hasSummary ? (
+            <div className="text-sm text-gray-800">
+              <ReactMarkdown
+                components={{
+                  h2: ({ children }) => <h2 className="text-base font-semibold text-gray-900 mt-4 mb-2 first:mt-0">{children}</h2>,
+                  h4: ({ children }) => <h4 className="text-sm font-semibold text-gray-900 mt-3 mb-1">{children}</h4>,
+                  p: ({ children }) => <p className="my-2 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-0.5">{children}</ul>,
+                  ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-0.5">{children}</ol>,
+                  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                }}
+              >
+                {video.transcriptSummary}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 italic">
+              Transcript not yet summarized. Run the transcript script locally to fetch and analyze.
+            </p>
+          )}
         </div>
       </div>
-    </button>
+    </>
   );
 }
 
@@ -70,8 +245,11 @@ export default function SourcesPage() {
   const [newLabel, setNewLabel] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [transcriptDrawerVideo, setTranscriptDrawerVideo] = useState<YouTubeVideo | null>(null);
+  const [reviewedVideoIds, setReviewedVideoIds] = useState<Set<string>>(new Set());
 
   const userId = user?.uid ?? undefined;
+  const hasVideosMissingTranscript = videos.length > 0 && videos.some((v) => !v.transcriptStorageRef);
 
   const fetchVideos = useCallback(async () => {
     setLoading(true);
@@ -112,8 +290,27 @@ export default function SourcesPage() {
   }, [fetchVideos]);
 
   useEffect(() => {
+    if (!userId) {
+      setReviewedVideoIds(new Set());
+      return;
+    }
+    getReviewedVideoIds(userId).then(setReviewedVideoIds);
+  }, [userId]);
+
+  useEffect(() => {
     if (settingsOpen) fetchSubscriptions();
   }, [settingsOpen, fetchSubscriptions]);
+
+  const openTranscriptDrawer = useCallback(
+    (video: YouTubeVideo) => {
+      setTranscriptDrawerVideo(video);
+      if (userId && video.id) {
+        markTranscriptReviewed(userId, video.id).catch(() => {});
+        setReviewedVideoIds((prev) => new Set(prev).add(video.id));
+      }
+    },
+    [userId]
+  );
 
   // Load subscriptions for video cards (source/author labels)
   useEffect(() => {
@@ -189,7 +386,7 @@ export default function SourcesPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">YouTube Sources</h1>
             <p className="text-sm text-gray-600 mt-2">
-              Videos from your subscribed channels. Click a video to open it on YouTube.
+              Videos from your subscribed channels. Click a video to read the transcript; use “Watch on YouTube” to open the video.
             </p>
           </div>
           <button
@@ -212,6 +409,16 @@ export default function SourcesPage() {
           </div>
         )}
 
+        {hasVideosMissingTranscript && (
+          <div className="mb-4 p-4 rounded-lg bg-blue-50 text-blue-900 text-sm border border-blue-200">
+            <p className="font-medium">New videos need transcripts</p>
+            <p className="mt-1">
+              Run the transcript script locally to download transcripts and trigger analysis. From the project:{' '}
+              <code className="bg-blue-100 px-1 rounded text-xs">cd functions_youtube && python run_transcript.py</code>
+            </p>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-gray-600">Loading videos…</p>
         ) : videos.length === 0 ? (
@@ -229,6 +436,8 @@ export default function SourcesPage() {
                       key={video.id}
                       video={video}
                       sourceLabel={subscriptionLabelById[video.subscriptionId] || 'Channel'}
+                      onTranscriptClick={openTranscriptDrawer}
+                      showNewBadge={!reviewedVideoIds.has(video.id)}
                     />
                   ))}
                 </div>
@@ -243,6 +452,7 @@ export default function SourcesPage() {
                     key={video.id}
                     video={video}
                     sourceLabel={subscriptionLabelById[video.subscriptionId] || 'Channel'}
+                    onTranscriptClick={openTranscriptDrawer}
                   />
                 ))}
               </div>
@@ -343,6 +553,13 @@ export default function SourcesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {transcriptDrawerVideo && (
+        <TranscriptDrawer
+          video={transcriptDrawerVideo}
+          onClose={() => setTranscriptDrawerVideo(null)}
+        />
       )}
     </div>
   );

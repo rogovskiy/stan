@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["mood", "moodDetail", "drivers"],
+  "description": "Structured market state summary: mood and key drivers.",
+  "properties": {
+    "mood": {
+      "type": "string",
+      "description": "One word: Confident, Optimistic, Calm, Mixed, Cautious, Nervous, Worried, Fearful."
+    },
+    "moodDetail": {
+      "type": "string",
+      "description": "One short sentence explaining why investors feel that way."
+    },
+    "drivers": {
+      "type": "array",
+      "description": "2-3 key drivers; use exact shift headlines and tie to channels.",
+      "items": {
+        "type": "object",
+        "required": ["headline", "detail"],
+        "properties": {
+          "headline": {
+            "type": "string",
+            "description": "Exact headline from one of the active market shifts."
+          },
+          "detail": {
+            "type": "string",
+            "description": "One simple sentence explaining the driver, tied to channel taxonomy when possible."
+          }
+        }
+      }
+    }
+  }
+}

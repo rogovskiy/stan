@@ -11,7 +11,7 @@ You are comparing market shift entries that were grouped by similar type, catego
    - Pick one document id to keep as the canonical record (canonicalId). Prefer the one with the highest momentumScore, or oldest firstSeenAt if scores are similar.
    - Choose the best headline and summary (canonicalHeadline, canonicalSummary)—you may combine or pick the clearest.
    - Merge articleRefs from all duplicates into one list, deduplicated by url.
-   - Merge channelIds: union of all channelIds from the cluster.
+   - Merge channels: set mergedPrimaryChannel to the single most relevant channel from the cluster, mergedSecondaryChannels to the union of other channels from the cluster (0–3 items).
    - For timeline: set keepTimelineFrom to the id of the shift that has the best (most complete) timeline, or the canonical id if equal.
    - List all other document ids in this cluster that should be deleted (mergeIntoCanonical)—every id in the cluster except canonicalId.
 
@@ -25,7 +25,8 @@ If merging:
   "canonicalSummary": "...",
   "mergeIntoCanonical": ["<id1>", "<id2>"],
   "mergedArticleRefs": [{"url": "...", "title": "...", "source": "...", "publishedAt": "..."}],
-  "mergedChannelIds": ["EQUITIES_US", "RATES_SHORT"],
+  "mergedPrimaryChannel": "EQUITIES_US",
+  "mergedSecondaryChannels": ["RATES_SHORT"],
   "keepTimelineFrom": "<document id whose timeline to keep>"
 }
 

@@ -36,6 +36,69 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Run macro refresh locally")
+    parser.add_argument(
+        "--extraction-only",
+        action="store_true",
+        help="Run only market-shift extraction (no refresh, save, merge, or summaries)",
+    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    args = parser.parse_args()
+
+    if args.extraction_only:
+        from datetime import datetime, timedelta
+        from market_shifts.scan_market_shifts import run_extraction
+        from market_shifts.market_shift_service import MarketShiftService
+        import json
+        logger.info("Running market-shift extraction only (no save/merge/summaries)...")
+        now = datetime.utcnow()
+        current_date = now.strftime("%Y-%m-%d")
+        cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        svc = MarketShiftService()
+        normalized, usage, markdown_text = run_extraction(
+            svc,
+            current_date,
+            cutoff_date,
+            skip_deep_analysis=True,
+            verbose=True,
+            return_markdown=True,
+        )
+        # Save discovery markdown to /tmp
+        tmp_dir = "/tmp"
+        markdown_path = os.path.join(
+            tmp_dir,
+            f"market_shift_discovery_{now.strftime('%Y%m%d_%H%M%S')}.md",
+        )
+        with open(markdown_path, "w", encoding="utf-8") as f:
+            f.write(markdown_text)
+        logger.info("Step 1 (discovery) markdown saved to: %s", markdown_path)
+        logger.info(
+            "Extracted %d shifts | prompt_tokens=%s, response_tokens=%s, total_tokens=%s",
+            len(normalized),
+            usage.get("prompt_tokens", 0),
+            usage.get("response_tokens", 0),
+            usage.get("total_tokens", 0),
+        )
+        # Print discovered market shifts JSON
+        if normalized:
+            out = [
+                {
+                    "type": s["type"],
+                    "category": s["category"],
+                    "headline": s["headline"],
+                    "summary": s["summary"],
+                    "primaryChannel": s.get("primaryChannel"),
+                    "secondaryChannels": s.get("secondaryChannels", []),
+                    "status": s["status"],
+                    "articleRefs": s.get("articleRefs", []),
+                }
+                for s in normalized
+            ]
+            print("\n--- Discovered market shifts (JSON) ---", flush=True)
+            print(json.dumps({"marketShifts": out}, indent=2))
+        return
+
     logger.info("Running macro refresh locally...")
     result = refresh_macro_scores(verbose=True, save_to_firebase=True)
     logger.info("refresh_macro_scores result: asOf=%s", result.get("asOf"))

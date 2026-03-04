@@ -45,6 +45,11 @@ export interface MarketShift {
   category: string;
   headline: string;
   summary: string;
+  /** Primary macro channel (single). */
+  primaryChannel?: string | null;
+  /** Additional macro channels (0–3). */
+  secondaryChannels?: string[];
+  /** All channels in order: primary + secondary (for display). Legacy docs may only have this. */
   channelIds: string[];
   articleRefs: ArticleRef[];
   asOf?: string;
@@ -104,13 +109,23 @@ export async function GET() {
       const data = d.data();
       const momentumScore: number = typeof data.momentumScore === 'number' ? data.momentumScore : 0;
       const momentumScorePrev: number = typeof data.momentumScorePrev === 'number' ? data.momentumScorePrev : 0;
+      const primary = data.primaryChannel ?? null;
+      const secondary: string[] = Array.isArray(data.secondaryChannels) ? data.secondaryChannels : [];
+      const channelIds =
+        primary != null || secondary.length > 0
+          ? [...(primary ? [primary] : []), ...secondary]
+          : Array.isArray(data.channelIds)
+            ? data.channelIds
+            : [];
       return {
         id: d.id,
         type: data.type ?? 'RISK',
         category: data.category ?? 'OTHER',
         headline: data.headline ?? '',
         summary: data.summary ?? '',
-        channelIds: Array.isArray(data.channelIds) ? data.channelIds : [],
+        primaryChannel: primary ?? undefined,
+        secondaryChannels: secondary.length ? secondary : undefined,
+        channelIds,
         articleRefs: Array.isArray(data.articleRefs) ? data.articleRefs : [],
         asOf: data.asOf,
         fetchedAt: data.fetchedAt,

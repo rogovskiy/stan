@@ -17,6 +17,8 @@ interface MarketShift {
   category: string;
   headline: string;
   summary: string;
+  primaryChannel?: string | null;
+  secondaryChannels?: string[];
   channelIds: string[];
   articleRefs: { url?: string; title?: string; source?: string; publishedAt?: string }[];
   asOf?: string;

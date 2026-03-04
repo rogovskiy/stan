@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["firstSurfacedAt", "majorDevelopments"],
+  "description": "Timeline for a market shift: when it first surfaced and major developments.",
+  "properties": {
+    "firstSurfacedAt": {
+      "type": "string",
+      "description": "ISO date (YYYY-MM-DD) when this narrative first appeared in financial news."
+    },
+    "majorDevelopments": {
+      "type": "array",
+      "description": "Chronological list of major developments with dates and article refs.",
+      "items": {
+        "type": "object",
+        "required": ["date", "description", "articleRef"],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "ISO date YYYY-MM-DD for this development."
+          },
+          "description": {
+            "type": "string",
+            "description": "One sentence description of the development."
+          },
+          "articleRef": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string" },
+              "title": { "type": "string" },
+              "source": { "type": "string" },
+              "publishedAt": { "type": "string" }
+            },
+            "description": "Source article for this development."
+          }
+        }
+      }
+    }
+  }
+}

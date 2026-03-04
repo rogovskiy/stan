@@ -29,6 +29,15 @@ def slug_from_headline(headline: str) -> str:
     return s[:80] if s else "shift"
 
 
+def get_shift_channels(shift: Dict[str, Any]) -> List[str]:
+    """Return ordered list of channels: primaryChannel + secondaryChannels, or channelIds for legacy."""
+    primary = shift.get("primaryChannel")
+    secondary = shift.get("secondaryChannels") or []
+    if primary is not None or secondary:
+        return ([primary] if primary else []) + list(secondary)
+    return list(shift.get("channelIds") or [])
+
+
 class MarketShiftService(FirebaseBaseService):
     """Service for saving market shifts to Firestore."""
 
@@ -112,7 +121,8 @@ class MarketShiftService(FirebaseBaseService):
                 "category": shift.get("category", "OTHER"),
                 "headline": shift.get("headline", ""),
                 "summary": shift.get("summary", ""),
-                "channelIds": shift.get("channelIds", []),
+                "primaryChannel": shift.get("primaryChannel"),
+                "secondaryChannels": shift.get("secondaryChannels") or [],
                 "status": status,
                 "articleRefs": shift.get("articleRefs", []),
                 "asOf": as_of,

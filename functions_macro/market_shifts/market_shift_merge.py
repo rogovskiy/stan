@@ -16,7 +16,7 @@ from google import genai
 from google.genai import types
 
 from extraction_utils import get_gemini_model
-from market_shifts.market_shift_service import MarketShiftService
+from market_shifts.market_shift_service import MarketShiftService, get_shift_channels
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def cluster_shifts(shifts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any
     for shift in shifts:
         typ = (shift.get("type") or "RISK").strip().upper()
         category = (shift.get("category") or "OTHER").strip().upper()
-        channels_key = _normalize_channels_for_cluster(shift.get("channelIds"))
+        channels_key = _normalize_channels_for_cluster(get_shift_channels(shift))
         key = f"{typ}|{category}|{channels_key}"
         clusters.setdefault(key, []).append(shift)
     return clusters
@@ -102,7 +102,8 @@ def build_merge_prompt(cluster: List[Dict[str, Any]], template: str) -> str:
             "summary": s.get("summary"),
             "momentumScore": s.get("momentumScore"),
             "firstSeenAt": s.get("firstSeenAt"),
-            "channelIds": s.get("channelIds"),
+            "primaryChannel": s.get("primaryChannel"),
+            "secondaryChannels": s.get("secondaryChannels") or [],
             "articleRefs": (s.get("articleRefs") or [])[:3],
         }
         for s in cluster
@@ -196,9 +197,14 @@ def apply_merge(
     merged_article_refs = merge_result.get("mergedArticleRefs")
     if not isinstance(merged_article_refs, list):
         merged_article_refs = canonical_shift.get("articleRefs") or []
-    merged_channel_ids = merge_result.get("mergedChannelIds")
-    if not isinstance(merged_channel_ids, list):
-        merged_channel_ids = canonical_shift.get("channelIds") or []
+    merged_primary = merge_result.get("mergedPrimaryChannel")
+    merged_secondary = merge_result.get("mergedSecondaryChannels")
+    if not isinstance(merged_secondary, list):
+        merged_secondary = canonical_shift.get("secondaryChannels") or []
+    if merged_primary is None:
+        merged_channels = merge_result.get("mergedChannelIds") or get_shift_channels(canonical_shift)
+        merged_primary = merged_channels[0] if merged_channels else None
+        merged_secondary = merged_channels[1:] if len(merged_channels) > 1 else []
     now = datetime.now(timezone.utc)
     fetched_at = now.isoformat().replace("+00:00", "Z")
     doc_data = {
@@ -206,7 +212,8 @@ def apply_merge(
         "category": canonical_shift.get("category", "OTHER"),
         "headline": merge_result.get("canonicalHeadline") or canonical_shift.get("headline", ""),
         "summary": merge_result.get("canonicalSummary") or canonical_shift.get("summary", ""),
-        "channelIds": merged_channel_ids,
+        "primaryChannel": merged_primary,
+        "secondaryChannels": list(merged_secondary) if merged_secondary else [],
         "status": canonical_shift.get("status", "EMERGING"),
         "articleRefs": merged_article_refs,
         "asOf": as_of,

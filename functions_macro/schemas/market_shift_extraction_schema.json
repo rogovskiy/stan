@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["marketShifts"],
+  "description": "Market shift extraction: systematic risks and tailwinds from financial news.",
+  "properties": {
+    "marketShifts": {
+      "type": "array",
+      "description": "List of market shifts (risks and tailwinds).",
+      "items": {
+        "type": "object",
+        "required": ["type", "category", "headline", "summary"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["RISK", "TAILWIND"],
+            "description": "RISK = systematic risk/headwind, TAILWIND = positive driver."
+          },
+          "category": {
+            "type": "string",
+            "description": "One of: GEOPOLITICAL, US_ECONOMIC_DATA, MONETARY_POLICY, FISCAL, EARNINGS_CORPORATE, SECTOR_STRUCTURAL, MARKET_SENTIMENT, COMMODITIES_SUPPLY, GLOBAL_GROWTH, CREDIT."
+          },
+          "headline": {
+            "type": "string",
+            "description": "Short descriptive title for the shift."
+          },
+          "summary": {
+            "type": "string",
+            "description": "2-3 sentence summary of the shift."
+          },
+          "primaryChannel": {
+            "type": "string",
+            "description": "Single primary macro channel: EQUITIES_US, CREDIT, VOL, RATES_SHORT, RATES_LONG, USD, OIL, GOLD, INFLATION, GLOBAL_RISK."
+          },
+          "secondaryChannels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Secondary macro channels (same enum as primaryChannel)."
+          },
+          "status": {
+            "type": "string",
+            "description": "EMERGING, BUILDING, or BREAKING."
+          },
+          "articleRefs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "description": "Article URL." },
+                "title": { "type": "string", "description": "Article title." },
+                "source": { "type": "string", "description": "Publication name." },
+                "publishedAt": { "type": "string", "description": "Date YYYY-MM-DD if known." }
+              }
+            },
+            "description": "Source articles for this shift."
+          }
+        }
+      }
+    }
+  }
+}

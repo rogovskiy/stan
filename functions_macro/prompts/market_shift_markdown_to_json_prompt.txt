@@ -1,0 +1,17 @@
+You are given a markdown document listing market shifts (systematic risks and tailwinds). Convert it to a single JSON object with exactly one key: "marketShifts", whose value is an array of objects.
+
+Each object in the array must have:
+- type: "RISK" or "TAILWIND"
+- category: one of GEOPOLITICAL, US_ECONOMIC_DATA, MONETARY_POLICY, FISCAL, EARNINGS_CORPORATE, SECTOR_STRUCTURAL, MARKET_SENTIMENT, COMMODITIES_SUPPLY, GLOBAL_GROWTH, CREDIT
+- headline: string
+- summary: string
+- primaryChannel: single string from EQUITIES_US, CREDIT, VOL, RATES_SHORT, RATES_LONG, USD, OIL, GOLD, INFLATION, GLOBAL_RISK
+- secondaryChannels: array of strings (same channel enum, 0–3 items)
+- status: EMERGING, BUILDING, or BREAKING
+- articleRefs: array of objects with url, title, source, publishedAt (strings)
+
+Use only the category and channel values listed above. Preserve all information from the markdown. If a field is missing in the markdown, use empty string or empty array as appropriate. Output only valid JSON, no other text.
+
+Markdown content:
+
+{markdown_content}

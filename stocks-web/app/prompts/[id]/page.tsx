@@ -5,9 +5,22 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import AppNavigation from '../../components/AppNavigation';
 
+interface VersionParams {
+  temperature: number | null;
+  model: string | null;
+  groundingEnabled: boolean;
+  structuredOutput: boolean;
+  schema: string | null;
+}
+
 interface VersionItem {
   version: number;
   updatedAt: string;
+  temperature?: number | null;
+  model?: string | null;
+  groundingEnabled?: boolean;
+  structuredOutput?: boolean;
+  schema?: string | null;
 }
 
 interface PromptData {
@@ -18,7 +31,19 @@ interface PromptData {
   viewingVersion?: number;
   updatedAt: string | null;
   versions: VersionItem[];
+  params?: VersionParams;
 }
+
+const GEMINI_MODELS = [
+  '',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-1.0-pro',
+];
 
 const FALLBACK_CONTENT = 'Prompt content will load from the API.\n\nHuman-readable ID: {{id}}';
 
@@ -39,6 +64,11 @@ export default function PromptEditPage() {
   const [currentVersion, setCurrentVersion] = useState(0);
   const [viewingVersion, setViewingVersion] = useState(0);
   const [versions, setVersions] = useState<VersionItem[]>([]);
+  const [temperature, setTemperature] = useState<string>('');
+  const [model, setModel] = useState<string>('');
+  const [groundingEnabled, setGroundingEnabled] = useState(false);
+  const [structuredOutput, setStructuredOutput] = useState(false);
+  const [schema, setSchema] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [activateStatus, setActivateStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [loading, setLoading] = useState(true);
@@ -62,6 +92,14 @@ export default function PromptEditPage() {
           setCurrentVersion(data.currentVersion ?? 0);
           setViewingVersion(data.viewingVersion ?? data.currentVersion ?? 0);
           setVersions(data.versions ?? []);
+          const p = data.params;
+          if (p) {
+            setTemperature(p.temperature != null ? String(p.temperature) : '');
+            setModel(p.model ?? '');
+            setGroundingEnabled(p.groundingEnabled ?? false);
+            setStructuredOutput(p.structuredOutput ?? false);
+            setSchema(p.schema ?? '');
+          }
           setLoadError(null);
         })
         .catch((err) => {
@@ -101,11 +139,20 @@ export default function PromptEditPage() {
 
   const handleSave = async () => {
     setSaveStatus('saving');
+    const tempVal = temperature.trim() === '' ? null : parseFloat(temperature);
+    const tempNum = tempVal != null && !Number.isNaN(tempVal) ? tempVal : null;
     try {
       const res = await fetch(`/api/admin/prompts/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({
+          content,
+          temperature: tempNum,
+          model: model.trim() || null,
+          groundingEnabled,
+          structuredOutput,
+          schema: schema.trim() || null,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -209,6 +256,72 @@ export default function PromptEditPage() {
                     : 'Activate this version'}
             </button>
           )}
+        </div>
+
+        <div className="mb-6 p-4 bg-white border border-gray-200 rounded-lg">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3">Version parameters</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Temperature</label>
+              <input
+                type="text"
+                value={temperature}
+                onChange={(e) => setTemperature(e.target.value)}
+                placeholder="default"
+                readOnly={isViewingOlderVersion}
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={isViewingOlderVersion}
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="">default</option>
+                {GEMINI_MODELS.filter(Boolean).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={groundingEnabled}
+                  onChange={(e) => setGroundingEnabled(e.target.checked)}
+                  disabled={isViewingOlderVersion}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-700">Grounding enabled</span>
+              </label>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Structured output</label>
+              <select
+                value={structuredOutput ? 'yes' : 'no'}
+                onChange={(e) => setStructuredOutput(e.target.value === 'yes')}
+                disabled={isViewingOlderVersion}
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Schema (JSON)</label>
+            <textarea
+              value={schema}
+              onChange={(e) => setSchema(e.target.value)}
+              placeholder="Optional JSON schema for structured output"
+              readOnly={isViewingOlderVersion}
+              rows={3}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono resize-y"
+            />
+          </div>
         </div>
 
         <div className="border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">

@@ -9,6 +9,7 @@ interface PromptListItem {
   id: string;
   name: string;
   currentVersion: number;
+  model: string | null;
   updatedAt: string;
 }
 
@@ -159,6 +160,7 @@ export default function PromptsPage() {
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left p-3 font-medium text-gray-700">ID</th>
                 <th className="text-left p-3 font-medium text-gray-700">Name</th>
+                <th className="text-left p-3 font-medium text-gray-700">Model</th>
                 <th className="text-left p-3 font-medium text-gray-700">Active version</th>
                 <th className="text-left p-3 font-medium text-gray-700">Last updated</th>
                 <th className="text-right p-3 font-medium text-gray-700">Actions</th>
@@ -169,6 +171,7 @@ export default function PromptsPage() {
                 <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="p-3 font-mono text-gray-800">{p.id}</td>
                   <td className="p-3 text-gray-700">{p.name}</td>
+                  <td className="p-3 text-gray-600 font-mono text-xs">{p.model ?? '—'}</td>
                   <td className="p-3 text-gray-700 font-medium">{p.currentVersion}</td>
                   <td className="p-3 text-gray-500">{formatDate(p.updatedAt)}</td>
                   <td className="p-3 text-right">

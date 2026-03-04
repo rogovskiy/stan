@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 @scheduler_fn.on_schedule(
     schedule="0 6 * * *",
     memory=512,
-    timeout_sec=120,
+    timeout_sec=600,
     concurrency=1,
     secrets=[GEMINI_API_KEY],
 )
@@ -98,7 +98,7 @@ def macro_refresh(event: scheduler_fn.ScheduledEvent) -> None:
         print("Starting market shifts scan (extraction then summaries; may take 2-5 min)...", flush=True)
         sys.stdout.flush()
         shifts_result = run_scan_market_shifts(
-            skip_deep_analysis=True, skip_merge=True, verbose=False
+            skip_deep_analysis=False, skip_merge=False, verbose=True
         )
         print(
             f"run_scan_market_shifts done: shift_count={shifts_result.get('shift_count')}, merges_applied={shifts_result.get('merges_applied')}",

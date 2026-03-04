@@ -1,9 +1,17 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["firstSurfacedAt", "majorDevelopments"],
-  "description": "Timeline for a market shift: when it first surfaced and major developments.",
+  "required": ["canonicalDriver", "canonicalDriverRationale", "firstSurfacedAt", "majorDevelopments"],
+  "description": "Timeline for a market shift: canonical structural driver, rationale, when it first surfaced, and major developments.",
   "properties": {
+    "canonicalDriver": {
+      "type": "string",
+      "description": "One-sentence structural cause: Actor/Event → Constraint/Bottleneck → Primary Market Channel."
+    },
+    "canonicalDriverRationale": {
+      "type": "string",
+      "description": "1–3 sentences explaining why this canonical driver was selected and what evidence supports it."
+    },
     "firstSurfacedAt": {
       "type": "string",
       "description": "ISO date (YYYY-MM-DD) when this narrative first appeared in financial news."

@@ -60,6 +60,20 @@ class MarketShiftService(FirebaseBaseService):
             .collection(self.META_PATH[2])
         )
 
+    def clear_market_shifts(self, verbose: bool = True) -> int:
+        """Delete all shift documents and meta. Returns number of shift docs deleted."""
+        shifts_ref = self._shifts_ref()
+        deleted = 0
+        for doc in shifts_ref.stream():
+            doc.reference.delete()
+            deleted += 1
+            if verbose:
+                print(f"  Deleted shift: {doc.id}")
+        self._meta_ref().document("latest").delete()
+        if verbose:
+            print(f"Cleared {deleted} shift(s) and meta.")
+        return deleted
+
     def get_existing_shift_ids_with_timeline(self) -> set:
         out = set()
         for doc in self._shifts_ref().stream():
@@ -186,3 +200,31 @@ class MarketShiftService(FirebaseBaseService):
         summaries_ref.document("latest").set(doc_data)
         if verbose:
             print(f"Saved market summaries for {as_of} to macro/us_market/market_summaries")
+
+    def migrate_shifts_to_primary_secondary(self, verbose: bool = True) -> int:
+        """
+        One-time migration: for each shift doc that has channelIds but no primaryChannel,
+        set primaryChannel = channelIds[0], secondaryChannels = channelIds[1:], and update.
+        Preserves existing data; makes schema uniform for clustering and UI.
+        Returns number of docs updated.
+        """
+        shifts_ref = self._shifts_ref()
+        updated = 0
+        for doc in shifts_ref.stream():
+            data = doc.to_dict() or {}
+            if data.get("primaryChannel") is not None:
+                continue
+            channel_ids = data.get("channelIds")
+            if not isinstance(channel_ids, list) or not channel_ids:
+                continue
+            channel_ids = [str(c).strip() for c in channel_ids if c]
+            primary = channel_ids[0] if channel_ids else None
+            secondary = channel_ids[1:] if len(channel_ids) > 1 else []
+            shifts_ref.document(doc.id).set(
+                {"primaryChannel": primary, "secondaryChannels": secondary},
+                merge=True,
+            )
+            updated += 1
+            if verbose:
+                print(f"  Migrated {doc.id}: primaryChannel={primary}, secondaryChannels={secondary}")
+        return updated

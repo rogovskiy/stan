@@ -32,7 +32,12 @@ from extraction_utils import (
     load_prompt_template,
 )
 from market_shifts.market_shift_service import MarketShiftService, slug_from_headline
-from market_shifts.market_shift_merge import run_merge_step
+from market_shifts.market_shift_merge import (
+    load_merge_prompt_template,
+    run_merge_step,
+    run_merge_step_in_memory,
+    apply_merge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,13 +211,19 @@ def fetch_shift_timeline(
     model = os.getenv("GEMINI_TIMELINE_MODEL", get_gemini_model())
     max_remote_calls = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "50"))
 
+    article_refs = shift.get("articleRefs") or []
+    article_refs_text = "\n".join(
+        f"• {ref.get('title') or 'Untitled'} ({ref.get('source') or 'Unknown'}, {ref.get('publishedAt') or 'no date'}): {ref.get('url') or ''}"
+        for ref in article_refs
+    ) if article_refs else "None provided."
     prompt = load_prompt_template(
-        "market_shift_timeline_prompt.txt",
+        "market_shift_deep_analysis_prompt.txt",
         prompts_dir=PROMPTS_DIR,
         type=shift.get("type", "RISK"),
         category=shift.get("category", "MARKET_SENTIMENT"),
         headline=shift.get("headline", ""),
         summary=shift.get("summary", ""),
+        article_refs=article_refs_text,
         current_date=current_date,
         cutoff_date=cutoff_date,
     )
@@ -227,7 +238,7 @@ def fetch_shift_timeline(
         ),
     )
     if verbose:
-        logger.info("  Deep analysis for: %s", shift.get("headline", "")[:60])
+        logger.info("  Deep analysis for: %s (with Google Search grounding)", shift.get("headline", "")[:60])
     response = None
     try:
         response = client.models.generate_content(
@@ -240,11 +251,18 @@ def fetch_shift_timeline(
             logger.warning("Gemini returned empty response for timeline")
             return None, usage
         data = _parse_json_from_response_text(response.text)
+        canonical_driver = data.get("canonicalDriver") or ""
+        canonical_driver_rationale = data.get("canonicalDriverRationale") or ""
         first = data.get("firstSurfacedAt")
         devs = data.get("majorDevelopments")
         if not isinstance(devs, list):
             devs = []
-        return {"firstSurfacedAt": first or "", "majorDevelopments": devs}, usage
+        return {
+            "canonicalDriver": canonical_driver,
+            "canonicalDriverRationale": canonical_driver_rationale,
+            "firstSurfacedAt": first or "",
+            "majorDevelopments": devs,
+        }, usage
     except (json.JSONDecodeError, KeyError, RuntimeError) as e:
         logger.warning("Timeline parse or API error for %s: %s", shift.get("headline", "")[:40], e)
         if response is not None:
@@ -402,6 +420,9 @@ def run_extraction(
             client = None
         if client is not None:
             existing_with_timeline = svc.get_existing_shift_ids_with_timeline()
+            new_ids = [s.get("_shift_id") for s in normalized if s.get("_shift_id") and s.get("_shift_id") not in existing_with_timeline]
+            if new_ids:
+                print(f"Market shifts: running deep analysis (timeline + canonical driver) for {min(len(new_ids), MAX_DEEP_ANALYSIS_PER_RUN)} new shift(s)...", flush=True)
             done = 0
             for shift in normalized:
                 if done >= MAX_DEEP_ANALYSIS_PER_RUN:
@@ -415,6 +436,10 @@ def run_extraction(
                     if timeline:
                         shift["timeline"] = timeline
                         shift["analyzedAt"] = datetime.utcnow().isoformat() + "Z"
+                        if timeline.get("canonicalDriver"):
+                            print(f"  Canonical driver: {timeline['canonicalDriver']}", flush=True)
+                        if timeline.get("canonicalDriverRationale"):
+                            print(f"  Rationale: {timeline['canonicalDriverRationale']}", flush=True)
                         done += 1
                         existing_with_timeline.add(shift_id)
 
@@ -464,8 +489,13 @@ def run_scan_market_shifts(
     verbose: bool = False,
 ) -> dict:
     """
-    Run the full market shifts pipeline: extract -> save -> optional merge -> summaries.
-    Call after refresh_macro_scores() so summaries use fresh risk scores from Firestore.
+    Run the full market shifts pipeline.
+
+    When merge is not skipped: extract (step 1) -> merge clustering in memory -> deep analysis
+    only for shifts that were not merged into existing (step 2) -> save and apply merges (steps 3-5) -> summaries.
+    Anything that wasn't merged into an existing shift is considered "new" and gets deep analysis.
+
+    When merge is skipped: extract (with optional deep analysis) -> save -> summaries.
     Returns dict with as_of, shift_count, merge_changed, merges_applied, prompt_tokens, response_tokens, total_tokens.
     """
     print("Market shifts: starting extraction (Gemini + Google Search; can take 1-3 min)...", flush=True)
@@ -477,19 +507,109 @@ def run_scan_market_shifts(
     svc = MarketShiftService()
     print("Market shifts: calling Gemini with Google Search grounding (can take 1-3 min)...", flush=True)
 
-    normalized, usage_acc = run_extraction(svc, current_date, cutoff_date, skip_deep_analysis, verbose)
-    print(f"Market shifts: saving {len(normalized)} shifts to Firestore...", flush=True)
-    svc.save_market_shifts(as_of, normalized, verbose=verbose)
-
     merge_changed = False
     merges_applied = 0
-    if not skip_merge:
+
+    if skip_merge:
+        # Original flow: extract (with optional deep analysis) -> save -> summaries
+        normalized, usage_acc = run_extraction(
+            svc, current_date, cutoff_date, skip_deep_analysis, verbose
+        )
+        print(f"Market shifts: saving {len(normalized)} shifts to Firestore...", flush=True)
+        svc.save_market_shifts(as_of, normalized, verbose=verbose)
+    else:
+        # Merge-first flow: extract (no deep analysis) -> merge in memory -> deep analysis on new only -> save + apply
+        normalized, usage_acc = run_extraction(
+            svc, current_date, cutoff_date, skip_deep_analysis=True, verbose=verbose
+        )
+        _compute_shift_ids(normalized)
+        for s in normalized:
+            s["id"] = s.get("_shift_id")
+
+        existing = svc.get_all_shifts()
+        existing_ids = {s["id"] for s in existing}
+
         try:
             client = get_genai_client()
-            merge_changed, merges_applied, merge_usage = run_merge_step(svc, as_of, client, verbose=verbose, dry_run=False)
-            _add_usage(usage_acc, merge_usage)
+            template = load_merge_prompt_template()
         except ValueError:
-            logger.warning("No API key; skipping merge step")
+            client = None
+            template = None
+
+        if client is not None and template is not None and (existing or normalized):
+            combined = existing + normalized
+            merge_decisions, merge_usage = run_merge_step_in_memory(
+                combined, client, template, verbose=verbose
+            )
+            _add_usage(usage_acc, merge_usage)
+            # Extracted shifts that were merged into an existing shift are not "new"
+            extracted_merged_into_existing = set()
+            for _ck, _cluster, decision in merge_decisions:
+                cid = decision.get("canonicalId")
+                if cid in existing_ids:
+                    for mid in decision.get("mergeIntoCanonical") or []:
+                        if mid not in existing_ids:
+                            extracted_merged_into_existing.add(mid)
+            new_extracted = [s for s in normalized if s.get("_shift_id") not in extracted_merged_into_existing]
+        else:
+            merge_decisions = []
+            new_extracted = normalized
+
+        # Step 2: deep analysis only for new (unmerged) extracted shifts
+        if new_extracted and not skip_deep_analysis:
+            try:
+                if client is None:
+                    client = get_genai_client()
+            except ValueError:
+                client = None
+            if client is not None:
+                n_new = min(len(new_extracted), MAX_DEEP_ANALYSIS_PER_RUN)
+                print(
+                    f"Market shifts: running deep analysis (timeline + canonical driver) for {n_new} new shift(s)...",
+                    flush=True,
+                )
+                done = 0
+                for shift in new_extracted:
+                    if done >= MAX_DEEP_ANALYSIS_PER_RUN:
+                        break
+                    timeline, u = fetch_shift_timeline(
+                        shift, client, current_date, cutoff_date, verbose=verbose
+                    )
+                    _add_usage(usage_acc, u)
+                    if timeline:
+                        shift["timeline"] = timeline
+                        shift["analyzedAt"] = datetime.utcnow().isoformat() + "Z"
+                        if timeline.get("canonicalDriver") and verbose:
+                            print(f"  Canonical driver: {timeline['canonicalDriver']}", flush=True)
+                        if timeline.get("canonicalDriverRationale") and verbose:
+                            print(f"  Rationale: {timeline['canonicalDriverRationale']}", flush=True)
+                        done += 1
+
+        # Pop _shift_id before save; keep id for apply_merge
+        for s in normalized:
+            s.pop("_shift_id", None)
+
+        # Apply merge decisions to Firestore (updates canonicals, deletes duplicates)
+        saved_canonical_ids = set()
+        new_extracted_by_id = {s["id"]: s for s in new_extracted if s.get("id")}
+        for cluster_key, cluster, decision in merge_decisions:
+            # Merge in timeline from new_extracted so canonical has it when written
+            cluster_with_updates = []
+            for sh in cluster:
+                updated = new_extracted_by_id.get(sh.get("id"), sh)
+                cluster_with_updates.append(updated)
+            apply_merge(svc, decision, cluster_with_updates, as_of, verbose=verbose)
+            saved_canonical_ids.add(decision.get("canonicalId"))
+
+        # Save singleton new extracted (not canonical in any merge)
+        to_save = [s for s in new_extracted if s.get("id") not in saved_canonical_ids]
+        if to_save:
+            print(f"Market shifts: saving {len(to_save)} new shift(s) to Firestore...", flush=True)
+            for s in to_save:
+                s.pop("id", None)
+            svc.save_market_shifts(as_of, to_save, verbose=verbose)
+        merges_applied = len(merge_decisions)
+        merge_changed = merges_applied > 0
 
     try:
         client = get_genai_client()

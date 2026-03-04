@@ -37,6 +37,8 @@ interface MajorDevelopment {
 }
 
 interface MarketShiftTimeline {
+  canonicalDriver?: string;
+  canonicalDriverRationale?: string;
   firstSurfacedAt: string;
   majorDevelopments: MajorDevelopment[];
 }

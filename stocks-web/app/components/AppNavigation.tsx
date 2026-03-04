@@ -143,16 +143,6 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
               >
                 Sources
               </Link>
-              <Link
-                href="/jobs"
-                className={`pb-3 px-1 border-b-2 transition-colors text-sm font-medium ${
-                  pathname === '/jobs' || pathname?.startsWith('/jobs')
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-700 hover:text-gray-900'
-                }`}
-              >
-                Jobs
-              </Link>
             </nav>
           </div>
           {/* Right side: User Menu with Logout */}
@@ -198,6 +188,20 @@ export default function AppNavigation({ selectedTicker, onTickerChange }: AppNav
                       {user.email}
                     </p>
                   </div>
+                  <Link
+                    href="/jobs"
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Jobs
+                  </Link>
+                  <Link
+                    href="/prompts"
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Prompts
+                  </Link>
                   <button
                     onClick={handleLogout}
                     className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"

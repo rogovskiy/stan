@@ -1,36 +1,174 @@
-You are comparing market shift entries that were grouped by similar type, category, and normalized headline. Your task is to decide whether they are duplicates (same underlying driver) and, if so, how to merge them into one canonical shift.
+You are a macro strategist maintaining a registry of structural MarketShifts.
 
-**Input – shifts in this cluster (each has document id, headline, summary, and other fields):**
+A MarketShift represents a structural market driver — the real-world cause affecting markets.
 
-{shifts_json}
+Your task is to determine whether a new candidate shift belongs to an existing MarketShift, or represents a different driver.
 
-**Instructions:**
-1. Compare the shifts. If they describe the same underlying market driver (same cause, same narrative), treat them as duplicates and output a merge decision.
-2. If they are NOT the same driver (different events or angles), output noMerge: true and do not fill merge fields.
-3. When merging:
-   - Pick one document id to keep as the canonical record (canonicalId). Prefer the one with the highest momentumScore, or oldest firstSeenAt if scores are similar.
-   - Choose the best headline and summary (canonicalHeadline, canonicalSummary)—you may combine or pick the clearest.
-   - Merge articleRefs from all duplicates into one list, deduplicated by url.
-   - Merge channels: set mergedPrimaryChannel to the single most relevant channel from the cluster, mergedSecondaryChannels to the union of other channels from the cluster (0–3 items).
-   - For timeline: set keepTimelineFrom to the id of the shift that has the best (most complete) timeline, or the canonical id if equal.
-   - List all other document ids in this cluster that should be deleted (mergeIntoCanonical)—every id in the cluster except canonicalId.
+Focus on structural causes, not market reactions.
 
-**Output format – valid JSON only, no other text:**
+Input 1 — Existing MarketShift (Canonical Record)
 
-If merging:
+This MarketShift has already been analyzed and represents a structural market driver.
+When used in a sequence, "existing" may reflect an already-merged canonical (updated summary, driver, or timeline) so you can build on it.
+
+{existing_market_shift_json}
+
+Input 2 — Incoming Candidate Shift
+
+This is a newly detected candidate shift derived from recent news.
+{incoming_market_shift_json}
+
+Step 1 — Compare Structural Drivers
+
+Determine whether the candidate shift refers to the same structural driver as the existing MarketShift.
+Two items belong to the same shift if they share the same:
+- underlying cause
+- constraint or bottleneck
+- economic or geopolitical mechanism
+
+The candidate may represent:
+- a direct occurrence of the driver
+- a new development or escalation
+- an expansion of the driver into new sectors or regions
+- a reaction by institutions or markets
+- a sector-level manifestation of the driver
+
+If so, the candidate should merge into the existing MarketShift.
+
+Step 2 — Generalization
+
+If the candidate describes a more specific manifestation of the existing driver, treat it as part of the same shift.
+
+Example:
+
+Existing driver:
+
+AI capital investment boom increases demand for compute infrastructure.
+
+Candidate:
+
+Semiconductor demand surges due to AI data center construction.
+
+This should merge because semiconductor demand is a mechanism of the AI investment boom.
+
+Step 3 — Do NOT Merge If
+
+Do not merge if the candidate describes a different underlying driver, even if market outcomes are similar.
+
+Example (do NOT merge):
+
+Stocks rise due to AI spending
+Stocks rise due to fiscal stimulus
+
+These have different drivers.
+
+Step 4 — Classify the Relationship
+
+If the candidate belongs to the existing MarketShift, classify how it relates to the driver.
+
+Use one of the following relationship types:
+
+OCCURRENCE
+A direct event representing the driver.
+
+Examples:
+sanctions announced
+policy decisions
+military actions
+economic data releases
+
+DEVELOPMENT
+A new escalation or factual development within the same driver.
+
+Examples:
+conflict intensifies
+new regulations added
+supply disruption confirmed
+
+EXPANSION
+The same driver spreads into new sectors, regions, or mechanisms.
+
+Examples:
+AI investment expands beyond technology sector
+tariffs extend to new industries
+
+REACTION
+Institutions or markets respond to the driver.
+
+Examples:
+companies adjust guidance
+governments deploy countermeasures
+regulators intervene
+
+INTERPRETATION
+Analysis or commentary explaining the driver.
+
+Examples:
+analyst reports
+strategic commentary
+expert opinions
+
+APPLICATION
+A sector-level manifestation of the driver.
+
+Example:
+
+Driver:
+AI capital investment boom
+
+Application:
+AI chip demand increases
+
+Step 5 — Produce Merge Decision
+
+If the candidate represents the same driver:
+- merge it into the existing MarketShift
+- classify its relationship to the driver
+- determine whether the canonical summary should be updated
+
+If the candidate represents a different driver, it should not merge.
+
+Step 6 — Propose Timeline Additions (when merging)
+
+The existing MarketShift may have a timeline: canonicalDriver, canonicalDriverRationale, firstSurfacedAt, and majorDevelopments (a chronological list of entries with date, description, and articleRef).
+
+When merging, propose updates to the timeline so the merged record reflects the incoming candidate:
+- If the incoming shift surfaces an earlier or new first appearance of the driver, set revisedFirstSurfacedAt (ISO date YYYY-MM-DD).
+- Add one or more new major developments derived from the incoming shift: date, one-sentence description, and articleRef (url, title, source, publishedAt) from the candidate's articleRefs. Only add developments that are distinct and chronological; do not duplicate existing developments.
+- Optionally revise canonicalDriverRationale (1–3 sentences) if the new evidence strengthens or refines the rationale.
+
+Output Format
+
+Return valid JSON only.
+
+If merging
 {
-  "noMerge": false,
-  "canonicalId": "<document id to keep>",
-  "canonicalHeadline": "...",
-  "canonicalSummary": "...",
-  "mergeIntoCanonical": ["<id1>", "<id2>"],
-  "mergedArticleRefs": [{"url": "...", "title": "...", "source": "...", "publishedAt": "..."}],
-  "mergedPrimaryChannel": "EQUITIES_US",
-  "mergedSecondaryChannels": ["RATES_SHORT"],
-  "keepTimelineFrom": "<document id whose timeline to keep>"
+  "merge": true,
+  "relationship": "OCCURRENCE | DEVELOPMENT | EXPANSION | REACTION | INTERPRETATION | APPLICATION",
+  "reason": "Brief explanation of why the candidate belongs to the existing shift",
+  "updateCanonicalDriver": false,
+  "revisedCanonicalDriver": null,
+  "updateSummary": false,
+  "revisedSummary": null,
+  "timelineAdditions": {
+    "revisedFirstSurfacedAt": null,
+    "revisedCanonicalDriverRationale": null,
+    "newMajorDevelopments": []
+  }
 }
+Omit timelineAdditions or set null or empty newMajorDevelopments if no timeline updates are needed. Each entry in newMajorDevelopments must have: "date" (YYYY-MM-DD), "description" (one sentence), "articleRef" (object with url, title, source, publishedAt).
 
-If NOT merging (different drivers):
+If NOT merging
 {
-  "noMerge": true
+  "merge": false,
+  "reason": "Explanation why the candidate represents a different structural driver"
 }
+Key Principles
+
+Always reason about the structural driver first.
+
+Allow generalization when the candidate represents a specific manifestation of a broader shift.
+
+Do not merge based on headline similarity alone.
+
+Distinguish between events, developments, reactions, and interpretations of the driver.

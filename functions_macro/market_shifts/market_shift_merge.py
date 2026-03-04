@@ -20,6 +20,27 @@ from market_shifts.market_shift_service import MarketShiftService, get_shift_cha
 
 logger = logging.getLogger(__name__)
 
+# Valid macro channels only (categories like SECTOR_STRUCTURAL must not split clusters)
+VALID_CHANNELS = frozenset({
+    "EQUITIES_US", "CREDIT", "VOL", "RATES_SHORT", "RATES_LONG",
+    "USD", "OIL", "GOLD", "INFLATION", "GLOBAL_RISK",
+})
+
+
+def _primary_channel_for_cluster(shift: Dict[str, Any]) -> str:
+    """
+    Primary channel for clustering; invalid/category values (e.g. SECTOR_STRUCTURAL) are ignored.
+    If primary is invalid, use first valid channel from secondaries so similar shifts still cluster.
+    """
+    primary = (shift.get("primaryChannel") or "").strip().upper()
+    if primary in VALID_CHANNELS:
+        return primary
+    for c in (shift.get("secondaryChannels") or []) + list(shift.get("channelIds") or []):
+        ch = (c or "").strip().upper()
+        if ch in VALID_CHANNELS:
+            return ch
+    return ""
+
 
 def _normalize_channels_for_cluster(channel_ids: List[str] | None) -> str:
     if not channel_ids:
@@ -28,12 +49,19 @@ def _normalize_channels_for_cluster(channel_ids: List[str] | None) -> str:
 
 
 def cluster_shifts(shifts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Cluster by type, category, and primary channel only.
+    Using only primary (and ignoring secondaries) avoids splitting similar shifts when the model
+    assigns slightly different secondary channels or leaks category names (e.g. SECTOR_STRUCTURAL)
+    into channels. The merge LLM still sees full channel info and can set mergedPrimaryChannel
+    and mergedSecondaryChannels.
+    """
     clusters = {}
     for shift in shifts:
         typ = (shift.get("type") or "RISK").strip().upper()
         category = (shift.get("category") or "OTHER").strip().upper()
-        channels_key = _normalize_channels_for_cluster(get_shift_channels(shift))
-        key = f"{typ}|{category}|{channels_key}"
+        primary_key = _primary_channel_for_cluster(shift)
+        key = f"{typ}|{category}|{primary_key}"
         clusters.setdefault(key, []).append(shift)
     return clusters
 
@@ -92,23 +120,44 @@ def load_merge_prompt_template() -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
-def build_merge_prompt(cluster: List[Dict[str, Any]], template: str) -> str:
-    compact = [
-        {
-            "id": s.get("id"),
-            "type": s.get("type"),
-            "category": s.get("category"),
-            "headline": s.get("headline"),
-            "summary": s.get("summary"),
-            "momentumScore": s.get("momentumScore"),
-            "firstSeenAt": s.get("firstSeenAt"),
-            "primaryChannel": s.get("primaryChannel"),
-            "secondaryChannels": s.get("secondaryChannels") or [],
-            "articleRefs": (s.get("articleRefs") or [])[:3],
-        }
-        for s in cluster
-    ]
-    return template.replace("{shifts_json}", json.dumps(compact, indent=2))
+def _compact_shift_for_prompt(shift: Dict[str, Any], include_timeline: bool = False) -> Dict[str, Any]:
+    """Build a compact dict for one shift for the merge prompt."""
+    out = {
+        "id": shift.get("id"),
+        "type": shift.get("type"),
+        "category": shift.get("category"),
+        "headline": shift.get("headline"),
+        "summary": shift.get("summary"),
+        "momentumScore": shift.get("momentumScore"),
+        "firstSeenAt": shift.get("firstSeenAt"),
+        "primaryChannel": shift.get("primaryChannel"),
+        "secondaryChannels": shift.get("secondaryChannels") or [],
+        "articleRefs": (shift.get("articleRefs") or [])[:5],
+    }
+    if include_timeline:
+        timeline = shift.get("timeline")
+        if timeline:
+            out["timeline"] = {
+                "canonicalDriver": timeline.get("canonicalDriver"),
+                "canonicalDriverRationale": timeline.get("canonicalDriverRationale"),
+                "firstSurfacedAt": timeline.get("firstSurfacedAt"),
+                "majorDevelopments": (timeline.get("majorDevelopments") or [])[-10:],
+            }
+        canonical_driver = shift.get("canonicalDriver")
+        if canonical_driver:
+            out["canonicalDriver"] = canonical_driver
+    return out
+
+
+def build_merge_prompt(existing_shift: Dict[str, Any], incoming_shift: Dict[str, Any], template: str) -> str:
+    """Build the merge prompt for one pairwise comparison (existing canonical vs incoming candidate)."""
+    existing_compact = _compact_shift_for_prompt(existing_shift, include_timeline=True)
+    incoming_compact = _compact_shift_for_prompt(incoming_shift, include_timeline=False)
+    return template.replace(
+        "{existing_market_shift_json}", json.dumps(existing_compact, indent=2)
+    ).replace(
+        "{incoming_market_shift_json}", json.dumps(incoming_compact, indent=2)
+    )
 
 
 def _usage_from_response(response) -> Dict[str, int]:
@@ -122,13 +171,60 @@ def _usage_from_response(response) -> Dict[str, int]:
     }
 
 
+def _apply_timeline_additions(
+    timeline: Dict[str, Any],
+    additions: Dict[str, Any] | None,
+    canonical_driver: str | None,
+) -> None:
+    """Apply timelineAdditions from LLM response into the mutable timeline. Updates in place."""
+    if not additions:
+        return
+    revised_first = additions.get("revisedFirstSurfacedAt")
+    if revised_first:
+        current = (timeline.get("firstSurfacedAt") or "").strip()
+        if not current or (revised_first < current):
+            timeline["firstSurfacedAt"] = revised_first
+    revised_rationale = additions.get("revisedCanonicalDriverRationale")
+    if revised_rationale:
+        timeline["canonicalDriverRationale"] = revised_rationale
+    new_devs = additions.get("newMajorDevelopments")
+    if isinstance(new_devs, list) and new_devs:
+        existing = timeline.get("majorDevelopments") or []
+        merged = existing + [d for d in new_devs if isinstance(d, dict) and d.get("date") and d.get("description")]
+        merged.sort(key=lambda x: (x.get("date") or ""))
+        timeline["majorDevelopments"] = merged
+    if canonical_driver:
+        timeline["canonicalDriver"] = canonical_driver
+
+
 def merge_cluster_via_llm(
     cluster: List[Dict[str, Any]],
     client: genai.Client,
     prompt_template: str,
     verbose: bool = False,
 ) -> tuple[Dict[str, Any] | None, Dict[str, int]]:
-    prompt = build_merge_prompt(cluster, prompt_template)
+    if len(cluster) < 2:
+        return None, {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
+    sorted_cluster = sorted(
+        cluster,
+        key=lambda s: (s.get("firstSeenAt") or "z", s.get("id") or ""),
+    )
+    canonical_src = sorted_cluster[0]
+    candidates = sorted_cluster[1:]
+    # Mutable copy of canonical with timeline we can update
+    timeline = (canonical_src.get("timeline") or {}).copy()
+    if not isinstance(timeline, dict):
+        timeline = {}
+    timeline = {
+        "canonicalDriver": timeline.get("canonicalDriver") or canonical_src.get("headline") or "",
+        "canonicalDriverRationale": timeline.get("canonicalDriverRationale") or "",
+        "firstSurfacedAt": timeline.get("firstSurfacedAt") or (canonical_src.get("firstSeenAt") or "")[:10] or "",
+        "majorDevelopments": list(timeline.get("majorDevelopments") or []),
+    }
+    canonical_shift = dict(canonical_src)
+    canonical_shift["timeline"] = timeline
+    canonical_shift["canonicalDriver"] = timeline["canonicalDriver"]
+    duplicate_ids: List[str] = []
     model = os.getenv("GEMINI_MERGE_MODEL", get_gemini_model())
     temperature = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
     max_output_tokens = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
@@ -136,40 +232,68 @@ def merge_cluster_via_llm(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
     )
-    zero_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
+    total_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     if verbose:
-        logger.info("  Merge LLM for cluster of %d shifts", len(cluster))
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            )
-            usage = _usage_from_response(response)
-            if not response.text:
+        logger.info("  Merge LLM for cluster of %d shifts (pairwise)", len(cluster))
+    for candidate in candidates:
+        prompt = build_merge_prompt(canonical_shift, candidate, prompt_template)
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=config,
+                )
+                usage = _usage_from_response(response)
+                total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                total_usage["response_tokens"] += usage.get("response_tokens", 0)
+                total_usage["total_tokens"] += usage.get("total_tokens", 0)
+                if not response.text:
+                    if attempt == 0 and verbose:
+                        logger.info("  Merge LLM empty response, retrying once")
+                        continue
+                    logger.warning("Merge LLM returned empty response")
+                    return None, total_usage
+                json_str = _extract_json_from_response(response.text)
+                data = json.loads(json_str)
+                merge = data.get("merge") is True
+                if not merge:
+                    if verbose:
+                        logger.info("  LLM chose not to merge candidate %s", candidate.get("id"))
+                    return None, total_usage
+                duplicate_ids.append(candidate["id"])
+                if data.get("updateSummary") and data.get("revisedSummary"):
+                    canonical_shift["summary"] = data["revisedSummary"]
+                if data.get("updateCanonicalDriver") and data.get("revisedCanonicalDriver"):
+                    revised = data["revisedCanonicalDriver"]
+                    canonical_shift["canonicalDriver"] = revised
+                    timeline["canonicalDriver"] = revised
+                additions = data.get("timelineAdditions") if isinstance(data.get("timelineAdditions"), dict) else None
+                _apply_timeline_additions(timeline, additions, canonical_shift.get("canonicalDriver"))
+                break
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning("Merge LLM parse error: %s", e)
                 if attempt == 0 and verbose:
-                    logger.info("  Merge LLM empty response, retrying once")
+                    logger.info("  Retrying merge LLM once")
                     continue
-                logger.warning("Merge LLM returned empty response")
-                return None, usage
-            json_str = _extract_json_from_response(response.text)
-            data = json.loads(json_str)
-            if data.get("noMerge") is True:
-                if verbose:
-                    logger.info("  LLM chose noMerge for this cluster")
-                return None, usage
-            if not data.get("canonicalId") or not isinstance(data.get("mergeIntoCanonical"), list):
-                logger.warning("Merge LLM response missing canonicalId or mergeIntoCanonical")
-                return None, usage
-            return data, usage
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning("Merge LLM parse error: %s", e)
-            if attempt == 0 and verbose:
-                logger.info("  Retrying merge LLM once")
-                continue
-            return None, zero_usage
-    return None, zero_usage
+                return None, total_usage
+        else:
+            return None, total_usage
+    # Build merge result for apply_merge
+    all_article_refs = list(canonical_src.get("articleRefs") or [])
+    for s in candidates:
+        for ref in (s.get("articleRefs") or []):
+            if ref and ref not in all_article_refs:
+                all_article_refs.append(ref)
+    merge_result = {
+        "canonicalId": canonical_src["id"],
+        "mergeIntoCanonical": duplicate_ids,
+        "canonicalHeadline": canonical_shift.get("headline") or canonical_src.get("headline", ""),
+        "canonicalSummary": canonical_shift.get("summary") or canonical_src.get("summary", ""),
+        "mergedArticleRefs": all_article_refs,
+        "timeline": timeline,
+    }
+    return merge_result, total_usage
 
 
 def apply_merge(
@@ -190,9 +314,25 @@ def apply_merge(
     momentum_score = max(float(s.get("momentumScore", 0) or 0) for s in cluster)
     first_seen_dates = [s.get("firstSeenAt") for s in cluster if s.get("firstSeenAt")]
     first_seen_at = min(first_seen_dates) if first_seen_dates else canonical_shift.get("firstSeenAt", as_of)
+    # Use accumulated timeline from pairwise merge when present; else keep existing behavior
+    timeline = merge_result.get("timeline")
+    if isinstance(timeline, dict) and (timeline.get("canonicalDriver") is not None or timeline.get("majorDevelopments")):
+        # Ensure required timeline fields per schema
+        timeline = {
+            "canonicalDriver": timeline.get("canonicalDriver") or canonical_shift.get("headline") or "",
+            "canonicalDriverRationale": timeline.get("canonicalDriverRationale") or "",
+            "firstSurfacedAt": timeline.get("firstSurfacedAt") or "",
+            "majorDevelopments": list(timeline.get("majorDevelopments") or []),
+        }
+    else:
+        keep_timeline_id = merge_result.get("keepTimelineFrom") or canonical_id
+        timeline_shift = id_to_shift.get(keep_timeline_id)
+        timeline = (timeline_shift.get("timeline") if timeline_shift else None) or canonical_shift.get("timeline")
+        if timeline and merge_result.get("revisedCanonicalDriver"):
+            timeline = dict(timeline)
+            timeline["canonicalDriver"] = merge_result["revisedCanonicalDriver"]
     keep_timeline_id = merge_result.get("keepTimelineFrom") or canonical_id
     timeline_shift = id_to_shift.get(keep_timeline_id)
-    timeline = (timeline_shift.get("timeline") if timeline_shift else None) or canonical_shift.get("timeline")
     analyzed_at = (timeline_shift.get("analyzedAt") if timeline_shift else None) or canonical_shift.get("analyzedAt")
     merged_article_refs = merge_result.get("mergedArticleRefs")
     if not isinstance(merged_article_refs, list):
@@ -234,6 +374,38 @@ def apply_merge(
             shifts_ref.document(doc_id).delete()
             if verbose:
                 logger.info("  Deleted duplicate shift doc: %s", doc_id)
+
+
+def run_merge_step_in_memory(
+    shifts: List[Dict[str, Any]],
+    client: genai.Client,
+    prompt_template: str,
+    verbose: bool = False,
+) -> tuple[List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]], Dict[str, int]]:
+    """
+    Run merge clustering and LLM on a list of shifts in memory; no Firestore writes.
+    Returns (list of (cluster_key, cluster, decision) for each cluster that merged, total_usage).
+    """
+    zero_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
+    if not shifts:
+        return [], zero_usage
+    clusters = cluster_shifts(shifts)
+    multi_clusters = {k: v for k, v in clusters.items() if len(v) > 1}
+    if verbose:
+        logger.info(
+            "Merge (in-memory): %d shifts -> %d clusters, %d with duplicates",
+            len(shifts), len(clusters), len(multi_clusters),
+        )
+    decisions: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
+    merge_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
+    for cluster_key, cluster in sorted(multi_clusters.items()):
+        decision, u = merge_cluster_via_llm(cluster, client, prompt_template, verbose=verbose)
+        merge_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
+        merge_usage["response_tokens"] += u.get("response_tokens", 0)
+        merge_usage["total_tokens"] += u.get("total_tokens", 0)
+        if decision is not None:
+            decisions.append((cluster_key, cluster, decision))
+    return decisions, merge_usage
 
 
 def run_merge_step(

@@ -27,6 +27,8 @@ export interface MajorDevelopment {
 }
 
 export interface MarketShiftTimeline {
+  canonicalDriver?: string;
+  canonicalDriverRationale?: string;
   firstSurfacedAt: string;
   majorDevelopments: MajorDevelopment[];
 }

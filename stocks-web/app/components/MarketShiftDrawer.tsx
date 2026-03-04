@@ -1,5 +1,17 @@
 'use client';
 
+import { useState, useEffect, useMemo } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from 'recharts';
+import type { DailyDataPoint } from '../types/api';
+
 interface MajorDevelopment {
   date: string;
   description: string;
@@ -7,6 +19,8 @@ interface MajorDevelopment {
 }
 
 interface MarketShiftTimeline {
+  canonicalDriver?: string;
+  canonicalDriverRationale?: string;
   firstSurfacedAt: string;
   majorDevelopments: MajorDevelopment[];
 }
@@ -54,6 +68,32 @@ const MOMENTUM_LABEL_STYLES: Record<string, string> = {
   'Just surfaced': 'bg-gray-100 text-gray-400',
 };
 
+const CHANNEL_TO_TICKER: Record<string, string> = {
+  EQUITIES_US: 'SPY',
+  CREDIT: 'HYG',
+  VOL: '^VIX',
+  RATES_SHORT: '^IRX',
+  RATES_LONG: 'IEF',
+  USD: 'UUP',
+  OIL: 'USO',
+  GOLD: 'GLD',
+  INFLATION: 'TIP',
+  GLOBAL_RISK: 'EEM',
+};
+
+const CHANNEL_LABELS: Record<string, string> = {
+  EQUITIES_US: 'Equity market',
+  CREDIT: 'Credit',
+  VOL: 'Volatility',
+  RATES_SHORT: 'Short rates',
+  RATES_LONG: 'Long rates',
+  USD: 'USD',
+  OIL: 'Oil',
+  GOLD: 'Gold',
+  INFLATION: 'Inflation',
+  GLOBAL_RISK: 'Global risk',
+};
+
 function MomentumBadge({ label }: { label: string }) {
   const cls = MOMENTUM_LABEL_STYLES[label] ?? 'bg-gray-100 text-gray-600';
   return (
@@ -74,7 +114,72 @@ function formatFriendlyDate(dateStr: string): string {
 }
 
 export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
-  const hasTimeline = shift.timeline && (shift.timeline.firstSurfacedAt || (shift.timeline.majorDevelopments?.length ?? 0) > 0);
+  const hasTimeline = shift.timeline && (shift.timeline.canonicalDriver || shift.timeline.firstSurfacedAt || (shift.timeline.majorDevelopments?.length ?? 0) > 0);
+
+  const primaryChannel = shift.primaryChannel ?? null;
+  const chartTicker = primaryChannel ? CHANNEL_TO_TICKER[primaryChannel] : null;
+  const [chartData, setChartData] = useState<DailyDataPoint[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!chartTicker) {
+      setChartData([]);
+      setChartLoading(false);
+      setChartError(null);
+      return;
+    }
+    const ac = new AbortController();
+    setChartLoading(true);
+    setChartError(null);
+    fetch(`/api/daily-prices/${encodeURIComponent(chartTicker)}?period=2y`, {
+      signal: ac.signal,
+      cache: 'no-store',
+      headers: { Pragma: 'no-cache', 'Cache-Control': 'no-cache' },
+    })
+      .then((res) => {
+        if (!res.ok) {
+          if (res.status === 404) throw new Error('not_found');
+          throw new Error(res.statusText || 'Failed to load chart');
+        }
+        return res.json();
+      })
+      .then((body: { data?: DailyDataPoint[] }) => {
+        if (ac.signal.aborted) return;
+        const data = body.data ?? [];
+        setChartData(Array.isArray(data) ? data : []);
+        setChartLoading(false);
+        setChartError(null);
+      })
+      .catch((err) => {
+        if (ac.signal.aborted) return;
+        setChartData([]);
+        setChartLoading(false);
+        setChartError(err?.message === 'not_found' ? 'Chart not available for this channel.' : 'Failed to load chart.');
+      });
+    return () => ac.abort();
+  }, [chartTicker]);
+
+  const { chartDataFiltered, timelineLineDate } = useMemo(() => {
+    const empty = { chartDataFiltered: [] as DailyDataPoint[], timelineLineDate: null as string | null };
+    if (chartData.length === 0) return empty;
+    const tl = shift.timeline;
+    const firstSurfaced = tl?.firstSurfacedAt;
+    const devDates = tl?.majorDevelopments?.map((d) => d.date).filter(Boolean) ?? [];
+    const candidates = [firstSurfaced, ...devDates].filter((s): s is string => typeof s === 'string' && s.length > 0);
+    if (candidates.length === 0) return { chartDataFiltered: chartData, timelineLineDate: null };
+    const timelineStartStr = candidates.sort()[0];
+    const timelineStart = new Date(timelineStartStr);
+    if (Number.isNaN(timelineStart.getTime())) return { chartDataFiltered: chartData, timelineLineDate: null };
+    const twoMonthsBefore = new Date(timelineStart);
+    twoMonthsBefore.setMonth(twoMonthsBefore.getMonth() - 2);
+    const startStr = twoMonthsBefore.toISOString().slice(0, 10);
+    const filtered = chartData.filter((d) => d.date >= startStr);
+    const lineDate = filtered.some((d) => d.date === timelineStartStr)
+      ? timelineStartStr
+      : filtered.find((d) => d.date >= timelineStartStr)?.date ?? null;
+    return { chartDataFiltered: filtered, timelineLineDate: lineDate };
+  }, [chartData, shift.timeline]);
 
   return (
     <>
@@ -131,12 +236,75 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
             </div>
           )}
 
+          {chartTicker && (
+            <div className="mb-6">
+              <p className="text-xs text-gray-500 mb-2">
+                {CHANNEL_LABELS[primaryChannel!] ?? primaryChannel} — {chartTicker}
+              </p>
+              {chartLoading ? (
+                <div className="flex items-center justify-center h-[220px] text-gray-500">
+                  <span className="animate-pulse">Loading chart…</span>
+                </div>
+              ) : chartError ? (
+                <div className="flex items-center justify-center h-[220px] rounded border border-gray-200 bg-gray-50 text-gray-500 text-sm">
+                  {chartError}
+                </div>
+              ) : chartData.length === 0 ? (
+                <div className="flex items-center justify-center h-[220px] rounded border border-gray-200 bg-gray-50 text-gray-500 text-sm">
+                  Chart not available for this channel.
+                </div>
+              ) : (
+                <div className="h-[220px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartDataFiltered} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => {
+                          const d = new Date(v);
+                          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        }}
+                      />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(0) : v)} />
+                      {timelineLineDate && (
+                        <ReferenceLine x={timelineLineDate} stroke="#64748b" strokeDasharray="3 3" strokeWidth={1} />
+                      )}
+                      <Tooltip
+                        formatter={(value: number) => [typeof value === 'number' ? value.toFixed(2) : value, 'Price']}
+                        labelFormatter={(label) => formatFriendlyDate(label)}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="price"
+                        stroke="#2563eb"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Price"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mb-6">
             <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
               Timeline
             </h4>
             {hasTimeline ? (
               <div className="space-y-4">
+                {shift.timeline!.canonicalDriver && (
+                  <p className="text-sm text-gray-700">
+                    <span className="font-medium text-gray-600">Canonical driver: </span>
+                    {shift.timeline!.canonicalDriver}
+                  </p>
+                )}
+                {shift.timeline!.canonicalDriverRationale && (
+                  <p className="text-sm text-gray-600 italic">
+                    {shift.timeline!.canonicalDriverRationale}
+                  </p>
+                )}
                 {shift.timeline!.firstSurfacedAt && (
                   <p className="text-sm text-gray-600">
                     First surfaced: {formatFriendlyDate(shift.timeline!.firstSurfacedAt)}

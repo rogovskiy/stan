@@ -4,7 +4,17 @@ Pub/Sub-triggered Firebase Functions:
 
 1. **youtube_refresh** — Subscribes to `youtube-refresh-requests`; each message carries `{"subscriptionId": "<firestore-doc-id>"}`. Uses YouTube Data API (resolve @handles) + public RSS feed; upserts to Firestore (`youtube_subscriptions`, `youtube_videos`). Does not fetch transcripts in the cloud (to avoid IP blocking).
 
-2. **youtube_transcript_analysis** — Subscribes to `youtube-transcript-analysis-requests`; each message carries `{"videoId": "<id>"}`. Reads transcript from Storage (`youtube_transcripts/{videoId}.txt`), summarizes with Gemini, writes `transcriptSummary` and `transcriptSummaryUpdatedAt` to Firestore.
+2. **youtube_transcript_analysis** — Subscribes to `youtube-transcript-analysis-requests`; each message carries `{"videoId": "<id>"}`. Reads transcript from Storage (`youtube_transcripts/{videoId}.txt`), summarizes with Gemini (using the **dynamic prompt** `youtube_transcript_summary`), writes `transcriptSummary` and `transcriptSummaryUpdatedAt` to Firestore.
+
+## Transcript analysis prompt (dynamic)
+
+Transcript analysis uses the prompt **by name** from the admin prompts system (Firestore collection `prompts`, Storage for content). You must create a prompt with ID **`youtube_transcript_summary`** in the admin UI (e.g. `/prompts` in the web app).
+
+- **Prompt ID:** `youtube_transcript_summary`
+- **Content:** Must include the placeholder `{transcript}` where the video transcript will be injected. Example instructions: ask the model to extract forward-looking economic or market theses, up to 3, in Markdown with clear structure; ignore purely educational or repetitive content.
+- **Version params (optional):** Set `model` (e.g. `gemini-2.5-flash`), `temperature` (e.g. `0.1`), and optionally `structuredOutput` + `schema` if you want JSON output.
+
+If this prompt does not exist or has no active version, transcript analysis will raise an error. Run `make vendor` after changing data-fetcher code used by this function.
 
 ## Environment
 

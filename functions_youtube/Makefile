@@ -7,8 +7,12 @@ VENDOR_ROOT := vendor
 DATA_FETCHER := ..
 ENV_FILE ?= $(DATA_FETCHER)/data-fetcher/.env.local
 VENDOR_SOURCES := \
+	$(DATA_FETCHER)/data-fetcher/extraction_utils.py \
+	$(DATA_FETCHER)/data-fetcher/dynamic_prompt_runner.py \
 	$(DATA_FETCHER)/data-fetcher/services/firebase_base_service.py \
 	$(DATA_FETCHER)/data-fetcher/services/job_run_service.py \
+	$(DATA_FETCHER)/data-fetcher/services/prompt_config_service.py \
+	$(DATA_FETCHER)/data-fetcher/services/prompt_execution_log_service.py \
 	$(DATA_FETCHER)/data-fetcher/services/__init__.py
 
 # Populate vendor from data-fetcher if missing (vendor/ is in .gitignore).
@@ -16,8 +20,12 @@ vendor: $(VENDOR_ROOT)/.stamp
 
 $(VENDOR_ROOT)/.stamp: $(VENDOR_SOURCES)
 	@mkdir -p $(VENDOR_ROOT)/services
+	cp $(DATA_FETCHER)/data-fetcher/extraction_utils.py $(VENDOR_ROOT)/
+	cp $(DATA_FETCHER)/data-fetcher/dynamic_prompt_runner.py $(VENDOR_ROOT)/
 	cp $(DATA_FETCHER)/data-fetcher/services/firebase_base_service.py $(VENDOR_ROOT)/services/
 	cp $(DATA_FETCHER)/data-fetcher/services/job_run_service.py $(VENDOR_ROOT)/services/
+	cp $(DATA_FETCHER)/data-fetcher/services/prompt_config_service.py $(VENDOR_ROOT)/services/
+	cp $(DATA_FETCHER)/data-fetcher/services/prompt_execution_log_service.py $(VENDOR_ROOT)/services/
 	cp $(DATA_FETCHER)/data-fetcher/services/__init__.py $(VENDOR_ROOT)/services/
 	@touch $(VENDOR_ROOT)/.stamp
 

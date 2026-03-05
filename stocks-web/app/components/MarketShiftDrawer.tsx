@@ -181,6 +181,17 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
     return { chartDataFiltered: filtered, timelineLineDate: lineDate };
   }, [chartData, shift.timeline]);
 
+  const priceDomain = useMemo(() => {
+    if (chartDataFiltered.length === 0) return undefined;
+    const prices = chartDataFiltered.map((d) => d.price).filter((p): p is number => typeof p === 'number');
+    if (prices.length === 0) return undefined;
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const range = maxP - minP || 1;
+    const padding = Math.max(range * 0.05, range * 0.02 + 0.5);
+    return [minP - padding, maxP + padding] as [number, number];
+  }, [chartDataFiltered]);
+
   return (
     <>
       <div
@@ -265,7 +276,11 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
                           return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                         }}
                       />
-                      <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(0) : v)} />
+                      <YAxis
+                        domain={priceDomain ?? ['auto', 'auto']}
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(0) : v)}
+                      />
                       {timelineLineDate && (
                         <ReferenceLine x={timelineLineDate} stroke="#64748b" strokeDasharray="3 3" strokeWidth={1} />
                       )}

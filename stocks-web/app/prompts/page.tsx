@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import AppNavigation from '../components/AppNavigation';
 
 interface PromptListItem {
@@ -21,6 +21,8 @@ interface ExecutionListItem {
   promptTokenCount: number;
   responseTokenCount: number;
   totalTokenCount: number;
+  rating: number | null;
+  feedbackComment: string | null;
 }
 
 function formatDate(iso: string): string {
@@ -57,6 +59,7 @@ function isValidPromptId(id: string): boolean {
 
 export default function PromptsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [prompts, setPrompts] = useState<PromptListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +74,9 @@ export default function PromptsPage() {
   const [executionsLoading, setExecutionsLoading] = useState(false);
   const [expandedExecutionId, setExpandedExecutionId] = useState<string | null>(null);
   const [showFullInput, setShowFullInput] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState<number | null>(null);
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [feedbackSaveStatus, setFeedbackSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [executionContent, setExecutionContent] = useState<{
     input?: string;
     output?: string;
@@ -108,6 +114,16 @@ export default function PromptsPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // Deep link: open executions drawer and expand execution from URL params
+  useEffect(() => {
+    const openExecutions = searchParams.get('openExecutions');
+    const executionId = searchParams.get('executionId');
+    if (openExecutions && executionId) {
+      setExecutionsDrawerPromptId(openExecutions);
+      setExecutionsDrawerName(openExecutions);
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     const promptId = executionsDrawerPromptId;
     if (!promptId) {
@@ -138,6 +154,20 @@ export default function PromptsPage() {
     return () => { cancelled = true; };
   }, [executionsDrawerPromptId]);
 
+  // After executions load, expand the execution from deep link if present
+  useEffect(() => {
+    const executionId = searchParams.get('executionId');
+    if (!executionId || executionsLoading || executions.length === 0) return;
+    if (executionsDrawerPromptId && executions.some((e) => e.executionId === executionId)) {
+      setExpandedExecutionId(executionId);
+      const ex = executions.find((e) => e.executionId === executionId);
+      if (ex) {
+        setFeedbackRating(ex.rating ?? null);
+        setFeedbackComment(ex.feedbackComment ?? '');
+      }
+    }
+  }, [searchParams, executionsLoading, executions, executionsDrawerPromptId]);
+
   const fetchExecutionPart = useCallback(
     async (executionId: string, part: 'input' | 'output' | 'parameters') => {
       const promptId = executionsDrawerPromptId;
@@ -163,13 +193,58 @@ export default function PromptsPage() {
     [executionsDrawerPromptId, executionContent]
   );
 
-  const handleExpandExecution = useCallback((executionId: string) => {
+  const handleExpandExecution = useCallback((executionId: string, executionsList: ExecutionListItem[]) => {
     setExpandedExecutionId((prev) => (prev === executionId ? null : executionId));
     setShowFullInput(false);
     setExecutionContent({});
     setExecutionContentError({});
     setExecutionContentLoading({});
+    setFeedbackSaveStatus('idle');
+    const ex = executionsList.find((e) => e.executionId === executionId);
+    if (ex) {
+      setFeedbackRating(ex.rating ?? null);
+      setFeedbackComment(ex.feedbackComment ?? '');
+    }
   }, []);
+
+  const saveFeedback = useCallback(
+    async (executionId: string) => {
+      const promptId = executionsDrawerPromptId;
+      if (!promptId) return;
+      setFeedbackSaveStatus('saving');
+      try {
+        const res = await fetch(
+          `/api/admin/prompts/${encodeURIComponent(promptId)}/executions/${encodeURIComponent(executionId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              rating: feedbackRating,
+              feedbackComment: feedbackComment.trim() || null,
+            }),
+          }
+        );
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || res.statusText);
+        }
+        const updated = (await res.json()) as { rating: number | null; feedbackComment: string | null };
+        setExecutions((prev) =>
+          prev.map((e) =>
+            e.executionId === executionId
+              ? { ...e, rating: updated.rating, feedbackComment: updated.feedbackComment }
+              : e
+          )
+        );
+        setFeedbackSaveStatus('saved');
+        setTimeout(() => setFeedbackSaveStatus('idle'), 2000);
+      } catch {
+        setFeedbackSaveStatus('error');
+        setTimeout(() => setFeedbackSaveStatus('idle'), 3000);
+      }
+    },
+    [executionsDrawerPromptId, feedbackRating, feedbackComment]
+  );
 
   const handleCreateOpen = () => {
     setNewId('');
@@ -347,6 +422,7 @@ export default function PromptsPage() {
                           <th className="text-left px-4 py-2 font-medium text-gray-700">Duration</th>
                           <th className="text-left px-4 py-2 font-medium text-gray-700">Version</th>
                           <th className="text-left px-4 py-2 font-medium text-gray-700">Tokens</th>
+                          <th className="text-left px-4 py-2 font-medium text-gray-700">Rating</th>
                           <th className="w-20 px-4 py-2" />
                         </tr>
                       </thead>
@@ -362,10 +438,13 @@ export default function PromptsPage() {
                               <td className="px-4 py-2 font-mono text-gray-600">
                                 {ex.promptTokenCount} / {ex.responseTokenCount} / {ex.totalTokenCount}
                               </td>
+                              <td className="px-4 py-2 text-gray-600">
+                                {ex.rating != null ? `${ex.rating} ★` : '—'}
+                              </td>
                               <td className="px-4 py-2">
                                 <button
                                   type="button"
-                                  onClick={() => handleExpandExecution(ex.executionId)}
+                                  onClick={() => handleExpandExecution(ex.executionId, executions)}
                                   className="text-blue-600 hover:underline text-xs font-medium"
                                 >
                                   {expandedExecutionId === ex.executionId ? 'Hide' : 'View'}
@@ -374,7 +453,7 @@ export default function PromptsPage() {
                             </tr>
                             {expandedExecutionId === ex.executionId && (
                               <tr key={`${ex.executionId}-detail`}>
-                                <td colSpan={5} className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                                <td colSpan={6} className="px-4 py-3 bg-gray-50 border-b border-gray-200">
                                   <div className="text-xs text-gray-500 font-mono mb-2">
                                     ID: {ex.executionId}
                                   </div>
@@ -477,6 +556,67 @@ export default function PromptsPage() {
                                       </div>
                                     </div>
                                   )}
+                                  <div className="mt-3 border border-gray-200 rounded bg-white overflow-hidden">
+                                    <div className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border-b border-gray-200">
+                                      Feedback
+                                    </div>
+                                    <div className="p-3 space-y-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-gray-600">Rating:</span>
+                                        {[1, 2, 3, 4, 5].map((star) => (
+                                          <button
+                                            key={star}
+                                            type="button"
+                                            onClick={() => setFeedbackRating((prev) => (prev === star ? null : star))}
+                                            className="text-lg leading-none focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                                            title={feedbackRating === star ? 'Clear rating' : `${star} star${star > 1 ? 's' : ''}`}
+                                            aria-label={`${star} star${star > 1 ? 's' : ''}`}
+                                          >
+                                            {feedbackRating != null && star <= feedbackRating ? '★' : '☆'}
+                                          </button>
+                                        ))}
+                                        {feedbackRating != null && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setFeedbackRating(null)}
+                                            className="text-xs text-gray-500 hover:text-gray-700 ml-1"
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div>
+                                        <label htmlFor="feedback-comment" className="block text-xs text-gray-600 mb-1">
+                                          Comment
+                                        </label>
+                                        <textarea
+                                          id="feedback-comment"
+                                          value={feedbackComment}
+                                          onChange={(e) => setFeedbackComment(e.target.value)}
+                                          placeholder="Add a comment…"
+                                          rows={3}
+                                          className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-y"
+                                        />
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => saveFeedback(ex.executionId)}
+                                          disabled={feedbackSaveStatus === 'saving'}
+                                          className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50"
+                                        >
+                                          {feedbackSaveStatus === 'saving'
+                                            ? 'Saving…'
+                                            : feedbackSaveStatus === 'saved'
+                                              ? 'Saved'
+                                              : 'Save feedback'}
+                                        </button>
+                                        {feedbackSaveStatus === 'error' && (
+                                          <span className="text-sm text-red-600">Save failed</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
                                 </td>
                               </tr>
                             )}

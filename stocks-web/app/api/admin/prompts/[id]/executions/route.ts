@@ -12,6 +12,8 @@ export interface ExecutionListItem {
   promptTokenCount: number;
   responseTokenCount: number;
   totalTokenCount: number;
+  rating: number | null;
+  feedbackComment: string | null;
 }
 
 function toISOString(value: unknown): string {
@@ -49,6 +51,8 @@ export async function GET(
         promptTokenCount: typeof data.promptTokenCount === 'number' ? data.promptTokenCount : 0,
         responseTokenCount: typeof data.responseTokenCount === 'number' ? data.responseTokenCount : 0,
         totalTokenCount: typeof data.totalTokenCount === 'number' ? data.totalTokenCount : 0,
+        rating: typeof data.rating === 'number' ? data.rating : null,
+        feedbackComment: typeof data.feedbackComment === 'string' ? data.feedbackComment : null,
       };
     });
 

@@ -21,6 +21,12 @@ export interface YouTubeSubscription {
   createdAt?: string;
 }
 
+/** Provenance entry linking to a prompt execution (e.g. transcript analysis). */
+export interface ProvenanceEntry {
+  analysis?: string;
+  [key: string]: string | undefined;
+}
+
 export interface YouTubeVideo {
   id: string;
   videoId: string;
@@ -32,6 +38,8 @@ export interface YouTubeVideo {
   createdAt?: string;
   transcriptStorageRef?: string | null;
   transcriptSummary?: string | null;
+  /** Links to prompt executions that produced this content (e.g. [{ analysis: "<execution_id>" }]). */
+  provenance?: ProvenanceEntry[] | null;
 }
 
 const SUBS_COLLECTION = 'youtube_subscriptions';
@@ -67,6 +75,9 @@ function toVideo(docId: string, data: Record<string, unknown>): YouTubeVideo {
       (typeof data.createdAt === 'string' ? data.createdAt : undefined),
     transcriptStorageRef: (data.transcriptStorageRef as string) ?? null,
     transcriptSummary: (data.transcriptSummary as string) ?? null,
+    provenance: Array.isArray(data.provenance)
+      ? (data.provenance as ProvenanceEntry[])
+      : null,
   };
 }
 

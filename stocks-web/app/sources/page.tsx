@@ -6,6 +6,7 @@ import AppNavigation from '../components/AppNavigation';
 import { useAuth } from '@/app/lib/authContext';
 import type { YouTubeVideo, YouTubeSubscription } from '../lib/services/youtubeSubscriptionService';
 import { getReviewedVideoIds, markTranscriptReviewed } from '../lib/services/youtubeSubscriptionService';
+import { ExecutionFeedbackWidget } from '../components/ExecutionFeedbackWidget';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -225,6 +226,14 @@ function TranscriptDrawer({
             <p className="text-sm text-gray-500 italic">
               Transcript not yet summarized. Run the transcript script locally to fetch and analyze.
             </p>
+          )}
+          {video.provenance && video.provenance.length > 0 && (
+            <div className="mt-4">
+              <ExecutionFeedbackWidget
+                provenance={video.provenance}
+                promptId="youtube_transcript_summary"
+              />
+            </div>
           )}
         </div>
       </div>

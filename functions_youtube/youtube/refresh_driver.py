@@ -40,6 +40,28 @@ def resolve_handle_to_channel_id(handle: str, api_key: str) -> str:
     return data["items"][0]["snippet"]["channelId"]
 
 
+def _live_stream_video_ids(video_ids: list[str], api_key: str, timeout_seconds: int = 20) -> set[str]:
+    """Return set of video IDs that are live streams (current, upcoming, or past). Uses videos.list with part=liveStreamingDetails."""
+    if not video_ids or not api_key:
+        return set()
+    live_ids: set[str] = set()
+    for i in range(0, len(video_ids), 50):  # API allows max 50 IDs per request
+        batch = video_ids[i : i + 50]
+        url = "https://www.googleapis.com/youtube/v3/videos"
+        params = {
+            "part": "liveStreamingDetails",
+            "id": ",".join(batch),
+            "key": api_key,
+        }
+        r = requests.get(url, params=params, timeout=timeout_seconds)
+        r.raise_for_status()
+        data = r.json()
+        for item in data.get("items", []):
+            if "liveStreamingDetails" in item:
+                live_ids.add(item["id"])
+    return live_ids
+
+
 def latest_videos_from_rss(channel_id: str, timeout_seconds: int = 20) -> list[dict]:
     """Fetch latest videos for a channel via public RSS feed (no API key). Returns list of {video_id, title, published}."""
     feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
@@ -125,6 +147,13 @@ def fetch_feed_entries_via_api(
             "url": f"https://www.youtube.com/watch?v={vid}",
             "publishedAt": published,
         })
+    # Skip live streams: they rarely have stable transcripts during/right after broadcast
+    if entries and api_key:
+        live_ids = _live_stream_video_ids([e["id"] for e in entries], api_key, timeout_seconds=20)
+        if live_ids:
+            entries = [e for e in entries if e["id"] not in live_ids]
+            if verbose:
+                logger.info("Filtered out %d live stream(s): %s", len(live_ids), sorted(live_ids))
     if verbose and entries:
         logger.info("Fetched %d entries from %s (channel %s)", len(entries), url, channel_id)
     return entries

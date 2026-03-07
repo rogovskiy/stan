@@ -75,8 +75,8 @@ export default function PromptEditPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadPrompt = useCallback(
-    (version?: number) => {
-      if (!id) return;
+    (version?: number): Promise<void> => {
+      if (!id) return Promise.resolve();
       const url =
         version != null && version > 0
           ? `/api/admin/prompts/${encodeURIComponent(id)}?version=${version}`

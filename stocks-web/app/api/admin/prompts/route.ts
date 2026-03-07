@@ -17,7 +17,7 @@ function displayName(id: string): string {
 
 function getVersionMeta(versions: unknown[], version: number): { model?: string | null } {
   if (!Array.isArray(versions)) return {};
-  const entry = versions.find((v: { version?: number }) => v?.version === version);
+  const entry = versions.find((v) => (v as { version?: number })?.version === version);
   if (!entry || typeof entry !== 'object') return {};
   return {
     model: (entry as { model?: string | null }).model ?? null,

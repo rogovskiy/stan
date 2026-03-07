@@ -621,7 +621,7 @@ export default function MacroPage() {
                                   prev={shift.momentumScorePrev}
                                 />
                                 <span className="text-sm font-medium text-gray-900">
-                                  {shift.headline}
+                                  {shift.timeline?.canonicalDriver ?? shift.headline}
                                 </span>
                               </button>
                             ))}

@@ -202,7 +202,7 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
         <div className="p-6">
           <div className="flex items-start justify-between gap-4 mb-4 pb-4 border-b border-gray-200">
             <h2 className="text-xl font-bold text-gray-900">
-              {shift.headline}
+              {shift.timeline?.canonicalDriver ?? shift.headline}
             </h2>
             <button
               onClick={onClose}

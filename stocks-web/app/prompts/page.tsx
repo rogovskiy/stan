@@ -433,7 +433,7 @@ export default function PromptsPage() {
                               <td className="px-4 py-2 text-gray-800">
                                 {formatVersionDate(ex.createdAt)}
                               </td>
-                              <td className="px-4 py-2 font-mono text-gray-700">{ex.durationMs} ms</td>
+                              <td className="px-4 py-2 font-mono text-gray-700">{(ex.durationMs / 1000).toFixed(2)} s</td>
                               <td className="px-4 py-2 text-gray-700">v{ex.promptVersion}</td>
                               <td className="px-4 py-2 font-mono text-gray-600">
                                 {ex.promptTokenCount} / {ex.responseTokenCount} / {ex.totalTokenCount}

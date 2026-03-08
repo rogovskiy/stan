@@ -3,19 +3,14 @@
 Market Shift Merge
 
 Deterministic clustering and LLM-based merge of duplicate market shifts.
-Uses shared vendor: extraction_utils. Prompts from functions_macro/prompts.
+Uses prompt framework prompt 'market_shift_merge' (Firestore/Storage).
 """
 
 import json
 import logging
-import os
-from pathlib import Path
 from typing import Any, Dict, List
 
-from google import genai
-from google.genai import types
-
-from extraction_utils import get_gemini_model
+from dynamic_prompt_runner import run_llm_with_prompt_name
 from market_shifts.market_shift_service import MarketShiftService, get_shift_channels
 
 logger = logging.getLogger(__name__)
@@ -25,6 +20,10 @@ VALID_CHANNELS = frozenset({
     "EQUITIES_US", "CREDIT", "VOL", "RATES_SHORT", "RATES_LONG",
     "USD", "OIL", "GOLD", "INFLATION", "GLOBAL_RISK",
 })
+
+# Merge = confirmation that the same shift surfaced again; bump momentum above max(cluster)
+MERGE_BOOST = 3.0
+MOMENTUM_CAP = 20.0
 
 
 def _primary_channel_for_cluster(shift: Dict[str, Any]) -> str:
@@ -111,15 +110,6 @@ def _extract_json_from_response(response_text: str) -> str:
     return ""
 
 
-def load_merge_prompt_template() -> str:
-    """Load the market shift merge prompt template. Prompts live in functions_macro/prompts."""
-    base = Path(__file__).resolve().parent.parent
-    prompt_path = base / "prompts" / "market_shift_merge_prompt.txt"
-    if not prompt_path.exists():
-        raise FileNotFoundError(f"Prompt not found: {prompt_path}")
-    return prompt_path.read_text(encoding="utf-8")
-
-
 def _compact_shift_for_prompt(shift: Dict[str, Any], include_timeline: bool = False) -> Dict[str, Any]:
     """Build a compact dict for one shift for the merge prompt."""
     out = {
@@ -147,28 +137,6 @@ def _compact_shift_for_prompt(shift: Dict[str, Any], include_timeline: bool = Fa
         if canonical_driver:
             out["canonicalDriver"] = canonical_driver
     return out
-
-
-def build_merge_prompt(existing_shift: Dict[str, Any], incoming_shift: Dict[str, Any], template: str) -> str:
-    """Build the merge prompt for one pairwise comparison (existing canonical vs incoming candidate)."""
-    existing_compact = _compact_shift_for_prompt(existing_shift, include_timeline=True)
-    incoming_compact = _compact_shift_for_prompt(incoming_shift, include_timeline=False)
-    return template.replace(
-        "{existing_market_shift_json}", json.dumps(existing_compact, indent=2)
-    ).replace(
-        "{incoming_market_shift_json}", json.dumps(incoming_compact, indent=2)
-    )
-
-
-def _usage_from_response(response) -> Dict[str, int]:
-    u = getattr(response, "usage_metadata", None)
-    if u is None:
-        return {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
-    return {
-        "prompt_tokens": getattr(u, "prompt_token_count", 0) or 0,
-        "response_tokens": getattr(u, "candidates_token_count", 0) or 0,
-        "total_tokens": getattr(u, "total_token_count", 0) or 0,
-    }
 
 
 def _apply_timeline_additions(
@@ -199,10 +167,9 @@ def _apply_timeline_additions(
 
 def merge_cluster_via_llm(
     cluster: List[Dict[str, Any]],
-    client: genai.Client,
-    prompt_template: str,
     verbose: bool = False,
 ) -> tuple[Dict[str, Any] | None, Dict[str, int]]:
+    """Run merge LLM per candidate via prompt framework prompt 'market_shift_merge'."""
     if len(cluster) < 2:
         return None, {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     sorted_cluster = sorted(
@@ -225,36 +192,34 @@ def merge_cluster_via_llm(
     canonical_shift["timeline"] = timeline
     canonical_shift["canonicalDriver"] = timeline["canonicalDriver"]
     duplicate_ids: List[str] = []
-    model = os.getenv("GEMINI_MERGE_MODEL", get_gemini_model())
-    temperature = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
-    max_output_tokens = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
-    config = types.GenerateContentConfig(
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-    )
     total_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     if verbose:
         logger.info("  Merge LLM for cluster of %d shifts (pairwise)", len(cluster))
     for candidate in candidates:
-        prompt = build_merge_prompt(canonical_shift, candidate, prompt_template)
+        existing_compact = _compact_shift_for_prompt(canonical_shift, include_timeline=True)
+        incoming_compact = _compact_shift_for_prompt(candidate, include_timeline=False)
+        template_vars = {
+            "existing_market_shift_json": json.dumps(existing_compact, indent=2),
+            "incoming_market_shift_json": json.dumps(incoming_compact, indent=2),
+        }
         for attempt in range(2):
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
+                result, _, usage = run_llm_with_prompt_name(
+                    "market_shift_merge",
+                    template_vars,
+                    max_output_tokens=4096,
                 )
-                usage = _usage_from_response(response)
                 total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
                 total_usage["response_tokens"] += usage.get("response_tokens", 0)
                 total_usage["total_tokens"] += usage.get("total_tokens", 0)
-                if not response.text:
+                text = result if isinstance(result, str) else ""
+                if not (text or "").strip():
                     if attempt == 0 and verbose:
                         logger.info("  Merge LLM empty response, retrying once")
                         continue
                     logger.warning("Merge LLM returned empty response")
                     return None, total_usage
-                json_str = _extract_json_from_response(response.text)
+                json_str = _extract_json_from_response(text)
                 data = json.loads(json_str)
                 merge = data.get("merge") is True
                 if not merge:
@@ -311,7 +276,9 @@ def apply_merge(
     if not canonical_shift:
         logger.warning("Canonical id %s not in cluster, skipping apply", canonical_id)
         return
-    momentum_score = max(float(s.get("momentumScore", 0) or 0) for s in cluster)
+    cluster_max = max(float(s.get("momentumScore", 0) or 0) for s in cluster)
+    momentum_score = round(min(cluster_max + MERGE_BOOST, MOMENTUM_CAP), 4)
+    momentum_score_prev = round(float(canonical_shift.get("momentumScore", 0) or 0), 4)
     first_seen_dates = [s.get("firstSeenAt") for s in cluster if s.get("firstSeenAt")]
     first_seen_at = min(first_seen_dates) if first_seen_dates else canonical_shift.get("firstSeenAt", as_of)
     # Use accumulated timeline from pairwise merge when present; else keep existing behavior
@@ -358,8 +325,8 @@ def apply_merge(
         "articleRefs": merged_article_refs,
         "asOf": as_of,
         "fetchedAt": fetched_at,
-        "momentumScore": round(momentum_score, 4),
-        "momentumScorePrev": round(momentum_score, 4),
+        "momentumScore": momentum_score,
+        "momentumScorePrev": momentum_score_prev,
         "momentumUpdatedAt": fetched_at,
         "firstSeenAt": first_seen_at,
     }
@@ -378,8 +345,6 @@ def apply_merge(
 
 def run_merge_step_in_memory(
     shifts: List[Dict[str, Any]],
-    client: genai.Client,
-    prompt_template: str,
     verbose: bool = False,
 ) -> tuple[List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]], Dict[str, int]]:
     """
@@ -399,7 +364,7 @@ def run_merge_step_in_memory(
     decisions: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
     merge_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     for cluster_key, cluster in sorted(multi_clusters.items()):
-        decision, u = merge_cluster_via_llm(cluster, client, prompt_template, verbose=verbose)
+        decision, u = merge_cluster_via_llm(cluster, verbose=verbose)
         merge_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
         merge_usage["response_tokens"] += u.get("response_tokens", 0)
         merge_usage["total_tokens"] += u.get("total_tokens", 0)
@@ -411,7 +376,6 @@ def run_merge_step_in_memory(
 def run_merge_step(
     svc: MarketShiftService,
     as_of: str,
-    client: genai.Client,
     verbose: bool = False,
     dry_run: bool = False,
 ) -> tuple[bool, int, Dict[str, int]]:
@@ -421,7 +385,6 @@ def run_merge_step(
         if verbose:
             logger.info("No shifts to merge")
         return False, 0, zero_usage
-    template = load_merge_prompt_template()
     clusters = cluster_shifts(shifts)
     multi_clusters = {k: v for k, v in clusters.items() if len(v) > 1}
     if verbose:
@@ -436,7 +399,7 @@ def run_merge_step(
     merges_applied = 0
     merge_usage = {"prompt_tokens": 0, "response_tokens": 0, "total_tokens": 0}
     for cluster_key, cluster in multi_clusters.items():
-        decision, u = merge_cluster_via_llm(cluster, client, template, verbose=verbose)
+        decision, u = merge_cluster_via_llm(cluster, verbose=verbose)
         merge_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
         merge_usage["response_tokens"] += u.get("response_tokens", 0)
         merge_usage["total_tokens"] += u.get("total_tokens", 0)

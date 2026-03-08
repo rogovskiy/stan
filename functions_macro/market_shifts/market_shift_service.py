@@ -115,6 +115,7 @@ class MarketShiftService(FirebaseBaseService):
             if existing_doc.exists:
                 existing = existing_doc.to_dict() or {}
                 stored_score = float(existing.get("momentumScore", 0.0))
+                momentum_score_prev = stored_score
                 updated_at_str = existing.get("momentumUpdatedAt")
                 first_seen_at = existing.get("firstSeenAt", as_of)
                 if updated_at_str:
@@ -130,6 +131,7 @@ class MarketShiftService(FirebaseBaseService):
             else:
                 first_seen_at = as_of
                 momentum_score = round(boost, 4)
+                momentum_score_prev = 0.0
             doc_data = {
                 "type": shift.get("type", "RISK"),
                 "category": shift.get("category", "OTHER"),
@@ -142,7 +144,7 @@ class MarketShiftService(FirebaseBaseService):
                 "asOf": as_of,
                 "fetchedAt": fetched_at,
                 "momentumScore": momentum_score,
-                "momentumScorePrev": momentum_score,
+                "momentumScorePrev": round(momentum_score_prev, 4),
                 "momentumUpdatedAt": fetched_at,
                 "firstSeenAt": first_seen_at,
             }

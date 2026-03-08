@@ -40,10 +40,8 @@ def _run_merge_from_file(file_path: str) -> None:
     import json
     from market_shifts.scan_market_shifts import normalize_shift
     from market_shifts.market_shift_service import MarketShiftService
-    from extraction_utils import get_genai_client
     from market_shifts.market_shift_merge import (
         cluster_shifts,
-        load_merge_prompt_template,
         merge_cluster_via_llm,
     )
 
@@ -101,13 +99,6 @@ def _run_merge_from_file(file_path: str) -> None:
         logger.info("No clusters with duplicates; nothing to merge.")
         return
 
-    try:
-        client = get_genai_client()
-    except ValueError:
-        logger.error("GEMINI_API_KEY or GOOGLE_AI_API_KEY required for merge LLM")
-        sys.exit(1)
-    template = load_merge_prompt_template()
-
     for cluster_key, cluster in sorted(multi.items()):
         print(f"=== Merge LLM for cluster (key={cluster_key}) ===", flush=True)
         print("  --- BEFORE (inputs) ---", flush=True)
@@ -126,7 +117,7 @@ def _run_merge_from_file(file_path: str) -> None:
             if devs:
                 print(f"      majorDevelopments: {len(devs)} entries", flush=True)
         print("", flush=True)
-        decision, usage = merge_cluster_via_llm(cluster, client, template, verbose=True)
+        decision, usage = merge_cluster_via_llm(cluster, verbose=True)
         merged = decision is not None and len(decision.get("mergeIntoCanonical") or []) > 0
         print(f"  Merge: {'YES' if merged else 'NO'}", flush=True)
         if decision:

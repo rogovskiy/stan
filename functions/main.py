@@ -28,7 +28,7 @@ benchmarks = [
     # Sector ETFs
     'SPY', 'QQQ', 'IWM', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLC',
     # Macro risk channel tickers
-    'HYG', 'LQD', 'UUP', 'USO', 'GLD', 'IEF', 'TLT', 'TIP', 'EEM',
+    'HYG', 'LQD', 'UUP', 'USO', 'GLD', 'IEF', 'TLT', 'TIP', 'EEM', '^IRX'
 ]
 initialize_app()
 

@@ -7,6 +7,7 @@ Orchestrates refresh of all Yahoo Finance data types:
 - Earnings data (latest quarters)
 - Analyst data (all types)
 - Split history (periodic check)
+- Options data (snapshot to option_data/<ticker>/<as_of>.csv.gz)
 """
 
 import argparse
@@ -19,7 +20,16 @@ from yahoo.refresh_daily_price import refresh_daily_price
 from yahoo.refresh_earnings_data import refresh_earnings_data
 from yahoo.refresh_analyst_data import refresh_analyst_data
 from yahoo.refresh_split_history import refresh_split_history
+from yahoo.refresh_options_data import refresh_options_data
 from yfinance_service import YFinanceService
+
+# Repo root (parent of functions_yahoo) for option_data output when local; /tmp when deployed (writable)
+_DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
+_OPTIONS_OUTPUT_DIR = (
+    os.environ.get("TMPDIR", "/tmp")
+    if os.environ.get("K_SERVICE")
+    else os.path.dirname(os.path.dirname(_DRIVER_DIR))
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +148,28 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         }
         results['success'] = False
 
+    # Refresh options data (snapshot to option_data/<ticker>/<as_of>.csv.gz)
+    try:
+        if verbose:
+            logger.info('\n📊 Refreshing options data...')
+        options_result = refresh_options_data(
+            ticker=ticker,
+            as_of=None,
+            output_dir=_OPTIONS_OUTPUT_DIR,
+            verbose=verbose,
+        )
+        results['results']['options'] = options_result
+        if not options_result.get('success'):
+            results['success'] = False
+    except Exception as e:
+        logger.error(f'Error in options refresh: {e}', exc_info=True)
+        results['results']['options'] = {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        }
+        results['success'] = False
+
     if verbose:
         logger.info('\n' + '='*60)
         logger.info('REFRESH SUMMARY')
@@ -176,6 +208,15 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
             logger.info(f"Splits: - {splits.get('reason', 'No update needed')}")
         else:
             logger.info(f"Splits: ✗ Error: {splits.get('error', 'Unknown')}")
+
+        options = results['results'].get('options', {})
+        if options.get('success'):
+            msg = f"Options: ✓ Saved ({options.get('expiries_count', 0)} expiries)"
+            if options.get('uploaded_to_storage'):
+                msg += " + Storage"
+            logger.info(msg)
+        else:
+            logger.info(f"Options: ✗ Error: {options.get('error', 'Unknown')}")
 
         logger.info('='*60)
 

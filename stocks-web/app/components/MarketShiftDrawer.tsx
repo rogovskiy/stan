@@ -48,6 +48,7 @@ interface MarketShift {
 interface MarketShiftDrawerProps {
   shift: MarketShift;
   onClose: () => void;
+  onShiftUpdated?: (updated: MarketShift) => void;
 }
 
 function daysAgo(dateStr: string): string {
@@ -113,7 +114,7 @@ function formatFriendlyDate(dateStr: string): string {
   });
 }
 
-export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
+export function MarketShiftDrawer({ shift, onClose, onShiftUpdated }: MarketShiftDrawerProps) {
   const hasTimeline = shift.timeline && (shift.timeline.canonicalDriver || shift.timeline.firstSurfacedAt || (shift.timeline.majorDevelopments?.length ?? 0) > 0);
 
   const primaryChannel = shift.primaryChannel ?? null;
@@ -121,6 +122,13 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
   const [chartData, setChartData] = useState<DailyDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+
+  const [isEditingOnset, setIsEditingOnset] = useState(false);
+  const [onsetDraft, setOnsetDraft] = useState(() =>
+    shift.timeline?.firstSurfacedAt ?? new Date().toISOString().slice(0, 10)
+  );
+  const [onsetSaveError, setOnsetSaveError] = useState<string | null>(null);
+  const [onsetSaving, setOnsetSaving] = useState(false);
 
   useEffect(() => {
     if (!chartTicker) {
@@ -307,6 +315,63 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
             <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
               Timeline
             </h4>
+            {isEditingOnset ? (
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <label className="text-sm text-gray-600 sr-only">Onset date</label>
+                <input
+                  type="date"
+                  value={onsetDraft}
+                  onChange={(e) => setOnsetDraft(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  disabled={onsetSaving}
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!onShiftUpdated) return;
+                    setOnsetSaveError(null);
+                    setOnsetSaving(true);
+                    try {
+                      const res = await fetch(`/api/macro/market-shifts/${encodeURIComponent(shift.id)}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ firstSurfacedAt: onsetDraft }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        setOnsetSaveError(data?.error ?? 'Failed to save');
+                        return;
+                      }
+                      onShiftUpdated(data);
+                      setIsEditingOnset(false);
+                    } catch (e) {
+                      setOnsetSaveError(e instanceof Error ? e.message : 'Failed to save');
+                    } finally {
+                      setOnsetSaving(false);
+                    }
+                  }}
+                  disabled={onsetSaving}
+                  className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {onsetSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingOnset(false);
+                    setOnsetSaveError(null);
+                    setOnsetDraft(shift.timeline?.firstSurfacedAt ?? new Date().toISOString().slice(0, 10));
+                  }}
+                  disabled={onsetSaving}
+                  className="px-3 py-1.5 rounded border border-gray-300 text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                {onsetSaveError && (
+                  <span className="text-sm text-red-600">{onsetSaveError}</span>
+                )}
+              </div>
+            ) : null}
             {hasTimeline ? (
               <div className="space-y-4">
                 {shift.timeline!.canonicalDriver && (
@@ -320,9 +385,43 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
                     {shift.timeline!.canonicalDriverRationale}
                   </p>
                 )}
-                {shift.timeline!.firstSurfacedAt && (
-                  <p className="text-sm text-gray-600">
-                    First surfaced: {formatFriendlyDate(shift.timeline!.firstSurfacedAt)}
+                {!isEditingOnset && (
+                  <p className="text-sm text-gray-600 flex items-center gap-2">
+                    {shift.timeline!.firstSurfacedAt ? (
+                      <>
+                        First surfaced: {formatFriendlyDate(shift.timeline!.firstSurfacedAt)}
+                        {onShiftUpdated && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOnsetDraft(shift.timeline?.firstSurfacedAt ?? new Date().toISOString().slice(0, 10));
+                              setOnsetSaveError(null);
+                              setIsEditingOnset(true);
+                            }}
+                            className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                            aria-label="Edit onset date"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      onShiftUpdated && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOnsetDraft(new Date().toISOString().slice(0, 10));
+                            setOnsetSaveError(null);
+                            setIsEditingOnset(true);
+                          }}
+                          className="text-blue-600 hover:underline text-sm"
+                        >
+                          Set onset date
+                        </button>
+                      )
+                    )}
                   </p>
                 )}
                 {shift.timeline!.majorDevelopments && shift.timeline!.majorDevelopments.length > 0 ? (
@@ -349,9 +448,24 @@ export function MarketShiftDrawer({ shift, onClose }: MarketShiftDrawerProps) {
                 ) : null}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 italic">
-                Timeline not yet analyzed.
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500 italic">
+                  Timeline not yet analyzed.
+                </p>
+                {onShiftUpdated && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOnsetDraft(new Date().toISOString().slice(0, 10));
+                      setOnsetSaveError(null);
+                      setIsEditingOnset(true);
+                    }}
+                    className="text-blue-600 hover:underline text-sm"
+                  >
+                    Set onset date
+                  </button>
+                )}
+              </div>
             )}
           </div>
 

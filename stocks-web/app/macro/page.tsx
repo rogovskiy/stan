@@ -637,6 +637,12 @@ export default function MacroPage() {
               <MarketShiftDrawer
                 shift={selectedShift}
                 onClose={() => setSelectedShift(null)}
+                onShiftUpdated={(updated) => {
+                  setMarketShifts((prev) =>
+                    prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : null
+                  );
+                  setSelectedShift(updated);
+                }}
               />
             )}
           </>

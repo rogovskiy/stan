@@ -76,7 +76,7 @@ export interface MarketShiftsResponse {
   meta: MarketShiftsMeta | null;
 }
 
-function computeMomentumLabel(score: number, prev: number): MomentumLabel {
+export function computeMomentumLabel(score: number, prev: number): MomentumLabel {
   const delta = score - prev;
   if (score < 5) return 'Just surfaced';
   if (prev > 10 && delta < -3) return 'Fading — was strong';

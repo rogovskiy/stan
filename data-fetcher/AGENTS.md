@@ -2,6 +2,12 @@
 
 This document provides instructions for AI agents working with the data-fetcher codebase.
 
+## ⚠️ CRITICAL: Must Never Commit API Keys to Git
+
+Do not add or commit any API keys, access tokens, client secrets, service-account private keys, or other credentials to git history or the working tree.
+
+Use environment variables / Secret Manager at runtime, and store local secrets only in files that are git-ignored (for example, `.env.local`).
+
 ## ⚠️ CRITICAL: Always Use Virtual Environment (venv)
 
 **ALWAYS use a Python virtual environment when running any Python scripts in this directory.**

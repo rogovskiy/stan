@@ -1,8 +1,11 @@
+import os
 import requests
 import xml.etree.ElementTree as ET
 
 
-API_KEY = "AIzaSyDHD611Vjj3krqp7ytgYPfI1NnBsP5LqB8"
+API_KEY = os.environ.get("YOUTUBE_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Missing YOUTUBE_API_KEY environment variable")
 #HANDLE = "@MarkMeldrum"
 HANDLE = "@Bullishbounce"
 

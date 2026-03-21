@@ -1,4 +1,16 @@
+import { useEffect, useState } from 'react';
 import type { ChannelExposure, ChannelExposures } from '../../lib/services/portfolioService';
+
+/** Response from GET /api/options-proxy-band */
+type OptionsProxyBandResponse = {
+  proxyLowPct: number;
+  proxyHighPct: number;
+  atmIv: number;
+  expiryUsed: string;
+  tYearsUsed: number;
+  sourceAsOf: string | null;
+  proxyTicker: string;
+};
 
 const CHANNEL_LABELS: Record<string, string> = {
   EQUITIES_US: 'Equity market',
@@ -12,13 +24,6 @@ const CHANNEL_LABELS: Record<string, string> = {
   INFLATION: 'Inflation',
   GLOBAL_RISK: 'Global risk',
 };
-
-/**
- * Placeholder annual total-return band for the equity tooltip (UI constants only).
- * Not fetched from market data or Firebase—pick values you want for a rough β× stress illustration.
- */
-const ILLUSTRATIVE_SPY_ANNUAL_LOW_PCT = -22;
-const ILLUSTRATIVE_SPY_ANNUAL_HIGH_PCT = 28;
 
 /** From portfolio_channel_exposure sequential model: drop strip rows below this unique-variance share. */
 const MIN_INCREMENTAL_R2_STRIP = 0.005;
@@ -83,13 +88,15 @@ function formatR2Pct(r2: number): string {
   return r2 < 0.01 ? (r2 * 100).toFixed(1) : (r2 * 100).toFixed(0);
 }
 
-/** Facts only: fit (R²), sensitivity (β), optional equity illustration, holdings. No subjective “connected” copy. */
+/** Facts only: fit (R²), sensitivity (β), optional options-implied band, holdings. */
 function SystematicRiskTooltipBody({
-  channelId,
   exposure,
+  optionsBand,
+  optionsBandLoading,
 }: {
-  channelId: string;
   exposure: ChannelExposure;
+  optionsBand: OptionsProxyBandResponse | null | undefined;
+  optionsBandLoading: boolean;
 }) {
   const { beta, rSquared, proxy, contributors } = exposure;
   const contributorList = Array.isArray(contributors) ? contributors : [];
@@ -98,10 +105,10 @@ function SystematicRiskTooltipBody({
     typeof rSquared === 'number' && Number.isFinite(rSquared) ? rSquared : null;
   const weakUnivariateFit = r2ForDisplay !== null && r2ForDisplay < 0.02;
 
-  const showSpyStyleBand = channelId === 'EQUITIES_US' && betaOk;
-  const impactAtSpy = (spyTotalReturnPct: number) => beta * spyTotalReturnPct;
-  const bandLow = showSpyStyleBand ? impactAtSpy(ILLUSTRATIVE_SPY_ANNUAL_LOW_PCT) : 0;
-  const bandHigh = showSpyStyleBand ? impactAtSpy(ILLUSTRATIVE_SPY_ANNUAL_HIGH_PCT) : 0;
+  const impactAtProxyPct = (proxyPct: number) => beta * proxyPct;
+  const showOptionsBand = betaOk && optionsBand != null;
+  const bandLow = showOptionsBand ? impactAtProxyPct(optionsBand.proxyLowPct) : 0;
+  const bandHigh = showOptionsBand ? impactAtProxyPct(optionsBand.proxyHighPct) : 0;
 
   const holdingsLine =
     contributorList.length > 0 ? (
@@ -147,13 +154,24 @@ function SystematicRiskTooltipBody({
         </p>
       )}
 
-      {showSpyStyleBand && (
+      {showOptionsBand && optionsBand && (
         <p className="mt-2 text-[11px] leading-relaxed text-gray-800">
-          Illustrative: a rough <strong>placeholder</strong> twelve-month band for <strong>{proxy}</strong> of{' '}
-          <strong>{ILLUSTRATIVE_SPY_ANNUAL_LOW_PCT}%</strong> to <strong>+{ILLUSTRATIVE_SPY_ANNUAL_HIGH_PCT}%</strong>{' '}
-          (set in code, not a live quote). With your β, return <strong>tied to this factor</strong> might
-          roughly span <strong>{bandLow.toFixed(1)}%</strong> to <strong>{bandHigh.toFixed(1)}%</strong> (β ×
+          Based on ATM implied vol (~{optionsBand.tYearsUsed.toFixed(2)}y horizon) for <strong>{proxy}</strong>
+          {optionsBand.sourceAsOf ? (
+            <>
+              {' '}
+              as of <strong>{optionsBand.sourceAsOf}</strong>
+            </>
+          ) : null}
+          , a symmetric ~1σ band for the proxy is roughly <strong>{optionsBand.proxyLowPct.toFixed(1)}%</strong>{' '}
+          to <strong>+{optionsBand.proxyHighPct.toFixed(1)}%</strong>. With your β, return tied to this factor
+          might roughly span <strong>{bandLow.toFixed(1)}%</strong> to <strong>{bandHigh.toFixed(1)}%</strong> (β ×
           those moves). Other drivers also move your portfolio.
+        </p>
+      )}
+      {betaOk && !optionsBandLoading && optionsBand === null && (
+        <p className="mt-2 text-[11px] text-gray-500">
+          No options snapshot in storage for {proxy}, or IV could not be read.
         </p>
       )}
 
@@ -239,16 +257,62 @@ function filterStripByMinAbsBeta(rows: SystematicRiskRow[]): {
 
 export default function SystematicRisksStrip({
   channelExposures,
+  channelExposureAsOf,
 }: {
   channelExposures?: ChannelExposures;
+  /** Prefer passing from portfolio; falls back to channelExposures.asOf */
+  channelExposureAsOf?: string;
 }) {
   const channels = channelExposures?.channels;
+  const exposureAsOf = channelExposureAsOf ?? channelExposures?.asOf;
   const sortedRows = channels ? buildRows(channels) : [];
   const betaPass = channels ? filterStripByMinAbsBeta(sortedRows) : { shown: [], removed: [], usedFallback: true };
   const { shown: afterFilter, removed: removedByIncremental } = channels
     ? applyStripFilter(betaPass.shown)
     : { shown: [], removed: [] };
   const systematicRisks = afterFilter.slice(0, 5);
+
+  const proxyKey = [...new Set(systematicRisks.map((r) => r.exposure.proxy))]
+    .sort()
+    .join('|');
+
+  const [bandsByProxy, setBandsByProxy] = useState<Record<string, OptionsProxyBandResponse | null>>({});
+  const [bandsLoading, setBandsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!proxyKey) {
+      setBandsByProxy({});
+      setBandsLoading(false);
+      return;
+    }
+    const proxies = proxyKey.split('|').filter(Boolean);
+    let cancelled = false;
+    setBandsLoading(true);
+    (async () => {
+      const results = await Promise.all(
+        proxies.map(async (proxy) => {
+          const params = new URLSearchParams({ proxy });
+          if (typeof exposureAsOf === 'string' && exposureAsOf.trim()) {
+            params.set('asOf', exposureAsOf.trim());
+          }
+          try {
+            const res = await fetch(`/api/options-proxy-band?${params.toString()}`);
+            if (!res.ok) return [proxy, null] as const;
+            const json = (await res.json()) as OptionsProxyBandResponse;
+            return [proxy, json] as const;
+          } catch {
+            return [proxy, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setBandsByProxy(Object.fromEntries(results));
+      setBandsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [proxyKey, exposureAsOf]);
 
   const removedByBetaLabels = !betaPass.usedFallback
     ? betaPass.removed.map((r) => r.label).join(', ')
@@ -293,6 +357,7 @@ export default function SystematicRisksStrip({
       </span>
       {systematicRisks.length > 0 ? (
         systematicRisks.map(({ channelId, label, level, exposure }) => {
+          const optionsBand = bandsByProxy[exposure.proxy];
           return (
             <div
               key={channelId}
@@ -306,7 +371,11 @@ export default function SystematicRisksStrip({
                 role="tooltip"
               >
                 <p className="font-semibold text-gray-900">{label}</p>
-                <SystematicRiskTooltipBody channelId={channelId} exposure={exposure} />
+                <SystematicRiskTooltipBody
+                  exposure={exposure}
+                  optionsBand={optionsBand}
+                  optionsBandLoading={bandsLoading}
+                />
               </div>
             </div>
           );

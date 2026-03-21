@@ -119,7 +119,10 @@ export default function PortfolioDetailHeader({
           </button>
         </div>
       </div>
-      <SystematicRisksStrip channelExposures={selectedPortfolio.channelExposures} />
+      <SystematicRisksStrip
+        channelExposures={selectedPortfolio.channelExposures}
+        channelExposureAsOf={selectedPortfolio.channelExposures?.asOf}
+      />
     </>
   );
 }

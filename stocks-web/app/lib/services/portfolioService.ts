@@ -79,10 +79,19 @@ export interface PortfolioSnapshot {
 }
 
 /** Channel exposure from portfolio_channel_exposure.py. */
+export interface ChannelContributor {
+  ticker: string;
+  weightPct: number;
+  beta: number;
+  contribution: number;
+}
+
 export interface ChannelExposure {
   proxy: string;
   beta: number;
   rSquared: number;
+  /** Holdings ranked by |weight × beta| to this channel (optional until exposure re-run). */
+  contributors?: ChannelContributor[];
 }
 export interface ChannelExposures {
   asOf?: string;

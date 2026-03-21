@@ -1018,7 +1018,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         {viewMode === 'portfolios' ? (
           selectedPortfolio ? (
             <>
-              <div className="p-6 border-b border-gray-200 bg-white">
+              <div className="relative z-10 p-6 border-b border-gray-200 bg-white">
                 <PortfolioDetailHeader
                   selectedPortfolio={selectedPortfolio}
                   totalPortfolioValue={totalPortfolioValue}
@@ -1052,7 +1052,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                 )}
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="relative z-0 flex-1 overflow-y-auto p-6">
                 {selectedPortfolio.id && (
                   <>
                     <div className="mb-6">

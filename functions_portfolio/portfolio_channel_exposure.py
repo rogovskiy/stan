@@ -33,6 +33,7 @@ for _p in (_vendor, _pkg):
 logger = logging.getLogger(__name__)
 
 MIN_TRADING_DAYS = 60
+TOP_CONTRIBUTORS = 8  # max holdings listed per channel in Firestore / UI
 
 # Exit codes for run_channel_exposure / CLI
 EXIT_OK = 0
@@ -289,6 +290,29 @@ def run_channel_exposure(
 
     port_ret_arr = np.array([port_returns[d] for d in aligned_dates])
 
+    snap_last = get_snapshot_for_date(snapshots, aligned_dates[-1])
+    last_d = aligned_dates[-1]
+    total_val = value_from_snapshot(snap_last, last_d, price_maps) if snap_last else 0.0
+    weight_frac: Dict[str, float] = {}
+    if snap_last and total_val > 0:
+        for p in snap_last.get("positions", []):
+            if p.get("quantity", 0) <= 0:
+                continue
+            t = p.get("ticker", "")
+            if t not in price_maps:
+                continue
+            price = get_price_at_date(last_d, price_maps[t])
+            if price > 0:
+                v = p["quantity"] * price
+                weight_frac[t] = weight_frac.get(t, 0) + v / total_val
+
+    ticker_return_arrays: Dict[str, np.ndarray] = {}
+    for t in portfolio_tickers:
+        if t not in price_maps:
+            continue
+        pr = compute_returns(price_maps[t])
+        ticker_return_arrays[t] = np.array([pr.get(d, np.nan) for d in aligned_dates])
+
     exposures: Dict[str, Dict[str, Any]] = {}
     rows: List[tuple] = []
 
@@ -298,7 +322,34 @@ def run_channel_exposure(
         proxy_returns = compute_returns(price_maps[proxy])
         proxy_ret_arr = np.array([proxy_returns.get(d, np.nan) for d in aligned_dates])
         beta, r2 = ols_beta_r2(port_ret_arr, proxy_ret_arr)
-        exposures[ch] = {"proxy": proxy, "beta": round(beta, 4), "rSquared": round(r2, 4)}
+
+        contributors: List[Dict[str, Any]] = []
+        for ticker in portfolio_tickers:
+            if ticker not in ticker_return_arrays:
+                continue
+            pos_ret_arr = ticker_return_arrays[ticker]
+            pb, _ = ols_beta_r2(pos_ret_arr, proxy_ret_arr)
+            if np.isnan(pb):
+                continue
+            w = weight_frac.get(ticker, 0.0)
+            contrib = float(w) * float(pb)
+            contributors.append(
+                {
+                    "ticker": ticker,
+                    "weightPct": round(100.0 * w, 2),
+                    "beta": round(float(pb), 4),
+                    "contribution": round(contrib, 4),
+                }
+            )
+        contributors.sort(key=lambda x: abs(x["contribution"]), reverse=True)
+        contributors = contributors[:TOP_CONTRIBUTORS]
+
+        exposures[ch] = {
+            "proxy": proxy,
+            "beta": round(beta, 4),
+            "rSquared": round(r2, 4),
+            "contributors": contributors,
+        }
         rows.append((ch, proxy, beta, r2))
 
     if not quiet:

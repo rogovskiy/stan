@@ -66,6 +66,15 @@ Override if your Scheduler job name differs:
 make trigger-publish SCHEDULER_JOB=firebase-schedule-portfolio_weekly_publish-us-central1 REGION=us-central1
 ```
 
+## Channel exposure document shape
+
+`run_channel_exposure` writes `channelExposures` on each portfolio document. Each channel entry includes:
+
+- `proxy`, `beta`, `rSquared` — portfolio-level regression vs the channel proxy
+- `contributors` — optional array (top 8) of `{ ticker, weightPct, beta, contribution }` per holding (weight × position beta), for UI tooltips
+
+Re-run the job (CLI, Pub/Sub, or weekly) after upgrading to populate `contributors` for existing portfolios.
+
 ## Local
 
 Channel exposure logic lives in **`portfolio_channel_exposure.py`** in this directory (not under `vendor/`). `vendor/` only mirrors shared `data-fetcher/services/*` via `make vendor`.

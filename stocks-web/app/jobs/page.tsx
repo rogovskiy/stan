@@ -3,7 +3,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import AppNavigation from '../components/AppNavigation';
 
-const JOB_TYPES = ['price_refresh', 'macro', 'ir_scan', 'youtube', 'youtube_transcript'] as const;
+const JOB_TYPES = [
+  'price_refresh',
+  'macro',
+  'ir_scan',
+  'youtube',
+  'youtube_transcript',
+  'portfolio_channel_exposure',
+  'portfolio_channel_exposure_publish',
+] as const;
 const DAYS_RANGE = 14;
 
 interface JobRun {
@@ -26,6 +34,9 @@ const LOGGING_SERVICE_BY_JOB_TYPE: Partial<Record<(typeof JOB_TYPES)[number], st
   // functions_youtube deploys `youtube_refresh` → Cloud Run service name is typically `youtube-refresh`
   youtube: 'youtube-refresh',
   youtube_transcript: 'youtube-transcript-analysis',
+  // functions_portfolio (Gen2 → Cloud Run); adjust if console shows different service_name
+  portfolio_channel_exposure: 'portfolio-channel-exposure-refresh',
+  portfolio_channel_exposure_publish: 'portfolio-weekly-publish',
 };
 
 function cloudLoggingUrl(projectId: string, query: string): string {

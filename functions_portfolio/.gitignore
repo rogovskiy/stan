@@ -1,0 +1,9 @@
+venv/
+vendor/
+.env
+.env.local
+*.local
+__pycache__/
+*.pyc
+.pytest_cache/
+.firebase/

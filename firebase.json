@@ -51,6 +51,19 @@
         "*.local"
       ],
       "runtime": "python311"
+    },
+    {
+      "source": "functions_portfolio",
+      "codebase": "portfolio",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "venv",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "runtime": "python311"
     }
   ],
   "apphosting": {

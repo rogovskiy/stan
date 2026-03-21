@@ -13,6 +13,10 @@ from services.firebase_base_service import FirebaseBaseService
 class PortfolioService(FirebaseBaseService):
     """Service for reading portfolios and writing channel exposures from Firestore."""
 
+    def list_portfolio_ids(self) -> List[str]:
+        """Document IDs under the portfolios collection."""
+        return sorted(doc.id for doc in self.db.collection("portfolios").stream())
+
     def get_portfolio(self, portfolio_id: str) -> Optional[Dict[str, Any]]:
         """
         Load portfolio document with positions.

@@ -2,6 +2,7 @@
 
 import { Fragment, type RefObject } from 'react';
 import type { Portfolio, Position } from '../../lib/services/portfolioService';
+import LiveThesisCardHoverTrigger from '../position-thesis/LiveThesisCardHoverTrigger';
 import { buildPositionSections } from './positionsTableUtils';
 
 export default function PositionsTable({
@@ -72,7 +73,12 @@ export default function PositionsTable({
               <th className="text-right py-3 px-4 font-medium text-gray-700">Weight %</th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Return (since buy)</th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Drawdown Impact %</th>
-              <th className="text-left py-3 px-4 font-medium text-gray-700">Thesis Status</th>
+              <th className="text-left py-3 px-4 font-medium text-gray-700">
+                <div className="inline-flex items-center gap-1.5">
+                  <span>Thesis Status</span>
+                  <LiveThesisCardHoverTrigger />
+                </div>
+              </th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Total value</th>
               <th className="w-28 py-3 px-4">Actions</th>
             </tr>

@@ -89,7 +89,15 @@ export interface ChannelContributor {
 export interface ChannelExposure {
   proxy: string;
   beta: number;
+  /** Univariate R²: portfolio ~ this factor alone. */
   rSquared: number;
+  /**
+   * Sequential incremental R² (Type I): extra variance explained after stronger univariate factors.
+   * From portfolio_channel_exposure.py after re-run.
+   */
+  incrementalR2?: number;
+  /** 1-based order in the sequential model (1 = entered first by univariate R²). */
+  sequentialRank?: number;
   /** Holdings ranked by |weight × beta| to this channel (optional until exposure re-run). */
   contributors?: ChannelContributor[];
 }

@@ -1,4 +1,4 @@
-import type { ChannelContributor, ChannelExposure, ChannelExposures } from '../../lib/services/portfolioService';
+import type { ChannelExposure, ChannelExposures } from '../../lib/services/portfolioService';
 
 const CHANNEL_LABELS: Record<string, string> = {
   EQUITIES_US: 'Equity market',
@@ -19,6 +19,12 @@ const CHANNEL_LABELS: Record<string, string> = {
  */
 const ILLUSTRATIVE_SPY_ANNUAL_LOW_PCT = -22;
 const ILLUSTRATIVE_SPY_ANNUAL_HIGH_PCT = 28;
+
+/** From portfolio_channel_exposure sequential model: drop strip rows below this unique-variance share. */
+const MIN_INCREMENTAL_R2_STRIP = 0.005;
+
+/** Omit a channel from the strip when |β| is below this (portfolio % per +1% proxy). Same unit as tooltip. */
+const MIN_ABS_BETA_STRIP_PCT = 0.1;
 
 const levelBars: Record<string, number> = { HIGH: 3, MED: 2, 'LOW-MED': 2, LOW: 1 };
 const levelColors: Record<string, string> = {
@@ -54,50 +60,55 @@ function RiskBars({ level }: { level: keyof typeof levelBars }) {
   );
 }
 
-function connectionAdverb(beta: number): string {
-  const a = Math.abs(beta);
-  if (!Number.isFinite(a)) return '';
-  if (a >= 0.85) return 'strongly';
-  if (a >= 0.45) return 'significantly';
-  if (a >= 0.2) return 'meaningfully';
-  return 'somewhat';
+type RiskLevel = 'HIGH' | 'MED' | 'LOW-MED' | 'LOW';
+
+/**
+ * Risk bars from |β| only: portfolio % per +1% proxy move (same units as “Same-day sensitivity”).
+ * We intentionally do not multiply by R² here — a high R² with small |β| is still a small mechanical sensitivity.
+ */
+function levelFromAbsBeta(absBeta: number): RiskLevel {
+  if (!Number.isFinite(absBeta)) return 'LOW';
+  if (absBeta >= 0.2) return 'HIGH';
+  if (absBeta >= 0.1) return 'MED';
+  if (absBeta >= 0.04) return 'LOW-MED';
+  return 'LOW';
 }
 
-/** Short tooltip body: 1% rule, optional illustrative annual band (equity), holdings line. */
+/** Sort by largest |β| first so order matches “same-day sensitivity,” not |β|×R². */
+function sortKeyForExposure(exp: ChannelExposure): number {
+  return Number.isFinite(exp.beta) ? Math.abs(exp.beta) : 0;
+}
+
+function formatR2Pct(r2: number): string {
+  return r2 < 0.01 ? (r2 * 100).toFixed(1) : (r2 * 100).toFixed(0);
+}
+
+/** Facts only: fit (R²), sensitivity (β), optional equity illustration, holdings. No subjective “connected” copy. */
 function SystematicRiskTooltipBody({
   channelId,
   exposure,
-  contributors,
 }: {
   channelId: string;
   exposure: ChannelExposure;
-  contributors: ChannelContributor[];
 }) {
-  const { beta, rSquared, proxy } = exposure;
+  const { beta, rSquared, proxy, contributors } = exposure;
+  const contributorList = Array.isArray(contributors) ? contributors : [];
   const betaOk = Number.isFinite(beta);
-  const adv = betaOk ? connectionAdverb(beta) : '';
-
-  // +1% proxy move → β% portfolio return (daily return regression)
-  const onePctLine = betaOk ? (
-    <p className="mt-2 text-[11px] leading-relaxed text-gray-800">
-      A <strong>+1%</strong> move in <strong>{proxy}</strong> lines up with about{' '}
-      <strong>{beta.toFixed(2)}%</strong> move in this portfolio (historical average, same day).
-    </p>
-  ) : (
-    <p className="mt-2 text-[11px] text-gray-500">β could not be estimated.</p>
-  );
+  const r2ForDisplay =
+    typeof rSquared === 'number' && Number.isFinite(rSquared) ? rSquared : null;
+  const weakUnivariateFit = r2ForDisplay !== null && r2ForDisplay < 0.02;
 
   const showSpyStyleBand = channelId === 'EQUITIES_US' && betaOk;
-  /** spyTotalReturnPct e.g. -22 for −22% full-period move; portfolio ≈ β × that % (linear). */
   const impactAtSpy = (spyTotalReturnPct: number) => beta * spyTotalReturnPct;
   const bandLow = showSpyStyleBand ? impactAtSpy(ILLUSTRATIVE_SPY_ANNUAL_LOW_PCT) : 0;
   const bandHigh = showSpyStyleBand ? impactAtSpy(ILLUSTRATIVE_SPY_ANNUAL_HIGH_PCT) : 0;
 
   const holdingsLine =
-    contributors.length > 0 ? (
+    contributorList.length > 0 ? (
       <p className="mt-2 text-[11px] leading-relaxed text-gray-800">
-        <span className="font-medium text-gray-900">Biggest holdings affecting this:</span>{' '}
-        {contributors.slice(0, 6).map((c, i) => (
+        <span className="font-medium text-gray-900">Holdings driving this channel</span> (by |weight × β to{' '}
+        {proxy}):{' '}
+        {contributorList.slice(0, 6).map((c, i) => (
           <span key={c.ticker}>
             {i > 0 ? ', ' : ''}
             <strong>{c.ticker}</strong> ({c.weightPct.toFixed(0)}%)
@@ -109,17 +120,32 @@ function SystematicRiskTooltipBody({
 
   return (
     <div className="space-y-0 text-left">
-      <p className="text-[11px] leading-relaxed text-gray-800">
-        {betaOk ? (
-          <>
-            Your portfolio is <strong>{adv}</strong> connected to <strong>{proxy}</strong>.
-          </>
-        ) : (
-          <>Connection to {proxy} could not be quantified.</>
-        )}
-      </p>
+      {r2ForDisplay !== null ? (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-gray-800">
+          <span className="font-medium text-gray-900">Fit</span> (univariate, same window as β): R² ≈{' '}
+          {formatR2Pct(r2ForDisplay)}% of day-to-day return variance with <strong>{proxy}</strong> alone.
+        </p>
+      ) : (
+        <p className="mt-1.5 text-[11px] text-gray-500">R² not available for this factor.</p>
+      )}
 
-      {onePctLine}
+      {!betaOk && (
+        <p className="mt-2 text-[11px] text-gray-500">β could not be estimated.</p>
+      )}
+
+      {betaOk && (
+        <p className="mt-2 text-[11px] leading-relaxed text-gray-800">
+          <span className="font-medium text-gray-900">Same-day sensitivity</span>: a <strong>+1%</strong> move in{' '}
+          <strong>{proxy}</strong> lines up with about <strong>{beta.toFixed(2)}%</strong> in this portfolio on
+          average (historical regression).
+          {weakUnivariateFit && (
+            <span className="text-gray-500">
+              {' '}
+              Low R² — treat this slope as indicative, not precise.
+            </span>
+          )}
+        </p>
+      )}
 
       {showSpyStyleBand && (
         <p className="mt-2 text-[11px] leading-relaxed text-gray-800">
@@ -131,18 +157,10 @@ function SystematicRiskTooltipBody({
         </p>
       )}
 
-      {Number.isFinite(rSquared) && rSquared > 0 && (
-        <p className="mt-1.5 text-[10px] text-gray-500">
-          R² ≈ {(rSquared * 100).toFixed(0)}% of day-to-day variance moved with {proxy} in this window.
-        </p>
-      )}
-
       {holdingsLine}
     </div>
   );
 }
-
-type RiskLevel = 'HIGH' | 'MED' | 'LOW-MED' | 'LOW';
 
 type SystematicRiskRow = {
   channelId: string;
@@ -152,45 +170,129 @@ type SystematicRiskRow = {
   exposure: ChannelExposure;
 };
 
+function buildRows(channels: Record<string, ChannelExposure>): SystematicRiskRow[] {
+  return Object.entries(channels)
+    .map(([ch, exp]) => {
+      const absBeta = Math.abs(exp.beta);
+      const level = levelFromAbsBeta(absBeta);
+      return {
+        channelId: ch,
+        label: CHANNEL_LABELS[ch] ?? ch,
+        reliableImpact: absBeta,
+        level,
+        exposure: exp,
+      };
+    })
+    .sort((a, b) => sortKeyForExposure(b.exposure) - sortKeyForExposure(a.exposure));
+}
+
+/**
+ * When incrementalR2 is present (post channel-exposure job), hide factors that add little variance
+ * after stronger factors in the sequential model — reduces SPY + near-duplicate rates/vol, etc.
+ * Order stays |β| within the surviving set. Legacy payloads without incremental skip this.
+ */
+function applyStripFilter(rows: SystematicRiskRow[]): {
+  shown: SystematicRiskRow[];
+  removed: SystematicRiskRow[];
+} {
+  const anyIncremental = rows.some(
+    (r) => typeof r.exposure.incrementalR2 === 'number' && Number.isFinite(r.exposure.incrementalR2),
+  );
+  if (!anyIncremental) return { shown: rows, removed: [] };
+
+  const filtered = rows.filter((r) => {
+    const inc = r.exposure.incrementalR2;
+    if (typeof inc !== 'number' || !Number.isFinite(inc)) return true;
+    return inc >= MIN_INCREMENTAL_R2_STRIP;
+  });
+
+  if (filtered.length === 0) return { shown: rows, removed: [] };
+
+  const removed = rows.filter((r) => {
+    const inc = r.exposure.incrementalR2;
+    if (typeof inc !== 'number' || !Number.isFinite(inc)) return false;
+    return inc < MIN_INCREMENTAL_R2_STRIP;
+  });
+
+  return { shown: filtered, removed };
+}
+
+/**
+ * Drop channels with negligible same-day |β| from the strip. If none pass, show all (fallback).
+ */
+function filterStripByMinAbsBeta(rows: SystematicRiskRow[]): {
+  shown: SystematicRiskRow[];
+  removed: SystematicRiskRow[];
+  usedFallback: boolean;
+} {
+  const passes = rows.filter(
+    (r) => Number.isFinite(r.exposure.beta) && Math.abs(r.exposure.beta) >= MIN_ABS_BETA_STRIP_PCT,
+  );
+  const removed = rows.filter(
+    (r) => !Number.isFinite(r.exposure.beta) || Math.abs(r.exposure.beta) < MIN_ABS_BETA_STRIP_PCT,
+  );
+  if (passes.length > 0) {
+    return { shown: passes, removed, usedFallback: false };
+  }
+  return { shown: rows, removed: [], usedFallback: true };
+}
+
 export default function SystematicRisksStrip({
   channelExposures,
 }: {
   channelExposures?: ChannelExposures;
 }) {
   const channels = channelExposures?.channels;
-  const systematicRisks: SystematicRiskRow[] = channels
-    ? Object.entries(channels)
-        .map(([ch, exp]) => {
-          const absBeta = Math.abs(exp.beta);
-          const r2 = exp.rSquared ?? 0;
-          const reliableImpact = absBeta * r2;
-          const level: RiskLevel =
-            reliableImpact >= 0.03
-              ? 'HIGH'
-              : reliableImpact >= 0.005
-                ? 'MED'
-                : reliableImpact >= 0.001
-                  ? 'LOW-MED'
-                  : 'LOW';
-          return {
-            channelId: ch,
-            label: CHANNEL_LABELS[ch] ?? ch,
-            reliableImpact,
-            level,
-            exposure: exp,
-          };
-        })
-        .sort((a, b) => b.reliableImpact - a.reliableImpact)
-        .slice(0, 5)
-    : [];
+  const sortedRows = channels ? buildRows(channels) : [];
+  const betaPass = channels ? filterStripByMinAbsBeta(sortedRows) : { shown: [], removed: [], usedFallback: true };
+  const { shown: afterFilter, removed: removedByIncremental } = channels
+    ? applyStripFilter(betaPass.shown)
+    : { shown: [], removed: [] };
+  const systematicRisks = afterFilter.slice(0, 5);
+
+  const removedByBetaLabels = !betaPass.usedFallback
+    ? betaPass.removed.map((r) => r.label).join(', ')
+    : '';
+  const removedIncrementalLabels = removedByIncremental.map((r) => r.label).join(', ');
+  const showHiddenInfo =
+    (!betaPass.usedFallback && betaPass.removed.length > 0) || removedByIncremental.length > 0;
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 overflow-visible">
-      <span className="font-medium text-gray-400">Systematic risks:</span>
+      <span className="inline-flex items-center gap-1 font-medium text-gray-400">
+        Systematic risks:
+        {showHiddenInfo && (
+          <span className="group relative inline-flex cursor-help">
+            <span
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold leading-none text-gray-400"
+              aria-label="About hidden factors"
+            >
+              i
+            </span>
+            <div
+              className="pointer-events-none invisible absolute bottom-full left-0 z-[100] mb-1 max-h-[min(16rem,50vh)] w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-gray-200 bg-white p-2.5 text-left text-[11px] leading-snug text-gray-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100"
+              role="tooltip"
+            >
+              <p className="font-medium text-gray-800">Not shown in the strip</p>
+              {!betaPass.usedFallback && betaPass.removed.length > 0 && (
+                <p className="mt-1 text-gray-600">
+                  <strong className="text-gray-800">|β| &lt; {MIN_ABS_BETA_STRIP_PCT}%</strong> (same-day
+                  sensitivity too small): <strong className="text-gray-800">{removedByBetaLabels}</strong>.
+                </p>
+              )}
+              {removedByIncremental.length > 0 && (
+                <p className="mt-1 text-gray-600">
+                  <strong className="text-gray-800">Low incremental R²</strong> (under{' '}
+                  {(MIN_INCREMENTAL_R2_STRIP * 100).toFixed(1)}% after other factors):{' '}
+                  <strong className="text-gray-800">{removedIncrementalLabels}</strong>.
+                </p>
+              )}
+            </div>
+          </span>
+        )}
+      </span>
       {systematicRisks.length > 0 ? (
         systematicRisks.map(({ channelId, label, level, exposure }) => {
-          const contributors = exposure.contributors ?? [];
-
           return (
             <div
               key={channelId}
@@ -200,15 +302,11 @@ export default function SystematicRisksStrip({
                 {label} <RiskBars level={level} />
               </span>
               <div
-                className="pointer-events-none invisible absolute left-0 top-full z-[100] mt-1 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-gray-200 bg-white p-3 text-left shadow-lg opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100"
+                className="pointer-events-none invisible absolute left-0 top-full z-[100] mt-1 max-h-[min(24rem,70vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 text-left shadow-lg opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100"
                 role="tooltip"
               >
                 <p className="font-semibold text-gray-900">{label}</p>
-                <SystematicRiskTooltipBody
-                  channelId={channelId}
-                  exposure={exposure}
-                  contributors={contributors}
-                />
+                <SystematicRiskTooltipBody channelId={channelId} exposure={exposure} />
               </div>
             </div>
           );

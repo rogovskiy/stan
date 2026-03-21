@@ -180,6 +180,67 @@ def ols_beta_r2(y: np.ndarray, x: np.ndarray) -> tuple:
         return (np.nan, np.nan)
 
 
+def r_squared_multivariate(y: np.ndarray, x_factors: np.ndarray) -> float:
+    """
+    R² for OLS y ~ 1 + x_factors.
+    x_factors has shape (n, k) with k >= 0; k == 0 returns 0 (no factors).
+    """
+    if x_factors.size == 0 or x_factors.shape[1] == 0:
+        return 0.0
+    if len(y) != x_factors.shape[0]:
+        return float("nan")
+    mask = np.isfinite(y)
+    for j in range(x_factors.shape[1]):
+        mask &= np.isfinite(x_factors[:, j])
+    if mask.sum() < MIN_TRADING_DAYS:
+        return float("nan")
+    y_ = y[mask]
+    xf = x_factors[mask]
+    X = np.column_stack([np.ones(len(y_)), xf])
+    try:
+        coeffs, _, _, _ = np.linalg.lstsq(X, y_, rcond=None)
+        y_pred = X @ coeffs
+        ss_tot = np.sum((y_ - np.mean(y_)) ** 2)
+        if ss_tot <= 0:
+            return 0.0
+        ss_res = np.sum((y_ - y_pred) ** 2)
+        return float(1.0 - ss_res / ss_tot)
+    except Exception:
+        return float("nan")
+
+
+def sequential_incremental_r2(
+    y: np.ndarray,
+    ordered_channels: List[str],
+    channel_proxy_arrays: Dict[str, np.ndarray],
+) -> Dict[str, float]:
+    """
+    Type I sequential incremental R²: factor (i) adds
+    R²(y ~ x1..xi) - R²(y ~ x1..x_{i-1}).
+    ordered_channels: strongest univariate first (caller sorts).
+    """
+    out: Dict[str, float] = {}
+    if not ordered_channels:
+        return out
+    for i in range(len(ordered_channels)):
+        ch = ordered_channels[i]
+        cols = [channel_proxy_arrays[c] for c in ordered_channels[: i + 1]]
+        x_curr = np.column_stack(cols) if cols else np.zeros((len(y), 0))
+        r2_curr = r_squared_multivariate(y, x_curr)
+        if i == 0:
+            inc = r2_curr if np.isfinite(r2_curr) else 0.0
+        else:
+            cols_prev = [channel_proxy_arrays[c] for c in ordered_channels[:i]]
+            x_prev = np.column_stack(cols_prev)
+            r2_prev = r_squared_multivariate(y, x_prev)
+            if not np.isfinite(r2_curr) or not np.isfinite(r2_prev):
+                inc = 0.0
+            else:
+                inc = max(0.0, float(r2_curr - r2_prev))
+        out[ch] = inc
+    return out
+
+
 def run_channel_exposure(
     portfolio_id: str,
     *,
@@ -350,17 +411,39 @@ def run_channel_exposure(
             "rSquared": round(r2, 4),
             "contributors": contributors,
         }
-        rows.append((ch, proxy, beta, r2))
+        rows.append((ch, proxy, beta, r2, proxy_ret_arr))
+
+    ordered_ch: List[str] = []
+    incremental: Dict[str, float] = {}
+    if rows:
+        rows.sort(
+            key=lambda t: (
+                -(t[3] if np.isfinite(t[3]) else -1.0),
+                -(abs(t[2]) if np.isfinite(t[2]) else 0.0),
+                t[0],
+            )
+        )
+        ordered_ch = [t[0] for t in rows]
+        channel_proxy_arrays = {t[0]: t[4] for t in rows}
+        incremental = sequential_incremental_r2(port_ret_arr, ordered_ch, channel_proxy_arrays)
+        for rank, ch in enumerate(ordered_ch, start=1):
+            inc = float(incremental.get(ch, 0.0))
+            exposures[ch]["incrementalR2"] = round(inc, 4)
+            exposures[ch]["sequentialRank"] = rank
 
     if not quiet:
         print(f"\nPortfolio: {portfolio.get('name', '')}")
         print(f"Period: {aligned_dates[0]} to {aligned_dates[-1]} ({len(aligned_dates)} trading days)\n")
-        print(f"{'Channel':<14} {'Proxy':<8} {'Beta':>8} {'R²':>8}")
-        print("-" * 42)
-        for ch, proxy, beta, r2 in rows:
+        print(f"{'Channel':<14} {'Proxy':<8} {'Beta':>8} {'R²':>8} {'IncR²':>8} {'Rank':>4}")
+        print("-" * 54)
+        for ch, proxy, beta, r2, _ in rows:
             beta_str = f"{beta:.4f}" if not np.isnan(beta) else "   N/A"
             r2_str = f"{r2:.4f}" if not np.isnan(r2) else "   N/A"
-            print(f"{ch:<14} {proxy:<8} {beta_str:>8} {r2_str:>8}")
+            inc = incremental.get(ch, 0.0) if incremental else 0.0
+            inc_str = f"{inc:.4f}"
+            rk = exposures[ch].get("sequentialRank", "")
+            rk_str = str(rk) if rk != "" else ""
+            print(f"{ch:<14} {proxy:<8} {beta_str:>8} {r2_str:>8} {inc_str:>8} {rk_str:>4}")
         print()
 
     if save_to_firebase and exposures:

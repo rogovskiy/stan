@@ -96,7 +96,8 @@ class PortfolioService(FirebaseBaseService):
 
         Args:
             portfolio_id: Portfolio document ID
-            exposures: {channel: {proxy, beta, rSquared}}
+            exposures: per channel: proxy, beta, rSquared (univariate), incrementalR2,
+                sequentialRank, contributors, ...
             metadata: {asOf, periodStart, tradingDays}
         """
         ref = self.db.collection("portfolios").document(portfolio_id)

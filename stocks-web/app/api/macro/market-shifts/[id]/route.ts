@@ -24,7 +24,8 @@ function docToShift(docId: string, data: Record<string, unknown>): MarketShift {
     typeof data.momentumScore === 'number' ? data.momentumScore : 0;
   const momentumScorePrev: number =
     typeof data.momentumScorePrev === 'number' ? data.momentumScorePrev : 0;
-  const primary = data.primaryChannel ?? null;
+  const primary: string | null =
+    typeof data.primaryChannel === 'string' ? data.primaryChannel : null;
   const secondary: string[] = Array.isArray(data.secondaryChannels)
     ? (data.secondaryChannels as string[])
     : [];

@@ -321,7 +321,7 @@ export default function WatchlistMainPanel({
                           type="button"
                           onClick={() =>
                             router.push(
-                              `/new-thesis?ticker=${encodeURIComponent(item.ticker)}&watchlistItemId=${encodeURIComponent(item.id)}`
+                              `/new-thesis?ticker=${encodeURIComponent(item.ticker)}&watchlistItemId=${encodeURIComponent(item.id!)}`
                             )
                           }
                           className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"

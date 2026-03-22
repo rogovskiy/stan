@@ -1,12 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+}
+
+function toChatMessages(entries: Array<{ role: string; content: string }>): ChatMessage[] {
+  return entries.map((e, i) => ({
+    id: e.role === 'assistant' ? `a-${i}` : `u-${i}`,
+    role: e.role === 'assistant' ? 'assistant' : 'user',
+    content: typeof e.content === 'string' ? e.content : '',
+  }));
 }
 
 function serializeThesisContext(form: PositionThesisPayload): string {
@@ -18,15 +28,33 @@ function serializeThesisContext(form: PositionThesisPayload): string {
 }
 
 export default function ThesisBuilderChat({
-  ticker,
+  apiTicker,
   companyName,
   form,
+  tickerLocked,
+  onFormPatch,
+  initialMessages = [],
+  autoSendMessage = null,
 }: {
-  ticker: string;
+  /** Effective symbol for the coach (usually form.ticker). */
+  apiTicker: string;
   companyName?: string | null;
   form: PositionThesisPayload;
+  tickerLocked: boolean;
+  onFormPatch: (patch: Partial<PositionThesisPayload>) => void;
+  /** Chat history carried over from new-thesis onboarding. */
+  initialMessages?: Array<{ role: string; content: string }>;
+  /** When `nonce` changes, send `text` as a user message (e.g. section help from the form). */
+  autoSendMessage?: { nonce: number; text: string } | null;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    initialMessages.length > 0 ? toChatMessages(initialMessages) : []
+  );
+  useEffect(() => {
+    if (initialMessages.length > 0 && messages.length === 0) {
+      setMessages(toChatMessages(initialMessages));
+    }
+  }, [initialMessages, messages.length]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +65,53 @@ export default function ThesisBuilderChat({
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  const submitConversation = useCallback(
+    async (conversationMessages: ChatMessage[]) => {
+      setLoading(true);
+      setError(null);
+      const ctx = serializeThesisContext(form);
+      try {
+        const res = await fetch('/api/chat/position-thesis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: apiTicker.trim().toUpperCase() || 'UNKNOWN',
+            companyName: companyName ?? null,
+            thesisContext: ctx,
+            tickerLocked,
+            messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
+          }),
+        });
+        const data = (await res.json()) as {
+          reply?: string;
+          formPatch?: Partial<PositionThesisPayload>;
+          error?: string;
+        };
+        if (!res.ok) {
+          throw new Error(data.error || res.statusText);
+        }
+        if (!data.reply) {
+          throw new Error('Empty reply');
+        }
+        setMessages([
+          ...conversationMessages,
+          { id: `a-${Date.now()}`, role: 'assistant', content: data.reply },
+        ]);
+        if (data.formPatch && typeof data.formPatch === 'object') {
+          const clean = sanitizeFormPatch(data.formPatch, { tickerLocked });
+          if (clean && Object.keys(clean).length > 0) {
+            onFormPatch(clean);
+          }
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Request failed');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiTicker, companyName, form, tickerLocked, onFormPatch]
+  );
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -50,37 +125,27 @@ export default function ThesisBuilderChat({
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
     setInput('');
-    setLoading(true);
-    setError(null);
+    await submitConversation(nextMessages);
+  }, [input, loading, messages, submitConversation]);
 
-    try {
-      const res = await fetch('/api/chat/position-thesis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ticker,
-          companyName: companyName ?? null,
-          thesisContext,
-          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
-        }),
-      });
-      const data = (await res.json()) as { reply?: string; error?: string };
-      if (!res.ok) {
-        throw new Error(data.error || res.statusText);
-      }
-      if (!data.reply) {
-        throw new Error('Empty reply');
-      }
-      setMessages((prev) => [
-        ...prev,
-        { id: `a-${Date.now()}`, role: 'assistant', content: data.reply! },
-      ]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Request failed');
-    } finally {
-      setLoading(false);
-    }
-  }, [input, loading, messages, ticker, companyName, thesisContext]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  const lastAutoNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!autoSendMessage?.text?.trim() || loading) return;
+    if (autoSendMessage.nonce === lastAutoNonce.current) return;
+    lastAutoNonce.current = autoSendMessage.nonce;
+    const text = autoSendMessage.text.trim();
+    const userMsg: ChatMessage = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: text,
+    };
+    const nextMessages = [...messagesRef.current, userMsg];
+    setMessages(nextMessages);
+    void submitConversation(nextMessages);
+  }, [autoSendMessage, loading, submitConversation]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -90,8 +155,7 @@ export default function ThesisBuilderChat({
   };
 
   return (
-    <div className="flex flex-col min-h-[28rem] max-h-[min(70vh,640px)] rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/60 overflow-hidden">
-      {/* Header */}
+    <div className="flex flex-col min-h-[28rem] xl:min-h-[calc(100vh-8rem)] xl:max-h-[calc(100vh-6rem)] rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/60 overflow-hidden">
       <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-gradient-to-br from-slate-50 via-white to-stone-50/60 border-b border-slate-100">
         <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Thesis assistant</h2>
       </div>
@@ -102,14 +166,26 @@ export default function ThesisBuilderChat({
         </div>
       )}
 
-      {/* Transcript */}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 bg-gradient-to-b from-slate-50/70 to-white">
         {messages.length === 0 && (
-          <div className="rounded-xl border border-dashed border-slate-200/90 bg-white/60 px-3 py-3 text-center shadow-sm">
-            <p className="text-[12px] leading-relaxed text-slate-600">
-              Tighten your thesis, stress-test downside, or clarify rules — each message includes your
-              current form as context.
-            </p>
+          <div className="rounded-xl border border-dashed border-slate-200/90 bg-white/60 px-3 py-3 text-left shadow-sm space-y-2">
+            <p className="text-[12px] font-medium text-slate-800">Start here</p>
+            <ol className="text-[12px] leading-relaxed text-slate-600 list-decimal list-inside space-y-1">
+              {!tickerLocked && (
+                <li>
+                  Confirm the <span className="font-medium text-slate-700">ticker</span> in the form (or say
+                  it in chat). It locks when you save.
+                </li>
+              )}
+              <li>
+                Describe your thesis in your own words—why you own it, horizon, upside/downside, what would
+                break the story.
+              </li>
+              <li>
+                The assistant will ask follow-ups and can fill sections on the left; you can edit anything
+                anytime.
+              </li>
+            </ol>
           </div>
         )}
         <div className="space-y-3">
@@ -131,15 +207,19 @@ export default function ThesisBuilderChat({
               >
                 {m.role === 'user' ? 'You' : 'Assistant'}
               </span>
-              <p
+              <div
                 className={
                   m.role === 'user'
                     ? 'pr-20 text-[13px] leading-relaxed text-slate-800 whitespace-pre-wrap'
-                    : 'pr-20 text-[13px] leading-relaxed text-slate-700 whitespace-pre-wrap'
+                    : 'pr-20 text-[13px] leading-relaxed text-slate-700 [&_strong]:font-semibold [&_strong]:text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5'
                 }
               >
-                {m.content}
-              </p>
+                {m.role === 'assistant' ? (
+                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                ) : (
+                  m.content
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -155,7 +235,6 @@ export default function ThesisBuilderChat({
         <div ref={endRef} />
       </div>
 
-      {/* Composer */}
       <div className="flex-shrink-0 border-t border-slate-100 bg-slate-50/80 px-3 py-3">
         <div className="rounded-xl border border-slate-200/90 bg-white p-2 shadow-sm ring-1 ring-slate-100">
           <textarea

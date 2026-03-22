@@ -7,7 +7,13 @@
 
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import {
+  isFailureRow,
+  normalizeDriverRow,
+  POSITION_THESIS_MERGE_STRING_KEYS,
+} from '../positionThesisMerge';
 import type {
+  DriverRow,
   PositionThesisPayload,
   PositionThesisStatus,
   PositionThesisFirestoreDoc,
@@ -17,6 +23,41 @@ const COLLECTION = 'position_theses';
 
 export function positionThesisDocId(userId: string, ticker: string): string {
   return `${userId}_${ticker.toUpperCase()}`;
+}
+
+/** Empty template for onboarding / scratch builds (no sample copy). */
+export function scratchPositionThesisPayload(initialTicker = ''): PositionThesisPayload {
+  const t = initialTicker.trim().toUpperCase();
+  return {
+    ticker: t,
+    positionRole: '',
+    holdingHorizon: '',
+    thesisStatement: '',
+    portfolioRole: '',
+    regimeDesignedFor: '',
+    entryPrice: '',
+    upsideDividendAssumption: '',
+    upsideGrowthAssumption: '',
+    upsideMultipleAssumption: '',
+    baseDividendAssumption: '',
+    baseGrowthAssumption: '',
+    baseMultipleAssumption: '',
+    downsideDividendAssumption: '',
+    downsideGrowthAssumption: '',
+    downsideMultipleAssumption: '',
+    upsideScenario: '',
+    baseScenario: '',
+    downsideScenario: '',
+    drivers: [],
+    failures: [],
+    distanceToFailure: '',
+    currentVolRegime: '',
+    riskPosture: '',
+    trimRule: '',
+    exitRule: '',
+    addRule: '',
+    systemMonitoringSignals: '',
+  };
 }
 
 export function defaultPositionThesisPayload(ticker: string): PositionThesisPayload {
@@ -32,19 +73,25 @@ export function defaultPositionThesisPayload(ticker: string): PositionThesisPayl
     regimeDesignedFor:
       'Stable-to-tight oil market, geopolitical risk, moderate inflation, and persistent demand for cash-generative dividend payers.',
     entryPrice: '$150',
-    baseReturnYear: '8%',
-    dividendYieldAssumption: '3.5%',
-    growthAssumption: '4–6%',
+    upsideDividendAssumption: '3.5%',
+    upsideGrowthAssumption: '8–10%',
+    upsideMultipleAssumption: 'Modest multiple expansion (+1–2 turns P/E)',
+    baseDividendAssumption: '3.5%',
+    baseGrowthAssumption: '4–6%',
+    baseMultipleAssumption: 'Roughly flat vs current',
+    downsideDividendAssumption: 'At risk in stress; cut scenario ~2%',
+    downsideGrowthAssumption: '0–2% or negative',
+    downsideMultipleAssumption: 'Compression (e.g. -10–20%)',
     upsideScenario: 'Oil shock or supply disruption drives 20–35% upside over 6–18 months.',
     baseScenario:
       'Oil remains in a healthy range, dividend remains secure, modest capital appreciation continues.',
     downsideScenario:
       'Oil falls due to demand slowdown or de-escalation, compressing earnings and multiple.',
     drivers: [
-      { driver: 'Oil price', whyItMatters: 'Primary earnings driver', currentState: 'Elevated', importance: 'High' },
-      { driver: 'Supply constraints', whyItMatters: 'Supports pricing', currentState: 'Moderate/High', importance: 'High' },
-      { driver: 'Dividend stability', whyItMatters: 'Valuation floor', currentState: 'Strong', importance: 'Medium' },
-      { driver: 'Global demand', whyItMatters: 'Supports volumes and sentiment', currentState: 'Moderate', importance: 'High' },
+      { driver: 'Oil price', whyItMatters: 'Primary earnings driver', importance: 'High' },
+      { driver: 'Supply constraints', whyItMatters: 'Supports pricing', importance: 'High' },
+      { driver: 'Dividend stability', whyItMatters: 'Valuation floor', importance: 'Medium' },
+      { driver: 'Global demand', whyItMatters: 'Supports volumes and sentiment', importance: 'High' },
     ],
     failures: [
       { failurePath: 'Oil collapse', trigger: 'Oil < $60 for 3+ months', estimatedImpact: '-25%', timeframe: '3–6 months' },
@@ -74,6 +121,53 @@ function toIso(value: unknown): string | undefined {
   return undefined;
 }
 
+function applyLegacyReturnAssumptions(
+  out: PositionThesisPayload,
+  raw: Record<string, unknown>
+): void {
+  if (!out.baseDividendAssumption && typeof raw.dividendYieldAssumption === 'string') {
+    out.baseDividendAssumption = raw.dividendYieldAssumption;
+  }
+  if (!out.baseGrowthAssumption && typeof raw.growthAssumption === 'string') {
+    out.baseGrowthAssumption = raw.growthAssumption;
+  }
+  if (!out.baseMultipleAssumption && typeof raw.baseReturnYear === 'string') {
+    out.baseMultipleAssumption = `Implied headline return ~${raw.baseReturnYear}`;
+  }
+}
+
+/** Coerce Firestore/API JSON into `PositionThesisPayload` (handles legacy keys). */
+export function coercePositionThesisPayload(
+  raw: unknown,
+  fallbackTicker: string
+): PositionThesisPayload {
+  const base = scratchPositionThesisPayload(fallbackTicker);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return base;
+  const r = raw as Record<string, unknown>;
+
+  const out: PositionThesisPayload = {
+    ...base,
+    ticker: (typeof r.ticker === 'string' ? r.ticker.trim() : fallbackTicker.trim()).toUpperCase() || base.ticker,
+  };
+
+  for (const key of POSITION_THESIS_MERGE_STRING_KEYS) {
+    const v = r[key as string];
+    if (typeof v === 'string') (out as Record<string, string>)[key] = v;
+  }
+
+  if (Array.isArray(r.drivers)) {
+    out.drivers = r.drivers
+      .map((d) => normalizeDriverRow(d))
+      .filter((row): row is DriverRow => row !== null);
+  }
+  if (Array.isArray(r.failures)) {
+    out.failures = r.failures.filter(isFailureRow);
+  }
+
+  applyLegacyReturnAssumptions(out, r);
+  return out;
+}
+
 export interface LoadedPositionThesis {
   id: string;
   status: PositionThesisStatus;
@@ -93,13 +187,15 @@ export async function getPositionThesis(
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<PositionThesisFirestoreDoc>;
-  const payload = data.payload as PositionThesisPayload | undefined;
-  if (!payload) return null;
+  const rawPayload = data.payload;
+  if (!rawPayload || typeof rawPayload !== 'object') return null;
+
+  const coerced = coercePositionThesisPayload(rawPayload, ticker);
 
   return {
     id: snap.id,
     status: data.status === 'published' ? 'published' : 'draft',
-    payload: { ...payload, ticker: (payload.ticker || ticker).toUpperCase() },
+    payload: { ...coerced, ticker: (coerced.ticker || ticker).toUpperCase() },
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     publishedAt: toIso(data.publishedAt),

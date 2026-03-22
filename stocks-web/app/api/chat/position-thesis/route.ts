@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
 
 const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 const MAX_CONTEXT_CHARS = 48_000;
@@ -13,16 +14,74 @@ interface IncomingMessage {
   content: string;
 }
 
-function buildSystemInstruction(ticker: string, companyName: string | null, thesisContext: string) {
+function buildSystemInstruction(
+  ticker: string,
+  companyName: string | null,
+  thesisContext: string,
+  tickerLocked: boolean
+) {
   const name = companyName ? `${companyName} (${ticker})` : ticker;
+  const lockNote = tickerLocked
+    ? 'The ticker is already fixed for this thesis document. Do not include "ticker" in formPatch.'
+    : 'The user may still change the ticker until they save; you may set formPatch.ticker if they state a symbol (uppercase).';
+
+  let hasCoreFields = false;
+  if (thesisContext.trim().length > 0) {
+    try {
+      const draft = JSON.parse(thesisContext.trim()) as Record<string, unknown>;
+      const ok = (k: string) =>
+        typeof draft[k] === 'string' && (draft[k] as string).trim().length > 0;
+      const count = [ok('ticker'), ok('positionRole'), ok('holdingHorizon'), ok('thesisStatement')].filter(Boolean).length;
+      hasCoreFields = count >= 3;
+    } catch {
+      // not valid JSON, treat as empty
+    }
+  }
+  const continuationNote = hasCoreFields
+    ? 'The draft already has core fields (ticker, position role, horizon, statement) filled — the user likely came from the onboarding flow. Do not re-ask for those. Acknowledge what is there and focus on drivers, failures, scenarios, entry/exit rules, portfolio role, regime, or other optional sections. Be incremental.'
+    : '';
+
   return [
-    `You are an expert investment thesis coach helping refine a structured position thesis for ${name}.`,
-    'Be concise, practical, and specific. Reference the draft fields when relevant (thesis statement, return expectations, drivers, failure map, decision rules).',
-    'You do not provide personalized financial advice or trade recommendations; you help structure and stress-test the user\'s own thesis.',
+    `You are an expert investment thesis coach helping build a structured position thesis for ${name}.`,
+    lockNote,
+    continuationNote,
+    'Workflow: (1) If the draft ticker is missing, empty, or clearly a placeholder, ask which symbol they mean before inventing fundamentals. (2) Invite a free-text description of the position. (3) Ask short clarifying questions. (4) Propose concrete field values in formPatch as you go.',
+    'Be concise, practical, and specific. You do not give personalized financial advice or trade recommendations; you help structure and stress-test the user\'s own thesis.',
+    'For drivers, prefer 3–6 rows; for failures, 2–5 rows. Use short placeholders like "Unknown" or "TBD" instead of fabricating precise numbers.',
+    '',
+    'OUTPUT CONTRACT — reply with JSON only (no markdown code fences), exactly one object:',
+    '{"message": string, "formPatch": object | null}',
+    '- "message": conversational text shown to the user (questions, summary, what you changed).',
+    '- "formPatch": a partial object matching the draft shape (only keys you want to set). Omit keys you are not updating. Use null for formPatch if nothing to merge.',
+    'Allowed top-level string keys in formPatch: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, upsideDividendAssumption, upsideGrowthAssumption, upsideMultipleAssumption, baseDividendAssumption, baseGrowthAssumption, baseMultipleAssumption, downsideDividendAssumption, downsideGrowthAssumption, downsideMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals.',
+    'Optional arrays: "drivers" (objects with driver, whyItMatters, importance where importance is High, Medium, or Low), "failures" (failurePath one line, trigger, estimatedImpact, timeframe). Prefer timeframe: Immediate, < 3 months, 3–6 months, 6–12 months, 6–18 months, 1–2 years, 2+ years, or Gradual. When updating a table, send the full replacement array.',
     thesisContext.trim()
-      ? `Current draft (JSON or text from the builder):\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`
-      : 'No draft text was supplied; ask what ticker and thesis they are working on.',
-  ].join('\n\n');
+      ? `Current draft JSON:\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`
+      : 'No draft JSON yet; help the user start from their description.',
+  ].join('\n');
+}
+
+function parseModelJson(text: string): { message: string; formPatchRaw: unknown } | null {
+  const trimmed = text.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as { message?: unknown; formPatch?: unknown };
+    const message = typeof parsed.message === 'string' ? parsed.message : '';
+    if (!message) return null;
+    return { message, formPatchRaw: parsed.formPatch === undefined ? null : parsed.formPatch };
+  } catch {
+    const idx = trimmed.lastIndexOf('THESIS_PATCH:');
+    if (idx >= 0) {
+      const jsonPart = trimmed.slice(idx + 'THESIS_PATCH:'.length).trim();
+      try {
+        const patch = JSON.parse(jsonPart);
+        const human = trimmed.slice(0, idx).trim();
+        if (human) return { message: human, formPatchRaw: patch };
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -39,6 +98,7 @@ export async function POST(request: Request) {
     ticker?: string;
     companyName?: string | null;
     thesisContext?: string;
+    tickerLocked?: boolean;
   };
   try {
     body = await request.json();
@@ -50,6 +110,8 @@ export async function POST(request: Request) {
   if (!ticker) {
     return NextResponse.json({ error: 'ticker is required' }, { status: 400 });
   }
+
+  const tickerLocked = body.tickerLocked === true;
 
   const messages = Array.isArray(body.messages) ? body.messages : [];
   if (messages.length === 0) {
@@ -83,7 +145,10 @@ export async function POST(request: Request) {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: MODEL,
-    systemInstruction: buildSystemInstruction(ticker, companyName, thesisContext),
+    systemInstruction: buildSystemInstruction(ticker, companyName, thesisContext, tickerLocked),
+    generationConfig: {
+      responseMimeType: 'application/json',
+    },
   });
 
   const history = messages.slice(0, -1).map((m) => ({
@@ -95,7 +160,28 @@ export async function POST(request: Request) {
     const chat = model.startChat({ history });
     const result = await chat.sendMessage(last.content);
     const text = result.response.text();
-    return NextResponse.json({ reply: text });
+    const parsed = parseModelJson(text);
+    if (!parsed) {
+      console.error('POST /api/chat/position-thesis: invalid model JSON', text.slice(0, 500));
+      return NextResponse.json(
+        { error: 'Assistant returned invalid response format. Try again.' },
+        { status: 502 }
+      );
+    }
+
+    let formPatch = null;
+    if (parsed.formPatchRaw !== null && parsed.formPatchRaw !== undefined) {
+      formPatch = sanitizeFormPatch(parsed.formPatchRaw, { tickerLocked });
+    }
+
+    const responseBody: { reply: string; formPatch?: Record<string, unknown> } = {
+      reply: parsed.message,
+    };
+    if (formPatch && Object.keys(formPatch).length > 0) {
+      responseBody.formPatch = formPatch as Record<string, unknown>;
+    }
+
+    return NextResponse.json(responseBody);
   } catch (err) {
     console.error('POST /api/chat/position-thesis:', err);
     return NextResponse.json(

@@ -6,7 +6,7 @@
 export interface DriverRow {
   driver: string;
   whyItMatters: string;
-  currentState: string;
+  /** One of High / Medium / Low; other legacy strings may exist until re-saved. */
   importance: string;
 }
 
@@ -26,9 +26,15 @@ export interface PositionThesisPayload {
   portfolioRole: string;
   regimeDesignedFor: string;
   entryPrice: string;
-  baseReturnYear: string;
-  dividendYieldAssumption: string;
-  growthAssumption: string;
+  upsideDividendAssumption: string;
+  upsideGrowthAssumption: string;
+  upsideMultipleAssumption: string;
+  baseDividendAssumption: string;
+  baseGrowthAssumption: string;
+  baseMultipleAssumption: string;
+  downsideDividendAssumption: string;
+  downsideGrowthAssumption: string;
+  downsideMultipleAssumption: string;
   upsideScenario: string;
   baseScenario: string;
   downsideScenario: string;

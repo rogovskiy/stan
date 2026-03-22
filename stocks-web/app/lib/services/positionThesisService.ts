@@ -12,6 +12,7 @@ import {
   normalizeDriverRow,
   POSITION_THESIS_MERGE_STRING_KEYS,
 } from '../positionThesisMerge';
+import { scratchPositionThesisPayload } from '../positionThesisScratch';
 import type {
   DriverRow,
   PositionThesisPayload,
@@ -25,41 +26,7 @@ export function positionThesisDocId(userId: string, ticker: string): string {
   return `${userId}_${ticker.toUpperCase()}`;
 }
 
-/** Empty template for onboarding / scratch builds (no sample copy). */
-export function scratchPositionThesisPayload(initialTicker = ''): PositionThesisPayload {
-  const t = initialTicker.trim().toUpperCase();
-  return {
-    ticker: t,
-    positionRole: '',
-    holdingHorizon: '',
-    thesisStatement: '',
-    portfolioRole: '',
-    regimeDesignedFor: '',
-    entryPrice: '',
-    upsideDividendAssumption: '',
-    upsideGrowthAssumption: '',
-    upsideMultipleAssumption: '',
-    baseDividendAssumption: '',
-    baseGrowthAssumption: '',
-    baseMultipleBasis: 'P/E',
-    baseMultipleAssumption: '',
-    downsideDividendAssumption: '',
-    downsideGrowthAssumption: '',
-    downsideMultipleAssumption: '',
-    upsideScenario: '',
-    baseScenario: '',
-    downsideScenario: '',
-    drivers: [],
-    failures: [],
-    distanceToFailure: '',
-    currentVolRegime: '',
-    riskPosture: '',
-    trimRule: '',
-    exitRule: '',
-    addRule: '',
-    systemMonitoringSignals: '',
-  };
-}
+export { scratchPositionThesisPayload };
 
 export function defaultPositionThesisPayload(ticker: string): PositionThesisPayload {
   const t = ticker.toUpperCase();

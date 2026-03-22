@@ -4,10 +4,16 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
+import { formatAssumptionRange, parseAssumptionRange } from '@/app/lib/positionThesisAssumptionRange';
+import {
+  computeSectionCompleteness,
+  type ThesisSectionCompleteness,
+} from '@/app/lib/positionThesisCompleteness';
 import type { DriverRow, FailureRow, PositionThesisPayload } from '@/app/lib/types/positionThesis';
 
 const MAX_TABLE_ROWS = 12;
@@ -68,44 +74,6 @@ const assumptionTierCard =
   'rounded-xl border border-slate-200 bg-slate-50/50 p-4 ring-1 ring-slate-100';
 const tierHeading = 'text-sm font-semibold text-slate-800 mb-3';
 const badge = 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium border';
-
-/** Parse stored assumption into low / high for inputs (legacy single number or "3.5%"). */
-function parseAssumptionRange(stored: string): { low: string; high: string } {
-  const t = stored.trim();
-  if (!t) return { low: '', high: '' };
-  const rangeMatch = t.match(/^(-?\d+(?:\.\d+)?)\s*[–-]\s*(-?\d+(?:\.\d+)?)\s*$/);
-  if (rangeMatch) {
-    return { low: rangeMatch[1], high: rangeMatch[2] };
-  }
-  const toMatch = t.match(/^(-?\d+(?:\.\d+)?)\s+to\s+(-?\d+(?:\.\d+)?)\s*$/i);
-  if (toMatch) {
-    return { low: toMatch[1], high: toMatch[2] };
-  }
-  const single = t.match(/-?\d+(?:\.\d+)?/);
-  if (single) {
-    const v = single[0];
-    return { low: v, high: v };
-  }
-  return { low: '', high: '' };
-}
-
-/** Persist as "low–high" (en-dash) or a single number when both ends match / one side empty. */
-function formatAssumptionRange(low: string, high: string): string {
-  const lt = low.trim();
-  const ht = high.trim();
-  if (!lt && !ht) return '';
-  if (!lt) return ht;
-  if (!ht) return lt;
-  const ln = parseFloat(lt);
-  const hn = parseFloat(ht);
-  if (Number.isFinite(ln) && Number.isFinite(hn) && ln > hn) {
-    return `${ht}–${lt}`;
-  }
-  if (lt === ht || (Number.isFinite(ln) && Number.isFinite(hn) && ln === hn)) {
-    return lt;
-  }
-  return `${lt}–${ht}`;
-}
 
 function AssumptionRangeFields({
   title,
@@ -742,6 +710,48 @@ function updateFailure(
   return next;
 }
 
+const completenessBadgeTone: Record<
+  ThesisSectionCompleteness,
+  { className: string; label: string; hint: string }
+> = {
+  green: {
+    className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    label: 'Complete',
+    hint: 'This section meets the bar for weighted completeness.',
+  },
+  yellow: {
+    className: 'bg-amber-50 text-amber-900 border-amber-200',
+    label: 'In progress',
+    hint: 'Some important fields are still empty or thin.',
+  },
+  red: {
+    className: 'bg-red-50 text-red-800 border-red-200',
+    label: 'Needs attention',
+    hint: 'Critical fields are missing or the section is mostly empty.',
+  },
+};
+
+function SectionCompletenessBadge({
+  level,
+  optionalSection,
+}: {
+  level: ThesisSectionCompleteness;
+  optionalSection?: boolean;
+}) {
+  if (optionalSection && level === 'red') {
+    return null;
+  }
+  const tone = completenessBadgeTone[level];
+  return (
+    <span
+      className={`${badge} shrink-0 ${tone.className}`}
+      title={tone.hint}
+    >
+      {tone.label}
+    </span>
+  );
+}
+
 const rowRemoveBtn =
   'inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:pointer-events-none disabled:opacity-30';
 const addRowBtn =
@@ -809,6 +819,8 @@ export default function PositionThesisBuilderView({
   const symbol = form.ticker.trim().toUpperCase() || routeTicker;
   const titleName =
     symbol === routeTicker && companyName ? `${companyName} (${symbol})` : symbol;
+
+  const sectionCompleteness = useMemo(() => computeSectionCompleteness(form), [form]);
 
   const persist = useCallback(
     async (status: 'draft' | 'published') => {
@@ -923,12 +935,15 @@ export default function PositionThesisBuilderView({
               <div className={section}>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">Position & horizon</h2>
-                  <SectionChatHelpButton
-                    sectionTitle="position and horizon"
-                    prompt={SECTION_HELP.basics}
-                    disabled={loadingRemote}
-                    onRequestHelp={requestSectionChatHelp}
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <SectionCompletenessBadge level={sectionCompleteness.basics} />
+                    <SectionChatHelpButton
+                      sectionTitle="position and horizon"
+                      prompt={SECTION_HELP.basics}
+                      disabled={loadingRemote}
+                      onRequestHelp={requestSectionChatHelp}
+                    />
+                  </div>
                 </div>
                 <div className="grid md:grid-cols-3 gap-4">
                   <div>
@@ -969,9 +984,7 @@ export default function PositionThesisBuilderView({
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">1. Thesis Statement</h2>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className={`${badge} bg-emerald-50 text-emerald-700 border-emerald-200`}>
-                      Required
-                    </span>
+                    <SectionCompletenessBadge level={sectionCompleteness.thesis} />
                     <SectionChatHelpButton
                       sectionTitle="thesis statement and portfolio context"
                       prompt={SECTION_HELP.thesis}
@@ -1016,12 +1029,15 @@ export default function PositionThesisBuilderView({
               <div className={section}>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">2. Return Expectation</h2>
-                  <SectionChatHelpButton
-                    sectionTitle="return expectations"
-                    prompt={SECTION_HELP.returns}
-                    disabled={loadingRemote}
-                    onRequestHelp={requestSectionChatHelp}
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <SectionCompletenessBadge level={sectionCompleteness.returns} />
+                    <SectionChatHelpButton
+                      sectionTitle="return expectations"
+                      prompt={SECTION_HELP.returns}
+                      disabled={loadingRemote}
+                      onRequestHelp={requestSectionChatHelp}
+                    />
+                  </div>
                 </div>
                 <div className="max-w-xs">
                   <div className={label}>Entry Price</div>
@@ -1134,12 +1150,15 @@ export default function PositionThesisBuilderView({
               <div className={section}>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">3. Drivers and Dependencies</h2>
-                  <SectionChatHelpButton
-                    sectionTitle="drivers and dependencies"
-                    prompt={SECTION_HELP.drivers}
-                    disabled={loadingRemote}
-                    onRequestHelp={requestSectionChatHelp}
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <SectionCompletenessBadge level={sectionCompleteness.drivers} />
+                    <SectionChatHelpButton
+                      sectionTitle="drivers and dependencies"
+                      prompt={SECTION_HELP.drivers}
+                      disabled={loadingRemote}
+                      onRequestHelp={requestSectionChatHelp}
+                    />
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-stretch gap-4">
                   {form.drivers.length === 0 ? (
@@ -1201,12 +1220,15 @@ export default function PositionThesisBuilderView({
               <div className={section}>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">4. Downside and Failure Map</h2>
-                  <SectionChatHelpButton
-                    sectionTitle="downside and failure map"
-                    prompt={SECTION_HELP.failures}
-                    disabled={loadingRemote}
-                    onRequestHelp={requestSectionChatHelp}
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <SectionCompletenessBadge level={sectionCompleteness.failures} />
+                    <SectionChatHelpButton
+                      sectionTitle="downside and failure map"
+                      prompt={SECTION_HELP.failures}
+                      disabled={loadingRemote}
+                      onRequestHelp={requestSectionChatHelp}
+                    />
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-stretch gap-4">
                   {form.failures.length === 0 ? (
@@ -1268,12 +1290,24 @@ export default function PositionThesisBuilderView({
               <div className={section}>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h2 className="text-lg font-semibold">5. Decision Rules</h2>
-                  <SectionChatHelpButton
-                    sectionTitle="decision rules"
-                    prompt={SECTION_HELP.rules}
-                    disabled={loadingRemote}
-                    onRequestHelp={requestSectionChatHelp}
-                  />
+                  <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                    <span
+                      className={`${badge} shrink-0 bg-slate-100 text-slate-600 border-slate-200`}
+                      title="You can save or publish without filling this section."
+                    >
+                      Optional
+                    </span>
+                    <SectionCompletenessBadge
+                      level={sectionCompleteness.rules}
+                      optionalSection
+                    />
+                    <SectionChatHelpButton
+                      sectionTitle="decision rules"
+                      prompt={SECTION_HELP.rules}
+                      disabled={loadingRemote}
+                      onRequestHelp={requestSectionChatHelp}
+                    />
+                  </div>
                 </div>
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>

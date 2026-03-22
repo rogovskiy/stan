@@ -1,14 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import {
+  canRunGroundedThesisFactCheck,
+  factCheckGateBlockedMessage,
+  getBlockedRequiredSections,
+} from '@/app/lib/positionThesisCompleteness';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
 import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
+import { factCheckMarkdownComponents } from './factCheckMarkdown';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** Shown in the top-right chip for assistant messages (default: "Assistant"). */
+  assistantLabel?: string;
+  /** Enables colored section styling for Fact Check reports. */
+  messageKind?: 'factCheck';
 }
 
 function toChatMessages(entries: Array<{ role: string; content: string }>): ChatMessage[] {
@@ -57,14 +67,19 @@ export default function ThesisBuilderChat({
   }, [initialMessages, messages.length]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [factCheckLoading, setFactCheckLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const thesisContext = serializeThesisContext(form);
+  const factCheckReady = useMemo(() => canRunGroundedThesisFactCheck(form), [form]);
+  const factCheckBlockedTitle = useMemo(() => {
+    if (factCheckReady) return '';
+    return factCheckGateBlockedMessage(getBlockedRequiredSections(form));
+  }, [form, factCheckReady]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, loading, factCheckLoading]);
 
   const submitConversation = useCallback(
     async (conversationMessages: ChatMessage[]) => {
@@ -113,6 +128,46 @@ export default function ThesisBuilderChat({
     [apiTicker, companyName, form, tickerLocked, onFormPatch]
   );
 
+  const runFactCheck = useCallback(async () => {
+    if (!canRunGroundedThesisFactCheck(form) || loading || factCheckLoading) return;
+    setFactCheckLoading(true);
+    setError(null);
+    const ctx = serializeThesisContext(form);
+    try {
+      const res = await fetch('/api/chat/position-thesis/reality-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticker: apiTicker.trim().toUpperCase() || 'UNKNOWN',
+          companyName: companyName ?? null,
+          thesisContext: ctx,
+        }),
+      });
+      const data = (await res.json()) as { report?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || res.statusText);
+      }
+      const report = data.report?.trim();
+      if (!report) {
+        throw new Error('Empty report');
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `fc-${Date.now()}`,
+          role: 'assistant',
+          assistantLabel: 'Fact Check',
+          messageKind: 'factCheck',
+          content: `## Fact Check\n\n${report}`,
+        },
+      ]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Fact Check failed');
+    } finally {
+      setFactCheckLoading(false);
+    }
+  }, [apiTicker, companyName, form, loading, factCheckLoading]);
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
@@ -133,7 +188,7 @@ export default function ThesisBuilderChat({
 
   const lastAutoNonce = useRef<number | null>(null);
   useEffect(() => {
-    if (!autoSendMessage?.text?.trim() || loading) return;
+    if (!autoSendMessage?.text?.trim() || loading || factCheckLoading) return;
     if (autoSendMessage.nonce === lastAutoNonce.current) return;
     lastAutoNonce.current = autoSendMessage.nonce;
     const text = autoSendMessage.text.trim();
@@ -145,7 +200,7 @@ export default function ThesisBuilderChat({
     const nextMessages = [...messagesRef.current, userMsg];
     setMessages(nextMessages);
     void submitConversation(nextMessages);
-  }, [autoSendMessage, loading, submitConversation]);
+  }, [autoSendMessage, loading, factCheckLoading, submitConversation]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -157,7 +212,32 @@ export default function ThesisBuilderChat({
   return (
     <div className="flex flex-col min-h-[28rem] xl:min-h-[calc(100vh-8rem)] xl:max-h-[calc(100vh-6rem)] rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/60 overflow-hidden">
       <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-gradient-to-br from-slate-50 via-white to-stone-50/60 border-b border-slate-100">
-        <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Thesis assistant</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 gap-y-2">
+          <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Thesis assistant</h2>
+          <button
+            type="button"
+            onClick={() => void runFactCheck()}
+            disabled={!factCheckReady || loading || factCheckLoading}
+            title={
+              factCheckReady
+                ? 'Uses web search to compare factual claims in your draft to public sources (not financial advice).'
+                : factCheckBlockedTitle
+            }
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-300/90 bg-emerald-50/90 px-3 py-2 text-[13px] font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/80 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+          >
+            <svg
+              className="h-3.5 w-3.5 shrink-0 text-emerald-700"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+            Fact Check
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -205,17 +285,23 @@ export default function ThesisBuilderChat({
                     : 'pointer-events-none absolute right-2 top-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500'
                 }
               >
-                {m.role === 'user' ? 'You' : 'Assistant'}
+                {m.role === 'user' ? 'You' : (m.assistantLabel ?? 'Assistant')}
               </span>
               <div
                 className={
                   m.role === 'user'
                     ? 'pr-20 text-[13px] leading-relaxed text-slate-800 whitespace-pre-wrap'
-                    : 'pr-20 text-[13px] leading-relaxed text-slate-700 [&_strong]:font-semibold [&_strong]:text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5'
+                    : m.messageKind === 'factCheck'
+                      ? 'pr-20 text-[13px] leading-relaxed text-slate-700 [&_strong]:font-semibold'
+                      : 'pr-20 text-[13px] leading-relaxed text-slate-700 [&_strong]:font-semibold [&_strong]:text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5'
                 }
               >
                 {m.role === 'assistant' ? (
-                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                  m.messageKind === 'factCheck' ? (
+                    <ReactMarkdown components={factCheckMarkdownComponents}>{m.content}</ReactMarkdown>
+                  ) : (
+                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                  )
                 ) : (
                   m.content
                 )}
@@ -232,6 +318,15 @@ export default function ThesisBuilderChat({
             Thinking…
           </div>
         )}
+        {factCheckLoading && (
+          <div className="mt-3 flex items-center gap-2.5 text-[12px] text-slate-600">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/40 opacity-35" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
+            </span>
+            Running Fact Check…
+          </div>
+        )}
         <div ref={endRef} />
       </div>
 
@@ -243,13 +338,13 @@ export default function ThesisBuilderChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            disabled={loading}
+            disabled={loading || factCheckLoading}
           />
           <div className="flex justify-end border-t border-slate-100 pt-2 mt-1">
             <button
               type="button"
               onClick={() => void send()}
-              disabled={loading || !input.trim()}
+              disabled={loading || factCheckLoading || !input.trim()}
               className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-slate-900 disabled:opacity-45 disabled:hover:bg-slate-800"
             >
               Send

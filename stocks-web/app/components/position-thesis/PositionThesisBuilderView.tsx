@@ -793,9 +793,7 @@ export default function PositionThesisBuilderView({
   const [editingFailureIndex, setEditingFailureIndex] = useState<number | null>(null);
 
   const requestSectionChatHelp = useCallback((text: string) => {
-    const languageNote =
-      '\n\nWhen you suggest wording for the form (including drivers, failures, scenarios, and rules), use simple clear English a motivated high school or college student can follow—short sentences, everyday words, and brief plain-English explanations for any necessary finance terms. Stay precise with numbers and time horizons.';
-    setChatAutoSend({ nonce: Date.now(), text: text + languageNote });
+    setChatAutoSend({ nonce: Date.now(), text });
   }, []);
 
   useEffect(() => {

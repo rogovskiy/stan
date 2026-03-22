@@ -42,11 +42,9 @@ function buildSystemInstruction(
     : '';
 
   const plainLanguage = [
-    'Writing style — for both your "message" text and every string you put in formPatch:',
-    '- Use plain English a motivated high school or college student can read without a dictionary. Short sentences, everyday words.',
-    '- Stay precise: keep specific numbers, dates, time horizons, and cause→effect when the user (or facts) supply them. Do not vague things down into mush.',
-    '- If you use a finance or markets term (e.g. multiple, margin, duration, beta), add a quick plain phrase in parentheses on first use, or rephrase in simple words.',
-    '- Avoid stiff corporate speak, buzzwords, and dense academic phrasing. Suggested form values should sound like clear notes the user could have written themselves.',
+    'Writing style — applies to every reply: your conversational "message" and every string you put in formPatch.',
+    'When you suggest wording for the form (including drivers, failures, scenarios, and rules), use simple clear English a motivated high school or college student can follow—short sentences, everyday words, and brief plain-English explanations for any necessary finance terms. Stay precise with numbers and time horizons.',
+    'Avoid stiff corporate speak, buzzwords, and dense academic phrasing. Suggested form values should sound like clear notes the user could have written themselves.',
   ].join('\n');
 
   return [

@@ -64,6 +64,7 @@ export default function NewThesisOnboardingPage() {
     positionId: string;
   } | null>(null);
   const [portfolioBanner, setPortfolioBanner] = useState<string | null>(null);
+  const [watchlistBanner, setWatchlistBanner] = useState<string | null>(null);
   const [portfolioUserFacts, setPortfolioUserFacts] = useState<PortfolioPositionUserFact[] | null>(
     null
   );
@@ -74,8 +75,12 @@ export default function NewThesisOnboardingPage() {
   const portfolioIdParam = searchParams.get('portfolioId');
   const positionIdParam = searchParams.get('positionId');
   const tickerParam = searchParams.get('ticker');
+  const watchlistItemIdParam = searchParams.get('watchlistItemId');
 
   useEffect(() => {
+    if (portfolioIdParam && positionIdParam) {
+      setWatchlistBanner(null);
+    }
     if (!portfolioIdParam || !positionIdParam) {
       setPortfolioContext('');
       setPortfolioLink(null);
@@ -163,6 +168,21 @@ export default function NewThesisOnboardingPage() {
       cancelled = true;
     };
   }, [portfolioIdParam, positionIdParam, tickerParam]);
+
+  useEffect(() => {
+    if (portfolioIdParam && positionIdParam) {
+      return;
+    }
+    if (!watchlistItemIdParam?.trim() || !tickerParam?.trim()) {
+      setWatchlistBanner(null);
+      return;
+    }
+    const t = tickerParam.trim().toUpperCase();
+    setDraft((d) => ({ ...d, ticker: t }));
+    setWatchlistBanner(
+      `Building a thesis for ${t} from your watchlist. Chat through role, horizon, and statement; when you open the full builder, this watch item will reference that thesis.`
+    );
+  }, [portfolioIdParam, positionIdParam, watchlistItemIdParam, tickerParam]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -305,6 +325,22 @@ export default function NewThesisOnboardingPage() {
         portfolioLink: portfolioLink ?? undefined,
         portfolioContextSummary: portfolioContext.trim() || undefined,
       });
+      const watchlistId = searchParams.get('watchlistItemId')?.trim();
+      if (watchlistId && user) {
+        const token = await user.getIdToken();
+        const wlRes = await fetch(`/api/watchlist/${encodeURIComponent(watchlistId)}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ thesisId }),
+        });
+        const wlJson = (await wlRes.json()) as { success?: boolean; error?: string };
+        if (!wlJson.success) {
+          throw new Error(wlJson.error || 'Could not attach thesis to your watchlist');
+        }
+      }
       const q = new URLSearchParams();
       q.set('thesisDocId', thesisDocId);
       if (portfolioLink) {
@@ -352,6 +388,8 @@ export default function NewThesisOnboardingPage() {
               <p className="text-sm sm:text-[15px] text-slate-600 mt-1 leading-relaxed">
                 {portfolioBanner && !portfolioLoadError ? (
                   portfolioBanner
+                ) : watchlistBanner ? (
+                  watchlistBanner
                 ) : (
                   <>
                     New position thesis — chat through ticker, role, horizon, and statement, then open

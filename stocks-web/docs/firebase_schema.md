@@ -304,6 +304,8 @@ Portfolios are top-level collections that contain investment portfolios with pos
 
 Watchlist items are stocks you're watching or considering for investment but haven't purchased yet. This is separate from portfolios which contain actual positions.
 
+The **stocks-web** app loads and writes watchlist data only for the **signed-in user**: API routes verify a Firebase ID token and query `where('userId', '==', uid)`. New documents must include `userId`.
+
 **Structure:**
 ```
 /watchlist/{itemId}  (Watchlist item document)
@@ -314,10 +316,10 @@ Watchlist items are stocks you're watching or considering for investment but hav
 {
   "ticker": "AAPL",
   "notes": "Watching for iPhone launch impact",
-  "thesisId": "thesis-123",
+  "thesisId": "firebaseUid_AAPL",
   "targetPrice": 180.00,
-  "priority": "high",
-  "userId": null,
+  "status": "watching",
+  "userId": "firebaseUid",
   "createdAt": "2024-11-20T10:00:00Z",
   "updatedAt": "2024-11-20T15:30:00Z"
 }
@@ -326,19 +328,19 @@ Watchlist items are stocks you're watching or considering for investment but hav
 **Fields:**
 - `ticker` (string, required): Stock ticker symbol (uppercase)
 - `notes` (string, optional): Notes about why you're watching this stock
-- `thesisId` (string, optional): Reference to investment thesis document
-- `targetPrice` (number, optional): Target price at which you'd consider buying
-- `priority` (string, optional): Priority level - "low", "medium", or "high" (default: "medium")
-- `userId` (string, optional): User ID for multi-user support (future)
+- `thesisId` (string, optional): Same document id as **position thesis** in `/position_theses/{userId}_{TICKER}` (see `positionThesisDocId` in app code); optional link from the portfolio UI
+- `targetPrice` (number, optional): Optional entry / buy-zone price
+- `status` (string): One of `thesis_needed` (UI: “Exploring”), `watching`, `awaiting_confirmation`, `ready_to_buy`. Legacy docs without `status` are treated as `thesis_needed` if there is no `thesisId`, else `watching`
+- `userId` (string, required for app usage): Firebase Auth uid; used to scope all reads and writes
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
 
 **Benefits:**
 - ✅ Track stocks you're considering before making investment decisions
-- ✅ Set target prices for entry points
-- ✅ Priority levels help organize your watchlist
-- ✅ Optional linking to investment theses
-- ✅ Same top-level experience as portfolios in the UI
+- ✅ Optional target price for entry timing
+- ✅ Status reflects workflow (exploring → watching → awaiting confirmation → ready to buy)
+- ✅ Optional link to the Firestore position thesis for that ticker
+- ✅ Same top-level experience as portfolios in the UI (signed-in only)
 
 ---
 
@@ -598,15 +600,16 @@ const aaplPositions = snapshot.docs.map(doc => ({
 }));
 ```
 
-### **Get all watchlist items:**
+### **Get watchlist items for current user:**
 ```javascript
 const watchlistRef = collection(db, 'watchlist');
-const q = query(watchlistRef, orderBy('createdAt', 'desc'));
+const q = query(watchlistRef, where('userId', '==', uid));
 const snapshot = await getDocs(q);
 const items = snapshot.docs.map(doc => ({
   id: doc.id,
   ...doc.data()
 }));
+// App sorts by status workflow then createdAt / ticker on the server.
 ```
 
 ### **Add item to watchlist:**
@@ -615,23 +618,24 @@ const watchlistRef = collection(db, 'watchlist');
 await addDoc(watchlistRef, {
   ticker: 'AAPL',
   notes: 'Watching for iPhone launch impact',
-  thesisId: 'thesis-123',
+  thesisId: `${uid}_AAPL`,
   targetPrice: 180.00,
-  priority: 'high',
+  status: 'watching',
+  userId: uid,
   createdAt: serverTimestamp(),
   updatedAt: serverTimestamp()
 });
 ```
 
-### **Query watchlist by priority:**
+### **Query watchlist by status:**
 ```javascript
 const watchlistRef = collection(db, 'watchlist');
-const q = query(watchlistRef, where('priority', '==', 'high'));
+const q = query(
+  watchlistRef,
+  where('userId', '==', uid),
+  where('status', '==', 'ready_to_buy')
+);
 const snapshot = await getDocs(q);
-const highPriorityItems = snapshot.docs.map(doc => ({
-  id: doc.id,
-  ...doc.data()
-}));
 ```
 
 ### **Get all YouTube subscriptions:**

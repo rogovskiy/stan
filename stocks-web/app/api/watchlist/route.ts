@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
-import { getAllWatchlistItems, addWatchlistItem } from '../../lib/services/watchlistService';
+import {
+  addWatchlistItem,
+  getAllWatchlistItems,
+  isWatchlistStatus,
+  type WatchlistStatus,
+} from '../../lib/services/watchlistService';
+import { requireUidFromRequest } from '../../lib/requireAuth';
 
 export async function GET(request: Request) {
+  const auth = await requireUidFromRequest(request);
+  if (!auth.ok) return auth.response;
+
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId'); // For future multi-user support
-    
-    const items = await getAllWatchlistItems(userId || undefined);
-    
+    const items = await getAllWatchlistItems(auth.uid);
     return NextResponse.json({
       success: true,
       data: items,
@@ -26,10 +31,13 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireUidFromRequest(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const body = await request.json();
-    const { ticker, notes, thesisId, targetPrice, priority, userId } = body;
-    
+    const { ticker, notes, thesisId, targetPrice, status } = body;
+
     if (!ticker || typeof ticker !== 'string' || ticker.trim().length === 0) {
       return NextResponse.json(
         {
@@ -39,47 +47,51 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    
-    // Validate targetPrice if provided
-    if (targetPrice !== undefined && (typeof targetPrice !== 'number' || targetPrice < 0)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Target price must be a non-negative number',
-        },
-        { status: 400 }
-      );
+
+    if (targetPrice !== undefined && targetPrice !== null) {
+      if (typeof targetPrice !== 'number' || targetPrice < 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Target price must be a non-negative number',
+          },
+          { status: 400 }
+        );
+      }
     }
-    
-    // Validate priority if provided
-    if (priority && !['low', 'medium', 'high'].includes(priority)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Priority must be one of: low, medium, high',
-        },
-        { status: 400 }
-      );
+
+    let resolvedStatus: WatchlistStatus = 'thesis_needed';
+    if (status !== undefined && status !== null && status !== '') {
+      if (!isWatchlistStatus(status)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Invalid status',
+          },
+          { status: 400 }
+        );
+      }
+      resolvedStatus = status;
     }
-    
+
     const itemId = await addWatchlistItem({
       ticker: ticker.trim(),
-      notes: notes?.trim() || '',
-      thesisId: thesisId || undefined,
-      targetPrice: targetPrice || undefined,
-      priority: priority || 'medium',
-      userId: userId || undefined,
+      notes: typeof notes === 'string' ? notes.trim() : '',
+      thesisId: typeof thesisId === 'string' && thesisId.trim() ? thesisId.trim() : undefined,
+      targetPrice: typeof targetPrice === 'number' ? targetPrice : undefined,
+      status: resolvedStatus,
+      userId: auth.uid,
     });
-    
+
     return NextResponse.json({
       success: true,
-      data: { 
-        id: itemId, 
-        ticker: ticker.trim().toUpperCase(), 
-        notes: notes?.trim() || '',
-        thesisId: thesisId || undefined,
-        targetPrice: targetPrice || undefined,
-        priority: priority || 'medium',
+      data: {
+        id: itemId,
+        ticker: ticker.trim().toUpperCase(),
+        notes: typeof notes === 'string' ? notes.trim() : '',
+        thesisId: typeof thesisId === 'string' && thesisId.trim() ? thesisId.trim() : undefined,
+        targetPrice: typeof targetPrice === 'number' ? targetPrice : undefined,
+        status: resolvedStatus,
       },
     });
   } catch (error) {
@@ -93,5 +105,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
-

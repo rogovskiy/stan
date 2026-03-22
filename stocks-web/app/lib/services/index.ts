@@ -30,8 +30,16 @@ export * from './promptFragmentService';
 // Portfolio service
 export * from './portfolioService';
 
-// Watchlist service
-export * from './watchlistService';
+// Watchlist: types/constants are client-safe; CRUD is server-only (firebase-admin).
+export * from './watchlistShared';
+export {
+  addWatchlistItem,
+  deleteWatchlistItem,
+  getAllWatchlistItems,
+  getWatchlistItem,
+  updateWatchlistItem,
+} from './watchlistService';
+export type { NewWatchlistItemInput, WatchlistItemUpdates } from './watchlistService';
 
 // YouTube subscriptions and videos
 export * from './youtubeSubscriptionService';

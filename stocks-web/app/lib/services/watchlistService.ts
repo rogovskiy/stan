@@ -1,59 +1,72 @@
-import { 
-  doc, 
-  getDoc, 
-  getDocs, 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc,
-  query,
-  orderBy,
-  serverTimestamp
-} from 'firebase/firestore';
-import { db } from '../firebase';
+/**
+ * Server-only watchlist persistence (Firebase Admin). Do not import from Client Components;
+ * use watchlistShared.ts for types and constants.
+ */
 
-export interface WatchlistItem {
-  id?: string;
-  ticker: string;
-  notes?: string;
-  thesisId?: string; // Reference to investment thesis document
-  targetPrice?: number; // Target price to buy at
-  priority?: 'low' | 'medium' | 'high'; // Priority level
-  createdAt?: string;
-  updatedAt?: string;
-  userId?: string; // For future multi-user support
+import { FieldValue, Timestamp, type DocumentData } from 'firebase-admin/firestore';
+import { getAdminFirestore } from '../firebase-admin';
+import {
+  isWatchlistStatus,
+  type WatchlistItem,
+  type WatchlistStatus,
+} from './watchlistShared';
+
+export type { WatchlistItem, WatchlistStatus } from './watchlistShared';
+export { WATCHLIST_STATUSES, isWatchlistStatus } from './watchlistShared';
+
+const STATUS_ORDER: Record<WatchlistStatus, number> = {
+  ready_to_buy: 0,
+  awaiting_confirmation: 1,
+  watching: 2,
+  thesis_needed: 3,
+};
+
+function toIso(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (value instanceof Timestamp) return value.toDate().toISOString();
+  if (typeof (value as Timestamp).toDate === 'function') {
+    return (value as Timestamp).toDate().toISOString();
+  }
+  return undefined;
+}
+
+function normalizeStatus(data: { status?: unknown; thesisId?: unknown }): WatchlistStatus {
+  const s = data.status;
+  if (typeof s === 'string' && isWatchlistStatus(s)) return s;
+  return data.thesisId ? 'watching' : 'thesis_needed';
+}
+
+function docToItem(id: string, data: DocumentData): WatchlistItem {
+  return {
+    id,
+    ticker: typeof data.ticker === 'string' ? data.ticker : '',
+    notes: typeof data.notes === 'string' && data.notes ? data.notes : undefined,
+    thesisId: typeof data.thesisId === 'string' && data.thesisId ? data.thesisId : undefined,
+    targetPrice: typeof data.targetPrice === 'number' ? data.targetPrice : undefined,
+    status: normalizeStatus(data),
+    createdAt: toIso(data.createdAt),
+    updatedAt: toIso(data.updatedAt),
+    userId: typeof data.userId === 'string' && data.userId ? data.userId : undefined,
+  };
 }
 
 /**
- * Get all watchlist items for a user
+ * All watchlist items for a user (Firestore `userId` must match).
  */
-export async function getAllWatchlistItems(userId?: string): Promise<WatchlistItem[]> {
+export async function getAllWatchlistItems(userId: string): Promise<WatchlistItem[]> {
   try {
-    const watchlistRef = collection(db, 'watchlist');
-    const q = query(watchlistRef, orderBy('createdAt', 'desc'));
-    const querySnapshot = await getDocs(q);
-    
+    const db = getAdminFirestore();
+    const snap = await db.collection('watchlist').where('userId', '==', userId).get();
     const items: WatchlistItem[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      items.push({
-        id: doc.id,
-        ticker: data.ticker,
-        notes: data.notes,
-        thesisId: data.thesisId,
-        targetPrice: data.targetPrice,
-        priority: data.priority || 'medium',
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
-        userId: data.userId,
-      });
+    snap.forEach((d) => {
+      items.push(docToItem(d.id, d.data()));
     });
-    
     return items.sort((a, b) => {
-      // Sort by priority first (high > medium > low), then by ticker
-      const priorityOrder = { high: 3, medium: 2, low: 1 };
-      const priorityDiff = (priorityOrder[b.priority || 'medium'] || 2) - (priorityOrder[a.priority || 'medium'] || 2);
-      if (priorityDiff !== 0) return priorityDiff;
+      const sd = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      if (sd !== 0) return sd;
+      const ca = a.createdAt || '';
+      const cb = b.createdAt || '';
+      if (ca !== cb) return cb.localeCompare(ca);
       return a.ticker.localeCompare(b.ticker);
     });
   } catch (error) {
@@ -63,90 +76,115 @@ export async function getAllWatchlistItems(userId?: string): Promise<WatchlistIt
 }
 
 /**
- * Get a single watchlist item by ID
+ * Single item if it exists and belongs to userId.
  */
-export async function getWatchlistItem(itemId: string): Promise<WatchlistItem | null> {
+export async function getWatchlistItem(itemId: string, userId: string): Promise<WatchlistItem | null> {
   try {
-    const itemRef = doc(db, 'watchlist', itemId);
-    const itemSnap = await getDoc(itemRef);
-    
-    if (!itemSnap.exists()) {
-      return null;
-    }
-    
-    const data = itemSnap.data();
-    return {
-      id: itemSnap.id,
-      ticker: data.ticker,
-      notes: data.notes,
-      thesisId: data.thesisId,
-      targetPrice: data.targetPrice,
-      priority: data.priority || 'medium',
-      createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-      updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
-      userId: data.userId,
-    };
+    const db = getAdminFirestore();
+    const docRef = await db.collection('watchlist').doc(itemId).get();
+    if (!docRef.exists) return null;
+    const data = docRef.data()!;
+    if (data.userId !== userId) return null;
+    return docToItem(docRef.id, data);
   } catch (error) {
     console.error(`Error fetching watchlist item ${itemId}:`, error);
     throw new Error('Failed to fetch watchlist item from Firebase');
   }
 }
 
-/**
- * Add a new watchlist item
- */
-export async function addWatchlistItem(item: Omit<WatchlistItem, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+export type NewWatchlistItemInput = {
+  ticker: string;
+  notes?: string;
+  thesisId?: string;
+  targetPrice?: number;
+  status?: WatchlistStatus;
+  userId: string;
+};
+
+export async function addWatchlistItem(item: NewWatchlistItemInput): Promise<string> {
   try {
-    const watchlistRef = collection(db, 'watchlist');
-    const docRef = await addDoc(watchlistRef, {
+    const db = getAdminFirestore();
+    const status: WatchlistStatus =
+      item.status && isWatchlistStatus(item.status) ? item.status : 'thesis_needed';
+    const ref = await db.collection('watchlist').add({
       ticker: item.ticker.toUpperCase(),
       notes: item.notes || '',
       thesisId: item.thesisId || null,
-      targetPrice: item.targetPrice || null,
-      priority: item.priority || 'medium',
-      userId: item.userId || null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      targetPrice: item.targetPrice ?? null,
+      status,
+      userId: item.userId,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
-    
-    return docRef.id;
+    return ref.id;
   } catch (error) {
     console.error('Error adding watchlist item:', error);
     throw new Error('Failed to add watchlist item to Firebase');
   }
 }
 
-/**
- * Update a watchlist item
- */
+export type WatchlistItemUpdates = {
+  ticker?: string;
+  notes?: string;
+  thesisId?: string | null;
+  targetPrice?: number | null;
+  status?: WatchlistStatus;
+};
+
 export async function updateWatchlistItem(
-  itemId: string, 
-  updates: Partial<Omit<WatchlistItem, 'id' | 'createdAt' | 'userId'>>
+  itemId: string,
+  userId: string,
+  updates: WatchlistItemUpdates
 ): Promise<void> {
   try {
-    const itemRef = doc(db, 'watchlist', itemId);
-    await updateDoc(itemRef, {
-      ...updates,
-      ticker: updates.ticker ? updates.ticker.toUpperCase() : undefined,
-      updatedAt: serverTimestamp(),
-    });
+    const db = getAdminFirestore();
+    const ref = db.collection('watchlist').doc(itemId);
+    const existing = await ref.get();
+    if (!existing.exists || existing.data()?.userId !== userId) {
+      throw new Error('Watchlist item not found');
+    }
+    const payload: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+    if (updates.ticker !== undefined) payload.ticker = updates.ticker.trim().toUpperCase();
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+    if (updates.thesisId !== undefined) {
+      payload.thesisId = updates.thesisId === null || updates.thesisId === '' ? null : updates.thesisId;
+    }
+    if (updates.targetPrice !== undefined) {
+      payload.targetPrice = updates.targetPrice === null || updates.targetPrice === undefined ? null : updates.targetPrice;
+    }
+    if (updates.status !== undefined) {
+      if (!isWatchlistStatus(updates.status)) {
+        throw new Error('Invalid status');
+      }
+      payload.status = updates.status;
+    }
+    await ref.update(payload);
   } catch (error) {
     console.error(`Error updating watchlist item ${itemId}:`, error);
+    if (
+      error instanceof Error &&
+      (error.message === 'Watchlist item not found' || error.message === 'Invalid status')
+    ) {
+      throw error;
+    }
     throw new Error('Failed to update watchlist item in Firebase');
   }
 }
 
-/**
- * Delete a watchlist item
- */
-export async function deleteWatchlistItem(itemId: string): Promise<void> {
+export async function deleteWatchlistItem(itemId: string, userId: string): Promise<void> {
   try {
-    const itemRef = doc(db, 'watchlist', itemId);
-    await deleteDoc(itemRef);
+    const db = getAdminFirestore();
+    const ref = db.collection('watchlist').doc(itemId);
+    const existing = await ref.get();
+    if (!existing.exists || existing.data()?.userId !== userId) {
+      throw new Error('Watchlist item not found');
+    }
+    await ref.delete();
   } catch (error) {
     console.error(`Error deleting watchlist item ${itemId}:`, error);
+    if (error instanceof Error && error.message === 'Watchlist item not found') {
+      throw error;
+    }
     throw new Error('Failed to delete watchlist item from Firebase');
   }
 }
-
-

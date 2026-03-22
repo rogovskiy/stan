@@ -9,7 +9,8 @@ import {
   type PortfolioAccountType,
   type Transaction,
 } from '../lib/services/portfolioService';
-import { WatchlistItem } from '../lib/services/watchlistService';
+import { useAuth } from '../lib/authContext';
+import type { WatchlistItem, WatchlistStatus } from '../lib/services/watchlistShared';
 import { TAX_RATES, computeTaxImpactFromLots, type Lot } from '../lib/taxEstimator';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
 import PortfolioConcerns from './PortfolioConcerns';
@@ -33,6 +34,7 @@ interface PortfolioManagerProps {
 
 export default function PortfolioManager({ initialPortfolioId }: PortfolioManagerProps) {
   const router = useRouter();
+  const { user, signInWithGoogle } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('portfolios');
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
@@ -70,9 +72,6 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
 
   const [watchlistTicker, setWatchlistTicker] = useState('');
   const [watchlistNotes, setWatchlistNotes] = useState('');
-  const [watchlistThesisId, setWatchlistThesisId] = useState('');
-  const [watchlistTargetPrice, setWatchlistTargetPrice] = useState('');
-  const [watchlistPriority, setWatchlistPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [positionPrices, setPositionPrices] = useState<Record<string, number>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsName, setSettingsName] = useState('');
@@ -101,10 +100,13 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   useEffect(() => {
     if (viewMode === 'portfolios') {
       fetchPortfolios();
+    } else if (!user) {
+      setWatchlistItems([]);
+      setLoading(false);
     } else {
       fetchWatchlistItems();
     }
-  }, [viewMode]);
+  }, [viewMode, user]);
 
   useEffect(() => {
     if (initialPortfolioId && portfolios.length > 0) {
@@ -834,10 +836,20 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   };
 
   const fetchWatchlistItems = async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      const response = await fetch('/api/watchlist');
+      const token = await user.getIdToken();
+      const response = await fetch('/api/watchlist', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const result = await response.json();
+
+      if (response.status === 401) {
+        setError(result.error || 'Sign in to use your watchlist');
+        setWatchlistItems([]);
+        return;
+      }
 
       if (result.success) {
         setWatchlistItems(result.data);
@@ -852,21 +864,26 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   };
 
   const handleAddWatchlistItem = async () => {
+    if (!user) {
+      setError('Sign in to add watchlist items');
+      return;
+    }
     if (!watchlistTicker.trim()) {
       setError('Ticker is required');
       return;
     }
 
     try {
+      const token = await user.getIdToken();
       const response = await fetch('/api/watchlist', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           ticker: watchlistTicker.trim(),
           notes: watchlistNotes.trim(),
-          thesisId: watchlistThesisId || undefined,
-          targetPrice: watchlistTargetPrice ? parseFloat(watchlistTargetPrice) : undefined,
-          priority: watchlistPriority,
         }),
       });
 
@@ -885,6 +902,10 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   };
 
   const handleUpdateWatchlistItem = async () => {
+    if (!user) {
+      setError('Sign in to update watchlist items');
+      return;
+    }
     if (!editingWatchlistItem?.id) return;
     if (!watchlistTicker.trim()) {
       setError('Ticker is required');
@@ -892,15 +913,16 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     }
 
     try {
+      const token = await user.getIdToken();
       const response = await fetch(`/api/watchlist/${editingWatchlistItem.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           ticker: watchlistTicker.trim(),
           notes: watchlistNotes.trim(),
-          thesisId: watchlistThesisId || null,
-          targetPrice: watchlistTargetPrice ? parseFloat(watchlistTargetPrice) : null,
-          priority: watchlistPriority,
         }),
       });
 
@@ -920,13 +942,19 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   };
 
   const handleDeleteWatchlistItem = async (itemId: string) => {
+    if (!user) {
+      setError('Sign in to manage your watchlist');
+      return;
+    }
     if (!confirm('Are you sure you want to remove this item from the watchlist?')) {
       return;
     }
 
     try {
+      const token = await user.getIdToken();
       const response = await fetch(`/api/watchlist/${itemId}`, {
         method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const result = await response.json();
@@ -944,19 +972,33 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const resetWatchlistForm = () => {
     setWatchlistTicker('');
     setWatchlistNotes('');
-    setWatchlistThesisId('');
-    setWatchlistTargetPrice('');
-    setWatchlistPriority('medium');
   };
 
   const startEditWatchlistItem = (item: WatchlistItem) => {
     setEditingWatchlistItem(item);
     setWatchlistTicker(item.ticker);
     setWatchlistNotes(item.notes || '');
-    setWatchlistThesisId(item.thesisId || '');
-    setWatchlistTargetPrice(item.targetPrice?.toString() || '');
-    setWatchlistPriority(item.priority || 'medium');
     setShowAddWatchlistItem(true);
+  };
+
+  const handleWatchlistStatusChange = async (itemId: string, status: WatchlistStatus) => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/watchlist/${itemId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+      const result = await response.json();
+      if (result.success) await fetchWatchlistItems();
+      else setError(result.error || 'Failed to update status');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update status');
+    }
   };
 
   const openAddTransaction = () => {
@@ -995,10 +1037,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
           setPortfolioName('');
           setPortfolioDescription('');
         }}
-        onOpenAddWatchlist={() => {
-          setEditingWatchlistItem(null);
-          resetWatchlistForm();
-          setShowAddWatchlistItem(true);
+        watchlistSignedIn={Boolean(user)}
+        onWatchlistSignIn={() => {
+          signInWithGoogle().catch((e) => setError(e instanceof Error ? e.message : 'Sign-in failed'));
         }}
       />
 
@@ -1115,12 +1156,18 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
             router={router}
             watchlistItems={watchlistItems}
             onOpenAddWatchlist={() => {
+              if (!user) return;
               setEditingWatchlistItem(null);
               resetWatchlistForm();
               setShowAddWatchlistItem(true);
             }}
             onStartEditWatchlistItem={startEditWatchlistItem}
             onDeleteWatchlistItem={handleDeleteWatchlistItem}
+            onStatusChange={handleWatchlistStatusChange}
+            signedIn={Boolean(user)}
+            onSignIn={() => {
+              signInWithGoogle().catch((e) => setError(e instanceof Error ? e.message : 'Sign-in failed'));
+            }}
           />
         )}
       </div>
@@ -1233,16 +1280,10 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       />
 
       <WatchlistItemModal
-        open={showAddWatchlistItem}
+        open={showAddWatchlistItem && Boolean(user)}
         editingItem={editingWatchlistItem}
         watchlistTicker={watchlistTicker}
         setWatchlistTicker={setWatchlistTicker}
-        watchlistPriority={watchlistPriority}
-        setWatchlistPriority={setWatchlistPriority}
-        watchlistTargetPrice={watchlistTargetPrice}
-        setWatchlistTargetPrice={setWatchlistTargetPrice}
-        watchlistThesisId={watchlistThesisId}
-        setWatchlistThesisId={setWatchlistThesisId}
         watchlistNotes={watchlistNotes}
         setWatchlistNotes={setWatchlistNotes}
         onClose={cancelEdit}

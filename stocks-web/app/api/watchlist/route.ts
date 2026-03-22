@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import {
   addWatchlistItem,
   getAllWatchlistItems,
+  getWatchlistItem,
   isWatchlistStatus,
+  upsertWatchlistItemWithYoutubeLink,
   type WatchlistStatus,
 } from '../../lib/services/watchlistService';
 import { requireUidFromRequest } from '../../lib/requireAuth';
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { ticker, notes, thesisId, targetPrice, status } = body;
+    const { ticker, notes, thesisId, targetPrice, status, youtubeVideoId } = body;
 
     if (!ticker || typeof ticker !== 'string' || ticker.trim().length === 0) {
       return NextResponse.json(
@@ -74,10 +76,39 @@ export async function POST(request: Request) {
       resolvedStatus = status;
     }
 
+    const trimmedNotes = typeof notes === 'string' ? notes.trim() : '';
+    const trimmedThesisId =
+      typeof thesisId === 'string' && thesisId.trim() ? thesisId.trim() : undefined;
+    const videoId =
+      typeof youtubeVideoId === 'string' && youtubeVideoId.trim() ? youtubeVideoId.trim() : '';
+
+    if (videoId) {
+      const { id: itemId, action } = await upsertWatchlistItemWithYoutubeLink({
+        userId: auth.uid,
+        ticker: ticker.trim(),
+        youtubeVideoId: videoId,
+        notes: trimmedNotes,
+        thesisId: trimmedThesisId,
+        targetPrice: typeof targetPrice === 'number' ? targetPrice : undefined,
+        status: resolvedStatus,
+      });
+      const item = await getWatchlistItem(itemId, auth.uid);
+      if (!item) {
+        return NextResponse.json({ success: false, error: 'Watchlist item not found' }, { status: 500 });
+      }
+      return NextResponse.json({
+        success: true,
+        data: {
+          ...item,
+          action,
+        },
+      });
+    }
+
     const itemId = await addWatchlistItem({
       ticker: ticker.trim(),
-      notes: typeof notes === 'string' ? notes.trim() : '',
-      thesisId: typeof thesisId === 'string' && thesisId.trim() ? thesisId.trim() : undefined,
+      notes: trimmedNotes,
+      thesisId: trimmedThesisId,
       targetPrice: typeof targetPrice === 'number' ? targetPrice : undefined,
       status: resolvedStatus,
       userId: auth.uid,
@@ -88,8 +119,8 @@ export async function POST(request: Request) {
       data: {
         id: itemId,
         ticker: ticker.trim().toUpperCase(),
-        notes: typeof notes === 'string' ? notes.trim() : '',
-        thesisId: typeof thesisId === 'string' && thesisId.trim() ? thesisId.trim() : undefined,
+        notes: trimmedNotes,
+        thesisId: trimmedThesisId,
         targetPrice: typeof targetPrice === 'number' ? targetPrice : undefined,
         status: resolvedStatus,
       },

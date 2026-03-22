@@ -7,6 +7,10 @@ import { useAuth } from '@/app/lib/authContext';
 import type { YouTubeVideo, YouTubeSubscription } from '../lib/services/youtubeSubscriptionService';
 import { getReviewedVideoIds, markTranscriptReviewed } from '../lib/services/youtubeSubscriptionService';
 import { ExecutionFeedbackWidget } from '../components/ExecutionFeedbackWidget';
+import {
+  formatThesisCardNotesForWatchlist,
+  joinThesisNoteBlocks,
+} from '@/app/lib/thesisWatchlistNotes';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -157,6 +161,20 @@ function VideoCard({
   );
 }
 
+function watchlistItemsToTickerMap(
+  items: Array<{ ticker: string; linkedYoutubeVideoIds?: string[] }>
+): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const item of items) {
+    const t = String(item.ticker).toUpperCase();
+    const ids = Array.isArray(item.linkedYoutubeVideoIds)
+      ? item.linkedYoutubeVideoIds.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : [];
+    m.set(t, ids);
+  }
+  return m;
+}
+
 function TranscriptDrawer({
   video,
   onClose,
@@ -164,7 +182,305 @@ function TranscriptDrawer({
   video: YouTubeVideo;
   onClose: () => void;
 }) {
+  const { user } = useAuth();
   const hasSummary = Boolean(video.transcriptSummary?.trim());
+  /** ticker (uppercase) → linked YouTube video IDs for that watchlist row; key present iff user has a row */
+  const [tickerToLinkedIds, setTickerToLinkedIds] = useState<Map<string, string[]>>(() => new Map());
+  const [watchlistLoaded, setWatchlistLoaded] = useState(false);
+  const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
+  const [rowFeedback, setRowFeedback] = useState<Record<string, string>>({});
+  const [linkingTickers, setLinkingTickers] = useState<Set<string>>(() => new Set());
+  const [linkErrorByTicker, setLinkErrorByTicker] = useState<Record<string, string>>({});
+
+  const thesesWithTicker = useMemo(
+    () =>
+      (video.transcriptSummaryTheses ?? []).filter(
+        (t) => typeof t.ticker === 'string' && t.ticker.trim().length > 0
+      ),
+    [video.transcriptSummaryTheses]
+  );
+
+  const buildNotesForTicker = useCallback(
+    (tick: string) => {
+      const upper = tick.trim().toUpperCase();
+      const blocks = thesesWithTicker
+        .filter((th) => th.ticker!.trim().toUpperCase() === upper)
+        .map((th) =>
+          formatThesisCardNotesForWatchlist((th.title || '').trim(), (th.summary || '').trim())
+        )
+        .filter(Boolean);
+      return joinThesisNoteBlocks(blocks);
+    },
+    [thesesWithTicker]
+  );
+
+  useEffect(() => {
+    setRowLoading({});
+    setRowFeedback({});
+    setLinkingTickers(new Set());
+    setLinkErrorByTicker({});
+  }, [video.videoId]);
+
+  useEffect(() => {
+    if (!user) {
+      setTickerToLinkedIds(new Map());
+      setWatchlistLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    setWatchlistLoaded(false);
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch('/api/watchlist', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.success || !Array.isArray(data.data)) {
+          setTickerToLinkedIds(new Map());
+          setWatchlistLoaded(true);
+          return;
+        }
+        setTickerToLinkedIds(
+          watchlistItemsToTickerMap(
+            data.data as Array<{ ticker: string; linkedYoutubeVideoIds?: string[] }>
+          )
+        );
+        setWatchlistLoaded(true);
+      } catch {
+        if (!cancelled) {
+          setTickerToLinkedIds(new Map());
+          setWatchlistLoaded(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, video.videoId]);
+
+  /** When the user already has a watchlist row for a thesis ticker, link this video without a button. */
+  useEffect(() => {
+    if (!user || !watchlistLoaded || thesesWithTicker.length === 0) return;
+    const vid = video.videoId;
+    let cancelled = false;
+
+    (async () => {
+      const token = await user.getIdToken();
+      const seen = new Set<string>();
+      for (const th of thesesWithTicker) {
+        if (cancelled) return;
+        const tick = th.ticker!.trim().toUpperCase();
+        if (seen.has(tick)) continue;
+        seen.add(tick);
+        if (!tickerToLinkedIds.has(tick)) continue;
+        const ids = tickerToLinkedIds.get(tick) ?? [];
+        if (ids.includes(vid)) continue;
+
+        const thesisNotes = buildNotesForTicker(tick);
+
+        setLinkingTickers((prev) => new Set(prev).add(tick));
+        try {
+          const res = await fetch('/api/watchlist', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              ticker: tick,
+              youtubeVideoId: vid,
+              notes: thesisNotes,
+            }),
+          });
+          const data = await res.json();
+          if (cancelled) return;
+          if (res.ok && data.success && data.data) {
+            setLinkErrorByTicker((prev) => {
+              const n = { ...prev };
+              delete n[tick];
+              return n;
+            });
+            const linked = data.data.linkedYoutubeVideoIds;
+            setTickerToLinkedIds((prev) => {
+              const n = new Map(prev);
+              if (Array.isArray(linked)) {
+                n.set(
+                  tick,
+                  linked.filter((x: unknown): x is string => typeof x === 'string')
+                );
+              } else {
+                const cur = n.get(tick) ?? [];
+                n.set(tick, cur.includes(vid) ? cur : [...cur, vid]);
+              }
+              return n;
+            });
+          } else if (!cancelled) {
+            const msg =
+              typeof data.error === 'string' ? data.error : 'Could not link video to watchlist.';
+            setLinkErrorByTicker((prev) => ({ ...prev, [tick]: msg }));
+          }
+        } catch {
+          if (!cancelled) {
+            setLinkErrorByTicker((prev) => ({
+              ...prev,
+              [tick]: 'Could not link video to watchlist.',
+            }));
+          }
+        } finally {
+          if (!cancelled) {
+            setLinkingTickers((prev) => {
+              const n = new Set(prev);
+              n.delete(tick);
+              return n;
+            });
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    user,
+    watchlistLoaded,
+    video.videoId,
+    thesesWithTicker,
+    tickerToLinkedIds,
+    buildNotesForTicker,
+  ]);
+
+  const retryLinkVideo = useCallback(
+    async (tick: string) => {
+      if (!user) return;
+      setLinkErrorByTicker((prev) => {
+        const n = { ...prev };
+        delete n[tick];
+        return n;
+      });
+      const vid = video.videoId;
+      const thesisNotes = buildNotesForTicker(tick);
+      setLinkingTickers((prev) => new Set(prev).add(tick));
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch('/api/watchlist', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            ticker: tick,
+            youtubeVideoId: vid,
+            notes: thesisNotes,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success && data.data) {
+          const linked = data.data.linkedYoutubeVideoIds;
+          setTickerToLinkedIds((prev) => {
+            const n = new Map(prev);
+            if (Array.isArray(linked)) {
+              n.set(
+                tick,
+                linked.filter((x: unknown): x is string => typeof x === 'string')
+              );
+            } else {
+              const cur = n.get(tick) ?? [];
+              n.set(tick, cur.includes(vid) ? cur : [...cur, vid]);
+            }
+            return n;
+          });
+        } else {
+          const msg =
+            typeof data.error === 'string' ? data.error : 'Could not link video to watchlist.';
+          setLinkErrorByTicker((prev) => ({ ...prev, [tick]: msg }));
+        }
+      } catch {
+        setLinkErrorByTicker((prev) => ({
+          ...prev,
+          [tick]: 'Could not link video to watchlist.',
+        }));
+      } finally {
+        setLinkingTickers((prev) => {
+          const n = new Set(prev);
+          n.delete(tick);
+          return n;
+        });
+      }
+    },
+    [user, video.videoId, buildNotesForTicker]
+  );
+
+  const handleWatchlist = async (
+    ticker: string,
+    rowKey: string,
+    thesisTitle: string,
+    thesisSummary: string
+  ) => {
+    if (!user) return;
+    setRowLoading((m) => ({ ...m, [rowKey]: true }));
+    setRowFeedback((m) => {
+      const next = { ...m };
+      delete next[rowKey];
+      return next;
+    });
+    const notes = formatThesisCardNotesForWatchlist(thesisTitle, thesisSummary);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          ticker: ticker.trim(),
+          youtubeVideoId: video.videoId,
+          notes,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 401) {
+        setRowFeedback((m) => ({ ...m, [rowKey]: 'Sign in to use your watchlist.' }));
+        return;
+      }
+      if (!data.success) {
+        setRowFeedback((m) => ({
+          ...m,
+          [rowKey]: typeof data.error === 'string' ? data.error : 'Request failed',
+        }));
+        return;
+      }
+      const tick = ticker.trim().toUpperCase();
+      const linked = data.data?.linkedYoutubeVideoIds;
+      setTickerToLinkedIds((prev) => {
+        const n = new Map(prev);
+        if (Array.isArray(linked)) {
+          n.set(
+            tick,
+            linked.filter((x: unknown): x is string => typeof x === 'string')
+          );
+        } else {
+          const cur = n.get(tick) ?? [];
+          const vid = video.videoId;
+          n.set(tick, cur.includes(vid) ? cur : [...cur, vid]);
+        }
+        return n;
+      });
+      setRowFeedback((m) => ({ ...m, [rowKey]: 'Added to watchlist.' }));
+    } catch (e) {
+      setRowFeedback((m) => ({
+        ...m,
+        [rowKey]: e instanceof Error ? e.message : 'Request failed',
+      }));
+    } finally {
+      setRowLoading((m) => ({ ...m, [rowKey]: false }));
+    }
+  };
+
   return (
     <>
       <div
@@ -226,6 +542,79 @@ function TranscriptDrawer({
             <p className="text-sm text-gray-500 italic">
               Transcript not yet summarized. Run the transcript script locally to fetch and analyze.
             </p>
+          )}
+          {thesesWithTicker.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
+                Watchlist from summary
+              </h3>
+              <ul className="space-y-3">
+                {thesesWithTicker.map((t, idx) => {
+                  const tick = t.ticker!.trim().toUpperCase();
+                  const rowKey = `${tick}-${idx}`;
+                  const title = (t.title || '').trim();
+                  const summary = (t.summary || '').trim();
+                  const hasRow = tickerToLinkedIds.has(tick);
+                  const isLinked = (tickerToLinkedIds.get(tick) ?? []).includes(video.videoId);
+                  const autoLinking = linkingTickers.has(tick);
+                  const linkErr = linkErrorByTicker[tick];
+                  const loadingManual = rowLoading[rowKey];
+                  const feedback = rowFeedback[rowKey];
+                  return (
+                    <li key={rowKey} className="text-sm text-gray-800 rounded-lg border border-gray-100 bg-gray-50/80 p-2.5">
+                      <div className="font-medium text-gray-900">
+                        {tick}
+                        {title ? <span className="font-normal text-gray-600"> — {title}</span> : null}
+                      </div>
+                      {summary ? <p className="text-xs text-gray-600 mt-1 leading-relaxed">{summary}</p> : null}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {!user ? (
+                          <span className="text-xs text-gray-500">Sign in to add to watchlist.</span>
+                        ) : hasRow && isLinked ? (
+                          <span className="text-xs text-emerald-700">Video on your watchlist</span>
+                        ) : hasRow && linkErr ? (
+                          <>
+                            <span className="text-xs text-amber-700">{linkErr}</span>
+                            <button
+                              type="button"
+                              disabled={autoLinking}
+                              onClick={() => retryLinkVideo(tick)}
+                              className="text-xs font-medium px-2 py-1 rounded-md border border-gray-300 text-gray-800 hover:bg-gray-100 disabled:opacity-50"
+                            >
+                              {autoLinking ? '…' : 'Retry'}
+                            </button>
+                          </>
+                        ) : hasRow && (autoLinking || !isLinked) ? (
+                          <span className="text-xs text-gray-500">Saving to watchlist…</span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={!watchlistLoaded || loadingManual}
+                              onClick={() => handleWatchlist(tick, rowKey, title, summary)}
+                              className="text-xs font-medium px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {loadingManual ? '…' : 'Add to watchlist'}
+                            </button>
+                            {feedback ? (
+                              <span
+                                className={`text-xs ${
+                                  feedback.startsWith('Sign') || feedback.includes('failed')
+                                    ? 'text-amber-700'
+                                    : 'text-emerald-700'
+                                }`}
+                              >
+                                {feedback}
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
           {video.provenance && video.provenance.length > 0 && (
             <div className="mt-4">

@@ -22,6 +22,8 @@ export interface WatchlistItem {
   notes?: string;
   thesisId?: string;
   targetPrice?: number;
+  /** YouTube video IDs linked from Sources / transcript flow (same as `youtube_videos` doc IDs). */
+  linkedYoutubeVideoIds?: string[];
   status: WatchlistStatus;
   createdAt?: string;
   updatedAt?: string;

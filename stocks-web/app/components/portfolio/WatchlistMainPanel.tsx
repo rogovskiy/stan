@@ -1,5 +1,10 @@
+'use client';
+
+import { useState, useEffect, useMemo } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
 import type { WatchlistItem, WatchlistStatus } from '../../lib/services/watchlistShared';
 import { WATCHLIST_STATUSES } from '../../lib/services/watchlistShared';
+import { db } from '../../lib/firebase';
 
 const STATUS_LABELS: Record<WatchlistStatus, string> = {
   thesis_needed: 'Exploring',
@@ -7,6 +12,186 @@ const STATUS_LABELS: Record<WatchlistStatus, string> = {
   awaiting_confirmation: 'Awaiting confirmation',
   ready_to_buy: 'Ready to buy',
 };
+
+const YOUTUBE_VIDEOS = 'youtube_videos';
+const YOUTUBE_SUBSCRIPTIONS = 'youtube_subscriptions';
+
+function formatVideoPublishedDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+  } catch {
+    return iso;
+  }
+}
+
+function publishedAtFromFirestoreDoc(d: Record<string, unknown>): string | undefined {
+  const p = d.publishedAt;
+  if (typeof p === 'string' && p.trim()) {
+    return formatVideoPublishedDate(p);
+  }
+  if (p && typeof p === 'object' && 'toDate' in p && typeof (p as { toDate?: () => Date }).toDate === 'function') {
+    try {
+      const dt = (p as { toDate: () => Date }).toDate();
+      return formatVideoPublishedDate(dt.toISOString());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export type LinkedYoutubeVideoMeta = {
+  videoId: string;
+  title: string;
+  watchUrl: string;
+  thumbUrl: string;
+  sourceLabel?: string;
+  /** Display date from `youtube_videos.publishedAt` */
+  publishedLabel?: string;
+};
+
+function useLinkedYoutubeVideoMeta(watchlistItems: WatchlistItem[]): Record<string, LinkedYoutubeVideoMeta> {
+  const [byId, setById] = useState<Record<string, LinkedYoutubeVideoMeta>>({});
+
+  const idsKey = useMemo(() => {
+    const s = new Set<string>();
+    for (const item of watchlistItems) {
+      for (const id of item.linkedYoutubeVideoIds ?? []) {
+        if (typeof id === 'string' && id.trim()) s.add(id.trim());
+      }
+    }
+    return [...s].sort().join('\0');
+  }, [watchlistItems]);
+
+  useEffect(() => {
+    if (!idsKey) return;
+    const videoIdList = idsKey.split('\0');
+    let cancelled = false;
+
+    (async () => {
+      const videoSnaps = await Promise.all(
+        videoIdList.map((id) => getDoc(doc(db, YOUTUBE_VIDEOS, id)))
+      );
+      const subscriptionIds = new Set<string>();
+      const rows: Array<{
+        videoId: string;
+        title: string;
+        subscriptionId: string;
+        publishedLabel?: string;
+      }> = [];
+
+      for (let i = 0; i < videoIdList.length; i++) {
+        const id = videoIdList[i]!;
+        const snap = videoSnaps[i]!;
+        if (!snap.exists) {
+          rows.push({ videoId: id, title: '', subscriptionId: '' });
+          continue;
+        }
+        const d = snap.data() as Record<string, unknown>;
+        const title = typeof d.title === 'string' ? d.title : '';
+        const subId = typeof d.subscriptionId === 'string' ? d.subscriptionId : '';
+        if (subId) subscriptionIds.add(subId);
+        rows.push({
+          videoId: id,
+          title,
+          subscriptionId: subId,
+          publishedLabel: publishedAtFromFirestoreDoc(d),
+        });
+      }
+
+      const labelBySubId = new Map<string, string>();
+      await Promise.all(
+        [...subscriptionIds].map(async (sid) => {
+          const s = await getDoc(doc(db, YOUTUBE_SUBSCRIPTIONS, sid));
+          if (!s.exists) return;
+          const d = s.data() as Record<string, unknown>;
+          const label =
+            typeof d.label === 'string' && d.label.trim()
+              ? d.label.trim()
+              : typeof d.url === 'string'
+                ? d.url
+                : '';
+          if (label) labelBySubId.set(sid, label);
+        })
+      );
+
+      if (cancelled) return;
+      const out: Record<string, LinkedYoutubeVideoMeta> = {};
+      for (const row of rows) {
+        const { videoId, title, subscriptionId, publishedLabel } = row;
+        out[videoId] = {
+          videoId,
+          title: title.trim() || `Video ${videoId}`,
+          watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          thumbUrl: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+          sourceLabel: subscriptionId ? labelBySubId.get(subscriptionId) : undefined,
+          publishedLabel,
+        };
+      }
+      setById(out);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [idsKey]);
+
+  return idsKey ? byId : {};
+}
+
+function LinkedVideosRow({
+  videoIds,
+  metaById,
+}: {
+  videoIds: string[];
+  metaById: Record<string, LinkedYoutubeVideoMeta>;
+}) {
+  if (videoIds.length === 0) return null;
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+      <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Source videos</div>
+      <ul className="space-y-2">
+        {videoIds.map((vid) => {
+          const meta = metaById[vid];
+          const href = meta?.watchUrl ?? `https://www.youtube.com/watch?v=${vid}`;
+          const thumb = meta?.thumbUrl ?? `https://img.youtube.com/vi/${vid}/mqdefault.jpg`;
+          const title = meta?.title ?? vid;
+          return (
+            <li key={vid}>
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex gap-3 rounded-lg border border-gray-100 bg-gray-50/80 p-2 hover:bg-gray-100/80 transition-colors min-w-0"
+              >
+                <img
+                  src={thumb}
+                  alt=""
+                  className="w-24 h-14 shrink-0 rounded object-cover bg-gray-200"
+                  width={96}
+                  height={56}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-900 line-clamp-2">{title}</div>
+                  {meta?.sourceLabel ? (
+                    <div className="text-xs text-gray-500 mt-0.5 truncate" title={meta.sourceLabel}>
+                      {meta.sourceLabel}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-400 mt-0.5">YouTube</div>
+                  )}
+                  {meta?.publishedLabel ? (
+                    <div className="text-xs text-gray-400 mt-0.5">Published {meta.publishedLabel}</div>
+                  ) : null}
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 export default function WatchlistMainPanel({
   router,
@@ -27,6 +212,8 @@ export default function WatchlistMainPanel({
   signedIn: boolean;
   onSignIn: () => void;
 }) {
+  const linkedVideoMeta = useLinkedYoutubeVideoMeta(watchlistItems);
+
   if (!signedIn) {
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -101,6 +288,11 @@ export default function WatchlistMainPanel({
                     ) : (
                       <p className="text-sm text-gray-400 italic">No note</p>
                     )}
+
+                    <LinkedVideosRow
+                      videoIds={item.linkedYoutubeVideoIds ?? []}
+                      metaById={linkedVideoMeta}
+                    />
 
                     {item.targetPrice != null && (
                       <p className="text-sm text-gray-600">

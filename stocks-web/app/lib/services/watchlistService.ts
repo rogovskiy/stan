@@ -36,6 +36,12 @@ function normalizeStatus(data: { status?: unknown; thesisId?: unknown }): Watchl
   return data.thesisId ? 'watching' : 'thesis_needed';
 }
 
+function parseLinkedYoutubeVideoIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim());
+  return ids.length > 0 ? ids : undefined;
+}
+
 function docToItem(id: string, data: DocumentData): WatchlistItem {
   return {
     id,
@@ -43,6 +49,7 @@ function docToItem(id: string, data: DocumentData): WatchlistItem {
     notes: typeof data.notes === 'string' && data.notes ? data.notes : undefined,
     thesisId: typeof data.thesisId === 'string' && data.thesisId ? data.thesisId : undefined,
     targetPrice: typeof data.targetPrice === 'number' ? data.targetPrice : undefined,
+    linkedYoutubeVideoIds: parseLinkedYoutubeVideoIds(data.linkedYoutubeVideoIds),
     status: normalizeStatus(data),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
@@ -99,6 +106,7 @@ export type NewWatchlistItemInput = {
   targetPrice?: number;
   status?: WatchlistStatus;
   userId: string;
+  linkedYoutubeVideoIds?: string[];
 };
 
 export async function addWatchlistItem(item: NewWatchlistItemInput): Promise<string> {
@@ -106,7 +114,7 @@ export async function addWatchlistItem(item: NewWatchlistItemInput): Promise<str
     const db = getAdminFirestore();
     const status: WatchlistStatus =
       item.status && isWatchlistStatus(item.status) ? item.status : 'thesis_needed';
-    const ref = await db.collection('watchlist').add({
+    const payload: Record<string, unknown> = {
       ticker: item.ticker.toUpperCase(),
       notes: item.notes || '',
       thesisId: item.thesisId || null,
@@ -115,12 +123,104 @@ export async function addWatchlistItem(item: NewWatchlistItemInput): Promise<str
       userId: item.userId,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
-    });
+    };
+    if (item.linkedYoutubeVideoIds?.length) {
+      payload.linkedYoutubeVideoIds = item.linkedYoutubeVideoIds;
+    }
+    const ref = await db.collection('watchlist').add(payload);
     return ref.id;
   } catch (error) {
     console.error('Error adding watchlist item:', error);
     throw new Error('Failed to add watchlist item to Firebase');
   }
+}
+
+function mergeWatchlistNotesOnLink(existing: string, incoming: string): string {
+  const e = (existing || '').trim();
+  const i = incoming.trim();
+  if (!i) return existing || '';
+  if (!e) return i;
+  if (e.includes(i)) return existing;
+  return `${e}\n\n---\n\n${i}`;
+}
+
+function youtubeVideoIdToMs(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Timestamp) return value.toMillis();
+  if (typeof (value as Timestamp).toMillis === 'function') {
+    return (value as Timestamp).toMillis();
+  }
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    return Number.isFinite(t) ? t : 0;
+  }
+  return 0;
+}
+
+/**
+ * If a watchlist row exists for this user and ticker, append youtubeVideoId via arrayUnion.
+ * Otherwise create a new row. Requires composite index: watchlist userId + ticker (equality).
+ */
+export async function upsertWatchlistItemWithYoutubeLink(input: {
+  userId: string;
+  ticker: string;
+  youtubeVideoId: string;
+  notes?: string;
+  thesisId?: string;
+  targetPrice?: number;
+  status?: WatchlistStatus;
+}): Promise<{ id: string; action: 'created' | 'linked' }> {
+  const db = getAdminFirestore();
+  const normalizedTicker = input.ticker.trim().toUpperCase();
+  const videoId = input.youtubeVideoId.trim();
+  if (!videoId) {
+    throw new Error('youtubeVideoId is required for upsert');
+  }
+
+  const snap = await db
+    .collection('watchlist')
+    .where('userId', '==', input.userId)
+    .where('ticker', '==', normalizedTicker)
+    .get();
+
+  if (!snap.empty) {
+    const sorted = snap.docs
+      .map((d) => ({ id: d.id, createdMs: youtubeVideoIdToMs(d.data().createdAt) }))
+      .sort((a, b) => a.createdMs - b.createdMs || a.id.localeCompare(b.id));
+    const chosen = sorted[0]!;
+    const docRef = db.collection('watchlist').doc(chosen.id);
+    const existingSnap = await docRef.get();
+    const existingData = existingSnap.data() || {};
+    const incomingNotes = (input.notes || '').trim();
+    const payload: Record<string, unknown> = {
+      linkedYoutubeVideoIds: FieldValue.arrayUnion(videoId),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (incomingNotes) {
+      const prevNotes = typeof existingData.notes === 'string' ? existingData.notes : '';
+      const merged = mergeWatchlistNotesOnLink(prevNotes, incomingNotes);
+      if (merged !== prevNotes) {
+        payload.notes = merged;
+      }
+    }
+    await docRef.update(payload);
+    return { id: chosen.id, action: 'linked' };
+  }
+
+  const status: WatchlistStatus =
+    input.status && isWatchlistStatus(input.status) ? input.status : 'thesis_needed';
+  const ref = await db.collection('watchlist').add({
+    ticker: normalizedTicker,
+    notes: input.notes || '',
+    thesisId: input.thesisId || null,
+    targetPrice: input.targetPrice ?? null,
+    status,
+    userId: input.userId,
+    linkedYoutubeVideoIds: [videoId],
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return { id: ref.id, action: 'created' };
 }
 
 export type WatchlistItemUpdates = {

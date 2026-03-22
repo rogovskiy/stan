@@ -27,6 +27,13 @@ export interface ProvenanceEntry {
   [key: string]: string | undefined;
 }
 
+/** Structured thesis row from transcript analysis (optional ticker for watchlist actions). */
+export interface TranscriptSummaryThesis {
+  title?: string;
+  summary?: string;
+  ticker?: string | null;
+}
+
 export interface YouTubeVideo {
   id: string;
   videoId: string;
@@ -38,6 +45,8 @@ export interface YouTubeVideo {
   createdAt?: string;
   transcriptStorageRef?: string | null;
   transcriptSummary?: string | null;
+  /** Machine-readable theses from structured transcript analysis; UI uses `ticker` when present. */
+  transcriptSummaryTheses?: TranscriptSummaryThesis[] | null;
   /** Links to prompt executions that produced this content (e.g. [{ analysis: "<execution_id>" }]). */
   provenance?: ProvenanceEntry[] | null;
 }
@@ -58,6 +67,22 @@ function toSubscription(docId: string, data: Record<string, unknown>): YouTubeSu
   };
 }
 
+function parseTranscriptSummaryTheses(raw: unknown): TranscriptSummaryThesis[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: TranscriptSummaryThesis[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const title = typeof o.title === 'string' ? o.title : '';
+    const summary = typeof o.summary === 'string' ? o.summary : '';
+    const t = o.ticker;
+    const ticker =
+      typeof t === 'string' && t.trim() ? t.trim().toUpperCase() : t === null ? null : undefined;
+    out.push({ title, summary, ticker: ticker ?? null });
+  }
+  return out.length > 0 ? out : null;
+}
+
 function toVideo(docId: string, data: Record<string, unknown>): YouTubeVideo {
   const videoId = (data.videoId as string) ?? docId;
   return {
@@ -75,6 +100,7 @@ function toVideo(docId: string, data: Record<string, unknown>): YouTubeVideo {
       (typeof data.createdAt === 'string' ? data.createdAt : undefined),
     transcriptStorageRef: (data.transcriptStorageRef as string) ?? null,
     transcriptSummary: (data.transcriptSummary as string) ?? null,
+    transcriptSummaryTheses: parseTranscriptSummaryTheses(data.transcriptSummaryTheses),
     provenance: Array.isArray(data.provenance)
       ? (data.provenance as ProvenanceEntry[])
       : null,

@@ -6,13 +6,14 @@ Uses the dynamic prompt system: prompt content and model/temperature are loaded 
 (youtube_transcript_summary) from Firestore/Storage. Create that prompt in the admin UI.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from firebase_admin import firestore, storage
 
 from dynamic_prompt_runner import run_llm_with_prompt_name
+
+from youtube.transcript_summary_normalize import normalize_transcript_summary_result
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ PROMPT_NAME = "youtube_transcript_summary"
 
 def run_transcript_analysis(video_id: str, gemini_api_key: str) -> None:
     """
-    Load transcript from Storage, summarize with Gemini (dynamic prompt), write transcriptSummary to Firestore.
+    Load transcript from Storage, summarize with Gemini (dynamic prompt), write transcriptSummary
+    (markdown), transcriptSummaryTheses (structured), and transcriptSummaryUpdatedAt to Firestore.
     Raises on missing doc, missing transcriptStorageRef, or if prompt youtube_transcript_summary is not in admin.
     """
     db = firestore.client()
@@ -47,7 +49,7 @@ def run_transcript_analysis(video_id: str, gemini_api_key: str) -> None:
         {"transcript": transcript},
         api_key=gemini_api_key,
     )
-    summary = result if isinstance(result, str) else json.dumps(result, indent=2)
+    summary, theses = normalize_transcript_summary_result(result)
 
     now = datetime.now(timezone.utc)
     summary_updated_at = now.isoformat().replace("+00:00", "Z")
@@ -57,7 +59,13 @@ def run_transcript_analysis(video_id: str, gemini_api_key: str) -> None:
     provenance = existing_provenance + [{"analysis": execution_id}]
     doc_ref.update({
         "transcriptSummary": summary,
+        "transcriptSummaryTheses": theses,
         "transcriptSummaryUpdatedAt": summary_updated_at,
         "provenance": provenance,
     })
-    logger.info("Transcript analysis done for %s: summary length=%d", video_id, len(summary))
+    logger.info(
+        "Transcript analysis done for %s: summary length=%d theses=%d",
+        video_id,
+        len(summary),
+        len(theses),
+    )

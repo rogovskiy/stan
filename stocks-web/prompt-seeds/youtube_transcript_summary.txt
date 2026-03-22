@@ -1,0 +1,12 @@
+You are given a transcript of a video. Summarize economic or market-related theses, views, or claims the author appears to hold.
+
+**Transcript:**
+
+{transcript}
+
+**Instructions:**
+- Output must match the configured JSON schema exactly (structured output). The root object has a **theses** array.
+- Each thesis has **title** (short headline), **summary** (one or two sentences, neutral attribution to the author where helpful), and **ticker**.
+- **ticker** (string or **null**): Set a single US-listed equity symbol (uppercase, e.g. AAPL, MSFT) **only** when the thesis is **explicitly about one named company** or its stock (the author names the company, compares *this* issuer to peers, or the claim is clearly “long/short *that* name”). Use **null** in all other cases—including sector or industry themes (e.g. “banks,” “semis,” “oil majors”), macro or rates views, baskets/ETFs, peer groups without picking one name, vague “big tech,” and **whenever the author discusses a theme and you would have to guess a representative stock** (e.g. “banking in general” → **null**, not JPM; “the sector” → **null**). Do **not** assign a ticker as a stand-in, example, or “typical” name for a theme. If you are unsure, use **null**.
+- One primary ticker per thesis; do not invent tickers.
+- Be concise; omit empty or redundant theses.

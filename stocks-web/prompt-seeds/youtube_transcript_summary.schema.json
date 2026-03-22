@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "theses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "ticker": { "type": ["string", "null"] }
+        },
+        "required": ["title", "summary", "ticker"]
+      }
+    }
+  },
+  "required": ["theses"]
+}

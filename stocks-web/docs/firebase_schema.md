@@ -320,6 +320,7 @@ The **stocks-web** app loads and writes watchlist data only for the **signed-in 
   "targetPrice": 180.00,
   "status": "watching",
   "userId": "firebaseUid",
+  "linkedYoutubeVideoIds": ["nSqHIGSjywo"],
   "createdAt": "2024-11-20T10:00:00Z",
   "updatedAt": "2024-11-20T15:30:00Z"
 }
@@ -332,8 +333,11 @@ The **stocks-web** app loads and writes watchlist data only for the **signed-in 
 - `targetPrice` (number, optional): Optional entry / buy-zone price
 - `status` (string): One of `thesis_needed` (UI: “Exploring”), `watching`, `awaiting_confirmation`, `ready_to_buy`. Legacy docs without `status` are treated as `thesis_needed` if there is no `thesisId`, else `watching`
 - `userId` (string, required for app usage): Firebase Auth uid; used to scope all reads and writes
+- `linkedYoutubeVideoIds` (array of strings, optional): YouTube video IDs (same as `/youtube_videos` document IDs). The Portfolio watchlist UI loads `youtube_videos/{videoId}` (and `youtube_subscriptions` for the source label) to show title, channel/source label, and thumbnail; the watch URL is derived from the ID. New IDs are appended with `arrayUnion` when linking from Sources. When linking to an existing row, optional thesis `notes` from the client are merged into `notes` (appended after `---` if new text is not already present).
 - `createdAt` (timestamp): Creation timestamp
 - `updatedAt` (timestamp): Last update timestamp
+
+**Index:** Composite index on `watchlist`: `userId` (asc) + `ticker` (asc) for `POST /api/watchlist` upsert when `youtubeVideoId` is sent (link-or-create by ticker). Firestore will prompt to create this index on first query.
 
 **Benefits:**
 - ✅ Track stocks you're considering before making investment decisions
@@ -392,7 +396,10 @@ Videos discovered from subscribed channels/playlists. Document ID is the YouTube
   "createdAt": "2024-11-20T10:00:00Z",
   "transcriptStorageRef": "youtube_transcripts/nSqHIGSjywo.txt",
   "transcriptUpdatedAt": "2024-11-20T12:00:00Z",
-  "transcriptSummary": "- Bullet summary from Gemini...",
+  "transcriptSummary": "- **Thesis title** — Summary text *(Ticker: AAPL)*",
+  "transcriptSummaryTheses": [
+    { "title": "Thesis title", "summary": "Summary text", "ticker": "AAPL" }
+  ],
   "transcriptSummaryUpdatedAt": "2024-11-20T12:05:00Z"
 }
 ```
@@ -407,7 +414,8 @@ Videos discovered from subscribed channels/playlists. Document ID is the YouTube
 - `createdAt` (timestamp): When the video was first stored
 - `transcriptStorageRef` (string, optional): Storage path for transcript text, e.g. `youtube_transcripts/{videoId}.txt`. Set by local transcript script; read by transcript-analysis function. Not exposed to UI.
 - `transcriptUpdatedAt` (string, optional): ISO timestamp when transcript was stored
-- `transcriptSummary` (string, optional): Bulleted economic summary from analysis (Gemini); shown in sources page drawer
+- `transcriptSummary` (string, optional): Markdown summary from transcript analysis (Gemini); shown in the Sources page drawer. With structured prompt output, this is rendered markdown derived from the same run as `transcriptSummaryTheses`.
+- `transcriptSummaryTheses` (array of maps, optional): Structured theses from structured LLM output. Each object may include `title`, `summary`, and optional `ticker` (uppercase symbol). Used for “Add to watchlist” / “Link video” actions when `ticker` is set. Omitted or empty when the prompt returns plain text only.
 - `transcriptSummaryUpdatedAt` (string, optional): ISO timestamp when summary was written
 
 **Index:** Composite index on `youtube_videos`: `userId` (asc) + `publishedAt` (desc) for listing a user's videos by date. Firestore will suggest creating the index when you first run the query.

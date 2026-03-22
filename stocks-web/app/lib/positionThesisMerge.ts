@@ -13,6 +13,7 @@ export const POSITION_THESIS_MERGE_STRING_KEYS: (keyof PositionThesisPayload)[] 
   'upsideMultipleAssumption',
   'baseDividendAssumption',
   'baseGrowthAssumption',
+  'baseMultipleBasis',
   'baseMultipleAssumption',
   'downsideDividendAssumption',
   'downsideGrowthAssumption',

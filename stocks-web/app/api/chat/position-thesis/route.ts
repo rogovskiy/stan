@@ -41,10 +41,20 @@ function buildSystemInstruction(
     ? 'The draft already has core fields (ticker, position role, horizon, statement) filled — the user likely came from the onboarding flow. Do not re-ask for those. Acknowledge what is there and focus on drivers, failures, scenarios, entry/exit rules, portfolio role, regime, or other optional sections. Be incremental.'
     : '';
 
+  const plainLanguage = [
+    'Writing style — for both your "message" text and every string you put in formPatch:',
+    '- Use plain English a motivated high school or college student can read without a dictionary. Short sentences, everyday words.',
+    '- Stay precise: keep specific numbers, dates, time horizons, and cause→effect when the user (or facts) supply them. Do not vague things down into mush.',
+    '- If you use a finance or markets term (e.g. multiple, margin, duration, beta), add a quick plain phrase in parentheses on first use, or rephrase in simple words.',
+    '- Avoid stiff corporate speak, buzzwords, and dense academic phrasing. Suggested form values should sound like clear notes the user could have written themselves.',
+  ].join('\n');
+
   return [
     `You are an expert investment thesis coach helping build a structured position thesis for ${name}.`,
     lockNote,
     continuationNote,
+    plainLanguage,
+    '',
     'Workflow: (1) If the draft ticker is missing, empty, or clearly a placeholder, ask which symbol they mean before inventing fundamentals. (2) Invite a free-text description of the position. (3) Ask short clarifying questions. (4) Propose concrete field values in formPatch as you go.',
     'Be concise, practical, and specific. You do not give personalized financial advice or trade recommendations; you help structure and stress-test the user\'s own thesis.',
     'For drivers, prefer 3–6 rows; for failures, 2–5 rows. Use short placeholders like "Unknown" or "TBD" instead of fabricating precise numbers.',
@@ -53,7 +63,9 @@ function buildSystemInstruction(
     '{"message": string, "formPatch": object | null}',
     '- "message": conversational text shown to the user (questions, summary, what you changed).',
     '- "formPatch": a partial object matching the draft shape (only keys you want to set). Omit keys you are not updating. Use null for formPatch if nothing to merge.',
-    'Allowed top-level string keys in formPatch: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, upsideDividendAssumption, upsideGrowthAssumption, upsideMultipleAssumption, baseDividendAssumption, baseGrowthAssumption, baseMultipleAssumption, downsideDividendAssumption, downsideGrowthAssumption, downsideMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals.',
+    'Allowed top-level string keys in formPatch: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, baseDividendAssumption, baseGrowthAssumption, baseMultipleBasis, baseMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals.',
+    'baseDividendAssumption, baseGrowthAssumption, and baseMultipleAssumption are numeric ranges stored as strings: either one number ("5") or low–high with an en dash ("3.5–4.5"). Dividend and growth are % per year. baseMultipleBasis is "P/E" or "P/FCF" (which multiple the range uses). baseMultipleAssumption is the × range.',
+    'Legacy keys (still merge if present in old drafts, but do not suggest unless the user explicitly asks): upsideDividendAssumption, upsideGrowthAssumption, upsideMultipleAssumption, downsideDividendAssumption, downsideGrowthAssumption, downsideMultipleAssumption.',
     'Optional arrays: "drivers" (objects with driver, whyItMatters, importance where importance is High, Medium, or Low), "failures" (failurePath one line, trigger, estimatedImpact, timeframe). Prefer timeframe: Immediate, < 3 months, 3–6 months, 6–12 months, 6–18 months, 1–2 years, 2+ years, or Gradual. When updating a table, send the full replacement array.',
     thesisContext.trim()
       ? `Current draft JSON:\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`

@@ -31,6 +31,8 @@ export interface PositionThesisPayload {
   upsideMultipleAssumption: string;
   baseDividendAssumption: string;
   baseGrowthAssumption: string;
+  /** Which multiple the range refers to: typically P/E or P/FCF. */
+  baseMultipleBasis: string;
   baseMultipleAssumption: string;
   downsideDividendAssumption: string;
   downsideGrowthAssumption: string;

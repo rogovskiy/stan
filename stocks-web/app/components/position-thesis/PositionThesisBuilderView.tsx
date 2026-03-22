@@ -50,6 +50,8 @@ const FAILURE_TIMEFRAME_STANDARD = [
 ] as const;
 import { useSearchParams } from 'next/navigation';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
+import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
+import { savePositionThesisChatTranscript } from '@/app/lib/services/positionThesisChatClient';
 import { mergePositionThesisPayload } from '@/app/lib/positionThesisMerge';
 import { scratchPositionThesisPayload } from '@/app/lib/positionThesisScratch';
 import {
@@ -57,7 +59,7 @@ import {
   newThesisDocumentId,
   savePositionThesisByDocId,
 } from '@/app/lib/services/positionThesisService';
-import ThesisBuilderChat from './ThesisBuilderChat';
+import ThesisBuilderChat, { type ThesisBuilderChatHandle } from './ThesisBuilderChat';
 
 const section = 'bg-white rounded-2xl shadow-sm border border-slate-200 p-5';
 const label = 'text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2';
@@ -797,8 +799,10 @@ export interface PositionThesisBuilderViewProps {
    * When false (e.g. onboard handoff), ticker stays editable until first save.
    */
   lockTickerInitially?: boolean;
-  /** Chat history from new-thesis onboarding to carry over. */
-  initialChatHistory?: ChatHistoryEntry[];
+  /** Chat history from server transcript and/or new-thesis onboarding. */
+  initialChatHistory?: Array<ChatHistoryEntry | PersistedChatMessage>;
+  /** Firebase ID token for saving chat transcript after publish. */
+  getIdToken?: () => Promise<string | null>;
   /** Firestore thesis document id (opaque or legacy `userId_TICKER`). Omit for first save → mint new id. */
   thesisDocId?: string | null;
   /** When user arrived from a portfolio position funnel. */
@@ -827,6 +831,7 @@ export default function PositionThesisBuilderView({
   portfolioLink,
   portfolioContextForCoach,
   initialAuthoringHistory,
+  getIdToken,
   onThesisDocIdCommitted,
 }: PositionThesisBuilderViewProps) {
   const routeTicker = ticker.toUpperCase();
@@ -876,6 +881,7 @@ export default function PositionThesisBuilderView({
   const [editingDriverIndex, setEditingDriverIndex] = useState<number | null>(null);
   const [editingFailureIndex, setEditingFailureIndex] = useState<number | null>(null);
   const [authoringShown, setAuthoringShown] = useState(true);
+  const thesisChatRef = useRef<ThesisBuilderChatHandle>(null);
 
   const assumptionRangeFlushersRef = useRef<Array<() => Record<string, string>>>([]);
   const registerAssumptionRangeFlush = useCallback((flush: () => Record<string, string>) => {
@@ -958,6 +964,16 @@ export default function PositionThesisBuilderView({
         setTickerLocked(true);
         setSaveState('saved');
         let msg = 'Thesis published.';
+        if (getIdToken) {
+          const token = await getIdToken();
+          if (token) {
+            const persistable = thesisChatRef.current?.getPersistableMessages() ?? [];
+            const chatSave = await savePositionThesisChatTranscript(docId, persistable, token);
+            if (!chatSave.ok) {
+              msg += ` Chat log was not saved (${chatSave.error}).`;
+            }
+          }
+        }
         if (resolvedPortfolioLink) {
           try {
             const putRes = await fetch(
@@ -1000,6 +1016,7 @@ export default function PositionThesisBuilderView({
       resolvedPortfolioLink,
       portfolioContextForCoach,
       onThesisDocIdCommitted,
+      getIdToken,
     ]
   );
 
@@ -1524,6 +1541,7 @@ export default function PositionThesisBuilderView({
 
             <div className="space-y-6 xl:sticky xl:top-6 xl:self-start w-full">
               <ThesisBuilderChat
+                ref={thesisChatRef}
                 apiTicker={symbol}
                 companyName={companyName}
                 form={form}

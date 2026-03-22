@@ -1,13 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   canRunGroundedThesisFactCheck,
   factCheckGateBlockedMessage,
   getBlockedRequiredSections,
 } from '@/app/lib/positionThesisCompleteness';
+import { POSITION_THESIS_COACH_MAX_MESSAGES } from '@/app/lib/positionThesisCoachLimits';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
 import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
 import { factCheckMarkdownComponents } from './factCheckMarkdown';
 
@@ -21,11 +32,26 @@ interface ChatMessage {
   messageKind?: 'factCheck';
 }
 
-function toChatMessages(entries: Array<{ role: string; content: string }>): ChatMessage[] {
+export type ThesisBuilderChatHandle = {
+  getPersistableMessages: () => PersistedChatMessage[];
+};
+
+function toChatMessages(
+  entries: Array<{
+    role: string;
+    content: string;
+    assistantLabel?: string;
+    messageKind?: string;
+  }>
+): ChatMessage[] {
   return entries.map((e, i) => ({
     id: e.role === 'assistant' ? `a-${i}` : `u-${i}`,
     role: e.role === 'assistant' ? 'assistant' : 'user',
     content: typeof e.content === 'string' ? e.content : '',
+    ...(typeof e.assistantLabel === 'string' && e.assistantLabel.trim()
+      ? { assistantLabel: e.assistantLabel }
+      : {}),
+    ...(e.messageKind === 'factCheck' ? { messageKind: 'factCheck' as const } : {}),
   }));
 }
 
@@ -37,29 +63,35 @@ function serializeThesisContext(form: PositionThesisPayload): string {
   }
 }
 
-export default function ThesisBuilderChat({
-  apiTicker,
-  companyName,
-  form,
-  tickerLocked,
-  onFormPatch,
-  initialMessages = [],
-  autoSendMessage = null,
-  portfolioContext = '',
-}: {
-  /** Effective symbol for the coach (usually form.ticker). */
+type ThesisBuilderChatProps = {
   apiTicker: string;
   companyName?: string | null;
   form: PositionThesisPayload;
   tickerLocked: boolean;
   onFormPatch: (patch: Partial<PositionThesisPayload>) => void;
-  /** Chat history carried over from new-thesis onboarding. */
-  initialMessages?: Array<{ role: string; content: string }>;
-  /** When `nonce` changes, send `text` as a user message (e.g. section help from the form). */
+  initialMessages?: Array<{
+    role: string;
+    content: string;
+    assistantLabel?: string;
+    messageKind?: string;
+  }>;
   autoSendMessage?: { nonce: number; text: string } | null;
-  /** Portfolio / position context for the coach API. */
   portfolioContext?: string;
-}) {
+};
+
+function ThesisBuilderChatInner(
+  {
+    apiTicker,
+    companyName,
+    form,
+    tickerLocked,
+    onFormPatch,
+    initialMessages = [],
+    autoSendMessage = null,
+    portfolioContext = '',
+  }: ThesisBuilderChatProps,
+  ref: Ref<ThesisBuilderChatHandle>
+) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.length > 0 ? toChatMessages(initialMessages) : []
   );
@@ -84,11 +116,29 @@ export default function ThesisBuilderChat({
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, factCheckLoading]);
 
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  useImperativeHandle(ref, () => ({
+    getPersistableMessages(): PersistedChatMessage[] {
+      return messagesRef.current.map((m) => {
+        const row: PersistedChatMessage = { role: m.role, content: m.content };
+        if (m.assistantLabel) row.assistantLabel = m.assistantLabel;
+        if (m.messageKind) row.messageKind = m.messageKind;
+        return row;
+      });
+    },
+  }));
+
   const submitConversation = useCallback(
     async (conversationMessages: ChatMessage[]) => {
       setLoading(true);
       setError(null);
       const ctx = serializeThesisContext(form);
+      const forApi =
+        conversationMessages.length <= POSITION_THESIS_COACH_MAX_MESSAGES
+          ? conversationMessages
+          : conversationMessages.slice(-POSITION_THESIS_COACH_MAX_MESSAGES);
       try {
         const res = await fetch('/api/chat/position-thesis', {
           method: 'POST',
@@ -99,7 +149,7 @@ export default function ThesisBuilderChat({
             thesisContext: ctx,
             tickerLocked,
             portfolioContext: portfolioContext.trim() || undefined,
-            messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
+            messages: forApi.map((m) => ({ role: m.role, content: m.content })),
           }),
         });
         const data = (await res.json()) as {
@@ -115,7 +165,7 @@ export default function ThesisBuilderChat({
         }
         setMessages([
           ...conversationMessages,
-          { id: `a-${Date.now()}`, role: 'assistant', content: data.reply },
+          { id: `a-${Date.now()}`, role: 'assistant' as const, content: data.reply },
         ]);
         if (data.formPatch && typeof data.formPatch === 'object') {
           const clean = sanitizeFormPatch(data.formPatch, { tickerLocked });
@@ -186,9 +236,6 @@ export default function ThesisBuilderChat({
     setInput('');
     await submitConversation(nextMessages);
   }, [input, loading, messages, submitConversation]);
-
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
 
   const lastAutoNonce = useRef<number | null>(null);
   useEffect(() => {
@@ -362,3 +409,8 @@ export default function ThesisBuilderChat({
     </div>
   );
 }
+
+const ThesisBuilderChat = forwardRef(ThesisBuilderChatInner);
+ThesisBuilderChat.displayName = 'ThesisBuilderChat';
+
+export default ThesisBuilderChat;

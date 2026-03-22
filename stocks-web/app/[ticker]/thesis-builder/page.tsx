@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import AppNavigation from '../../components/AppNavigation';
 import PositionThesisBuilderView from '../../components/position-thesis/PositionThesisBuilderView';
@@ -17,7 +17,9 @@ import {
 } from '@/app/lib/services/positionThesisService';
 import type { Portfolio } from '@/app/lib/services/portfolioService';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
+import { fetchPositionThesisChatTranscript } from '@/app/lib/services/positionThesisChatClient';
 import {
   clearThesisOnboardHandoff,
   peekThesisOnboardHandoff,
@@ -73,6 +75,8 @@ function ThesisBuilderPageInner() {
   const [initialAuthoringHistory, setInitialAuthoringHistory] = useState<
     import('@/app/lib/types/positionThesis').AuthoringContextEntry[] | undefined
   >(undefined);
+  const [remoteChatMessages, setRemoteChatMessages] = useState<PersistedChatMessage[]>([]);
+  const [chatHydrationVersion, setChatHydrationVersion] = useState(0);
 
   const thesisDocIdParam = searchParams.get('thesisDocId');
   const portfolioIdParam = searchParams.get('portfolioId');
@@ -99,6 +103,7 @@ function ThesisBuilderPageInner() {
 
     if (!user) {
       setLoadError(null);
+      setRemoteChatMessages([]);
       const handoff = peekThesisOnboardHandoff(ticker);
       if (thesisDocIdParam) {
         setThesisDocId(thesisDocIdParam);
@@ -130,6 +135,7 @@ function ThesisBuilderPageInner() {
     setPortfolioContextForCoach('');
     setInitialAuthoringHistory(undefined);
     setThesisDocId(null);
+    setRemoteChatMessages([]);
 
     (async () => {
       try {
@@ -316,6 +322,34 @@ function ThesisBuilderPageInner() {
     positionIdParam,
   ]);
 
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user?.uid || !thesisDocId?.trim()) {
+      setRemoteChatMessages([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetchPositionThesisChatTranscript(thesisDocId.trim(), token);
+        if (cancelled) return;
+        setRemoteChatMessages(res.ok ? res.messages : []);
+      } catch {
+        if (!cancelled) setRemoteChatMessages([]);
+      } finally {
+        if (!cancelled) setChatHydrationVersion((v) => v + 1);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, thesisDocId]);
+
+  const mergedInitialChatHistory = useMemo((): Array<ChatHistoryEntry | PersistedChatMessage> => {
+    return [...remoteChatMessages, ...handoffChatHistory];
+  }, [remoteChatMessages, handoffChatHistory]);
+
   const handleTickerChange = (newTicker: string) => {
     const q = searchParams.toString();
     router.push(q ? `/${newTicker}/thesis-builder?${q}` : `/${newTicker}/thesis-builder`);
@@ -346,19 +380,20 @@ function ThesisBuilderPageInner() {
         key={
           initialPayload === undefined
             ? `load-${ticker}`
-            : `${ticker}-${thesisOrigin}-${initialPayload ? 'hydrate' : 'defaults'}-${thesisDocId ?? 'new'}`
+            : `${ticker}-${thesisOrigin}-${initialPayload ? 'hydrate' : 'defaults'}-${thesisDocId ?? 'new'}-chat-${chatHydrationVersion}`
         }
         ticker={ticker}
         companyName={companyName}
         userId={user?.uid ?? null}
         initialPayload={initialPayload}
-        initialChatHistory={handoffChatHistory}
+        initialChatHistory={mergedInitialChatHistory}
         loadError={loadError}
         lockTickerInitially={thesisOrigin === 'remote'}
         thesisDocId={thesisDocId}
         portfolioLink={portfolioLink}
         portfolioContextForCoach={portfolioContextForCoach}
         initialAuthoringHistory={initialAuthoringHistory}
+        getIdToken={() => user?.getIdToken() ?? Promise.resolve(null)}
         onThesisDocIdCommitted={onThesisDocIdCommitted}
         onTickerCommitted={(canonical) => {
           const p = searchParams.toString();

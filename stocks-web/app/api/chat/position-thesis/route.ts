@@ -9,10 +9,14 @@ import {
   promptNotConfiguredMessage,
   resolveGeminiModel,
 } from '@/app/lib/server/loadPrompt';
+import {
+  POSITION_THESIS_COACH_MAX_MESSAGE_CHARS,
+  POSITION_THESIS_COACH_MAX_MESSAGES,
+} from '@/app/lib/positionThesisCoachLimits';
 
 const MAX_CONTEXT_CHARS = 48_000;
-const MAX_MESSAGES = 24;
-const MAX_MESSAGE_CHARS = 8_000;
+const MAX_MESSAGES = POSITION_THESIS_COACH_MAX_MESSAGES;
+const MAX_MESSAGE_CHARS = POSITION_THESIS_COACH_MAX_MESSAGE_CHARS;
 
 type Role = 'user' | 'assistant';
 

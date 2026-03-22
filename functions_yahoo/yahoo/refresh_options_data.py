@@ -31,14 +31,23 @@ def year_fraction_from(as_of_str: str, expiry_str: str) -> float:
 
 
 def _option_price_from_row(row: pd.Series) -> float | None:
-    """Option market price: lastPrice or mid of bid/ask."""
+    """Option market price: lastPrice if inside bid-ask; else mid of bid/ask."""
+    bid, ask = row.get("bid"), row.get("ask")
+    has_spread = pd.notna(bid) and pd.notna(ask) and float(bid) > 0 and float(ask) > 0
+    mid = float((float(bid) + float(ask)) / 2.0) if has_spread else None
+
     price = row.get("lastPrice")
     if pd.notna(price) and price > 0:
-        return float(price)
-    bid, ask = row.get("bid"), row.get("ask")
-    if pd.notna(bid) and pd.notna(ask) and bid > 0 and ask > 0:
-        return float((bid + ask) / 2.0)
-    return None
+        last_f = float(price)
+        if has_spread:
+            b, a = float(bid), float(ask)
+            low, high = min(b, a), max(b, a)
+            if low <= last_f <= high:
+                return last_f
+            return mid
+        return last_f
+
+    return mid
 
 
 def compute_iv_from_price(

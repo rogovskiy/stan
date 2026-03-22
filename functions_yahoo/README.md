@@ -72,3 +72,18 @@ Default ticker is AAPL. To use another ticker or project: `make trigger-function
 ## Job runs
 
 Successful and failed runs are recorded to Firestore (`job_runs` collection) when running in Cloud Functions, for the Jobs UI. The vendored `job_run_service` is patched to record when `FUNCTION_TARGET` or `K_SERVICE` is set.
+
+## Options IV/skew chart (marketdata backfill + plot)
+
+Run from `functions_yahoo` with venv activated:
+
+```bash
+MARKETDATA_API_TOKEN=your_token python scripts/backfill_and_plot_options_iv_skew_timeseries.py --start-date 2026-02-10 --end-date 2026-03-12 --tickers USO SPY --target-dte 45 --skew-dtes 30 45 60
+```
+
+Skew (per chosen expiry) is **mean IV of puts with BS delta in `[--put-delta-hi, --put-delta-lo]`** (default `-0.30` … `-0.20`) **minus** **mean IV of calls with delta in `[--call-delta-lo, --call-delta-hi]`** (default `0.20` … `0.30`). Override with `--call-delta-lo`, `--call-delta-hi`, `--put-delta-lo`, `--put-delta-hi`.
+
+This backfills missing `option_data/<TICKER>/<DATE>.csv.gz` snapshots (via marketdata.app) and writes:
+
+- `../output/options_iv_skew_timeseries_<start>_<end>.csv` (combined; `skew_*` plus band debug: `iv_*_band_avg`, `n_*_band`, strike min/max per side, `delta_*_band_mean`, expiry/DTE columns, `*_expiry_changed`)
+- `../output/options_iv_skew_timeseries_USO_<start>_<end>.png` and `../output/options_iv_skew_timeseries_SPY_<start>_<end>.png` (one chart per ticker; skew panel: **mean skew across `--skew-dtes`**, **min–max band** across those DTEs, faint dashed lines per DTE). CSV adds `skew_across_dte_mean` / `_min` / `_max` / `_std`.

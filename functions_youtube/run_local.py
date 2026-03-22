@@ -43,7 +43,12 @@ def main() -> None:
         timeout_seconds=60,
         verbose=True,
     )
-    logger.info("refresh_one_subscription result: ok=%s, upserted=%s", result.get("ok"), result.get("upserted", 0))
+    logger.info(
+        "refresh_one_subscription result: ok=%s, upserted=%s, reason=%s",
+        result.get("ok"), result.get("upserted", 0), result.get("reason"),
+    )
+    if not result.get("ok"):
+        logger.warning("Error: %s", result.get("error_message", result.get("reason")))
     logger.info("Done.")
 
 

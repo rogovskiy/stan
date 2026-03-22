@@ -134,18 +134,30 @@ def youtube_refresh(event: pubsub_fn.CloudEvent[pubsub_fn.MessagePublishedData])
             result.get("ok"),
             result.get("upserted", 0),
         )
-        record_job_run(
-            JOB_TYPE_YOUTUBE,
-            execution_id,
-            "success",
-            entity=entity_id,
-            started_at=started_at,
-            finished_at=datetime.utcnow(),
-            payload={
-                "ok": result.get("ok"),
-                "upserted": result.get("upserted", 0),
-            },
-        )
+        if result.get("ok"):
+            record_job_run(
+                JOB_TYPE_YOUTUBE,
+                execution_id,
+                "success",
+                entity=entity_id,
+                started_at=started_at,
+                finished_at=datetime.utcnow(),
+                payload={
+                    "ok": True,
+                    "upserted": result.get("upserted", 0),
+                },
+            )
+        else:
+            record_job_run(
+                JOB_TYPE_YOUTUBE,
+                execution_id,
+                "error",
+                entity=entity_id,
+                error_message=result.get("error_message", result.get("reason", "unknown")),
+                started_at=started_at,
+                finished_at=datetime.utcnow(),
+                payload=dict(result),
+            )
     except Exception as e:
         logger.exception("YouTube refresh failed: %s", e)
         record_job_run(

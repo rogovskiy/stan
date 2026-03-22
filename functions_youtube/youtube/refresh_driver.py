@@ -1,12 +1,12 @@
 """
-YouTube refresh driver: resolve URL to channel (YouTube Data API + RSS), fetch latest videos, upsert to Firestore.
-Requires YOUTUBE_API_KEY env for resolving @handles to channel IDs; RSS feed does not need the key.
+YouTube refresh driver: resolve URL to channel (YouTube Data API), fetch latest videos via Data API, upsert to Firestore.
+Uses channels.list (contentDetails.relatedPlaylists.uploads) + playlistItems.list for recent uploads (stable, low quota).
+Requires YOUTUBE_API_KEY env.
 """
 
 import logging
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -40,6 +40,62 @@ def resolve_handle_to_channel_id(handle: str, api_key: str) -> str:
     return data["items"][0]["snippet"]["channelId"]
 
 
+def _uploads_playlist_id(channel_id: str, api_key: str, timeout_seconds: int = 20) -> Optional[str]:
+    """Get the channel's uploads playlist ID via channels.list (part=contentDetails). Cost: 1 unit."""
+    url = "https://www.googleapis.com/youtube/v3/channels"
+    params = {
+        "part": "contentDetails",
+        "id": channel_id,
+        "key": api_key,
+    }
+    r = requests.get(url, params=params, timeout=timeout_seconds)
+    r.raise_for_status()
+    data = r.json()
+    for item in data.get("items") or []:
+        uploads = (item.get("contentDetails") or {}).get("relatedPlaylists", {}).get("uploads")
+        if uploads:
+            return uploads
+    return None
+
+
+def _latest_videos_from_playlist(
+    playlist_id: str,
+    api_key: str,
+    max_results: int = 5,
+    timeout_seconds: int = 20,
+) -> list[dict]:
+    """
+    Fetch recent videos from an uploads playlist via playlistItems.list (part=snippet). Cost: 1 unit.
+    Returns list of {id, title, url, publishedAt} in same shape as fetch_feed_entries_via_api.
+    """
+    url = "https://www.googleapis.com/youtube/v3/playlistItems"
+    params = {
+        "part": "snippet",
+        "playlistId": playlist_id,
+        "maxResults": max_results,
+        "key": api_key,
+    }
+    r = requests.get(url, params=params, timeout=timeout_seconds)
+    r.raise_for_status()
+    data = r.json()
+    entries = []
+    for item in data.get("items") or []:
+        snip = item.get("snippet") or {}
+        vid = (snip.get("resourceId") or {}).get("videoId")
+        if not vid:
+            continue
+        published = (snip.get("publishedAt") or "").strip()
+        if not published:
+            published = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        entries.append({
+            "id": vid,
+            "title": (snip.get("title") or "").strip() or "(No title)",
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "publishedAt": published,
+        })
+    return entries
+
+
 def _live_stream_video_ids(video_ids: list[str], api_key: str, timeout_seconds: int = 20) -> set[str]:
     """Return set of video IDs that are live streams (current, upcoming, or past). Uses videos.list with part=liveStreamingDetails."""
     if not video_ids or not api_key:
@@ -60,26 +116,6 @@ def _live_stream_video_ids(video_ids: list[str], api_key: str, timeout_seconds: 
             if "liveStreamingDetails" in item:
                 live_ids.add(item["id"])
     return live_ids
-
-
-def latest_videos_from_rss(channel_id: str, timeout_seconds: int = 20) -> list[dict]:
-    """Fetch latest videos for a channel via public RSS feed (no API key). Returns list of {video_id, title, published}."""
-    feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-    r = requests.get(feed_url, timeout=timeout_seconds)
-    r.raise_for_status()
-    ns = {
-        "atom": "http://www.w3.org/2005/Atom",
-        "yt": "http://www.youtube.com/xml/schemas/2015",
-    }
-    root = ET.fromstring(r.text)
-    videos = []
-    for entry in root.findall("atom:entry", ns):
-        videos.append({
-            "video_id": entry.findtext("yt:videoId", namespaces=ns),
-            "title": entry.findtext("atom:title", namespaces=ns) or "(No title)",
-            "published": entry.findtext("atom:published", namespaces=ns) or "",
-        })
-    return videos
 
 
 def url_to_channel_id(url: str, api_key: str) -> Optional[str]:
@@ -121,32 +157,24 @@ def fetch_feed_entries_via_api(
     verbose: bool = False,
 ) -> list[dict]:
     """
-    Resolve URL to channel ID (API if handle), fetch latest videos via RSS.
+    Resolve URL to channel ID (API if handle), fetch latest videos via YouTube Data API.
+    Uses channels.list (contentDetails.relatedPlaylists.uploads) + playlistItems.list (low quota).
     Returns list of {id, title, url, publishedAt} compatible with upsert_video.
     """
     channel_id = url_to_channel_id(url, api_key)
     if not channel_id:
         logger.warning("Could not resolve channel ID for URL: %s", url)
         return []
-    try:
-        raw = latest_videos_from_rss(channel_id, timeout_seconds=min(timeout_seconds, 30))
-    except requests.RequestException as e:
-        logger.warning("RSS fetch failed for channel %s: %s", channel_id, e)
+    uploads_playlist_id = _uploads_playlist_id(channel_id, api_key, timeout_seconds=min(timeout_seconds, 25))
+    if not uploads_playlist_id:
+        logger.warning("No uploads playlist for channel %s", channel_id)
         return []
-    entries = []
-    for v in raw[:max_entries]:
-        vid = (v.get("video_id") or "").strip()
-        if not vid:
-            continue
-        published = (v.get("published") or "").strip()
-        if not published:
-            published = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        entries.append({
-            "id": vid,
-            "title": (v.get("title") or "").strip() or "(No title)",
-            "url": f"https://www.youtube.com/watch?v={vid}",
-            "publishedAt": published,
-        })
+    entries = _latest_videos_from_playlist(
+        uploads_playlist_id,
+        api_key,
+        max_results=max_entries,
+        timeout_seconds=min(timeout_seconds, 25),
+    )
     # Skip live streams: they rarely have stable transcripts during/right after broadcast
     if entries and api_key:
         live_ids = _live_stream_video_ids([e["id"] for e in entries], api_key, timeout_seconds=20)
@@ -155,7 +183,7 @@ def fetch_feed_entries_via_api(
             if verbose:
                 logger.info("Filtered out %d live stream(s): %s", len(live_ids), sorted(live_ids))
     if verbose and entries:
-        logger.info("Fetched %d entries from %s (channel %s)", len(entries), url, channel_id)
+        logger.info("Fetched %d entries from %s (channel %s) via Data API", len(entries), url, channel_id)
     return entries
 
 
@@ -168,7 +196,7 @@ def refresh_one_subscription(
     api_key: Optional[str] = None,
 ) -> dict:
     """
-    Refresh a single subscription by ID: resolve URL to channel (API), fetch recent videos via RSS, insert only new ones.
+    Refresh a single subscription by ID: resolve URL to channel (API), fetch recent videos via Data API (channels.list + playlistItems.list), insert only new ones.
     Returns {"ok": True, "subscriptionId": id, "upserted": N} with N = count of newly inserted videos,
     or {"ok": False, "reason": "..."}.
     api_key: YouTube Data API key (default: YOUTUBE_API_KEY env).

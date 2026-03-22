@@ -334,7 +334,7 @@ export default function NewThesisOnboardingPage() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ thesisId }),
+          body: JSON.stringify({ thesisId: thesisDocId }),
         });
         const wlJson = (await wlRes.json()) as { success?: boolean; error?: string };
         if (!wlJson.success) {

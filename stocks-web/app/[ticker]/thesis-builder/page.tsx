@@ -18,7 +18,10 @@ import {
 import type { Portfolio } from '@/app/lib/services/portfolioService';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
-import { takeThesisOnboardHandoff } from '@/app/lib/thesisOnboardHandoff';
+import {
+  clearThesisOnboardHandoff,
+  peekThesisOnboardHandoff,
+} from '@/app/lib/thesisOnboardHandoff';
 
 /** Handoff is one-shot; restore link from URL or thesis doc so saves still run the portfolio PUT. */
 function resolveThesisPortfolioLink(
@@ -96,7 +99,7 @@ function ThesisBuilderPageInner() {
 
     if (!user) {
       setLoadError(null);
-      const handoff = takeThesisOnboardHandoff(ticker);
+      const handoff = peekThesisOnboardHandoff(ticker);
       if (thesisDocIdParam) {
         setThesisDocId(thesisDocIdParam);
       } else if (handoff?.thesisDocId) {
@@ -109,6 +112,7 @@ function ThesisBuilderPageInner() {
         if (handoff.portfolioLink) setPortfolioLink(handoff.portfolioLink);
         if (handoff.portfolioContextSummary)
           setPortfolioContextForCoach(handoff.portfolioContextSummary);
+        queueMicrotask(() => clearThesisOnboardHandoff());
       } else {
         setInitialPayload(null);
         setHandoffChatHistory([]);
@@ -129,7 +133,7 @@ function ThesisBuilderPageInner() {
 
     (async () => {
       try {
-        const handoff = takeThesisOnboardHandoff(ticker);
+        const handoff = peekThesisOnboardHandoff(ticker);
         if (cancelled) return;
 
         if (thesisDocIdParam) {
@@ -150,6 +154,7 @@ function ThesisBuilderPageInner() {
             if (pl) setPortfolioLink(pl);
             if (handoff?.portfolioContextSummary)
               setPortfolioContextForCoach(handoff.portfolioContextSummary);
+            if (handoff) clearThesisOnboardHandoff();
             return;
           }
           setLoadError('Thesis document not found.');
@@ -184,12 +189,14 @@ function ThesisBuilderPageInner() {
                 doc
               );
               if (pl) setPortfolioLink(pl);
+              clearThesisOnboardHandoff();
               return;
             }
           }
           setInitialPayload(coercePositionThesisPayload(handoff.payload, ticker));
           if (handoff.thesisDocId) setThesisDocId(handoff.thesisDocId);
           setThesisOrigin('handoff');
+          clearThesisOnboardHandoff();
           return;
         }
 

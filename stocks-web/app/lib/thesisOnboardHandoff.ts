@@ -32,46 +32,71 @@ export function writeThesisOnboardHandoff(data: ThesisOnboardHandoff): void {
   }
 }
 
-/** Returns handoff if stored ticker matches route ticker, then clears storage (one-shot). */
-export function takeThesisOnboardHandoff(
-  routeTicker: string
-): {
+export type ThesisOnboardHandoffPayload = {
   payload: PositionThesisPayload;
   chatHistory: ChatHistoryEntry[];
   thesisDocId?: string;
   portfolioLink?: ThesisOnboardPortfolioLink;
   portfolioContextSummary?: string;
-} | null {
+};
+
+function parseHandoffForRoute(
+  raw: string,
+  routeTicker: string
+): ThesisOnboardHandoffPayload | null {
+  const parsed = JSON.parse(raw) as ThesisOnboardHandoff;
+  if (!parsed?.payload || typeof parsed.ticker !== 'string') return null;
+  if (parsed.ticker.trim().toUpperCase() !== routeTicker.trim().toUpperCase()) return null;
+  const chatHistory = Array.isArray(parsed.chatHistory)
+    ? parsed.chatHistory.filter(
+        (e) =>
+          e &&
+          (e.role === 'user' || e.role === 'assistant') &&
+          typeof e.content === 'string'
+      )
+    : [];
+  return {
+    payload: parsed.payload,
+    chatHistory,
+    thesisDocId: typeof parsed.thesisDocId === 'string' ? parsed.thesisDocId : undefined,
+    portfolioLink:
+      parsed.portfolioLink &&
+      typeof parsed.portfolioLink.portfolioId === 'string' &&
+      typeof parsed.portfolioLink.positionId === 'string'
+        ? parsed.portfolioLink
+        : undefined,
+    portfolioContextSummary:
+      typeof parsed.portfolioContextSummary === 'string' ? parsed.portfolioContextSummary : undefined,
+  };
+}
+
+/**
+ * Read handoff without clearing. Use this when the consumer may run twice (e.g. React Strict Mode)
+ * or cancel async work; call {@link clearThesisOnboardHandoff} after state is committed.
+ */
+export function peekThesisOnboardHandoff(routeTicker: string): ThesisOnboardHandoffPayload | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as ThesisOnboardHandoff;
-    if (!parsed?.payload || typeof parsed.ticker !== 'string') return null;
-    if (parsed.ticker.trim().toUpperCase() !== routeTicker.trim().toUpperCase()) return null;
-    sessionStorage.removeItem(KEY);
-    const chatHistory = Array.isArray(parsed.chatHistory)
-      ? parsed.chatHistory.filter(
-          (e) =>
-            e &&
-            (e.role === 'user' || e.role === 'assistant') &&
-            typeof e.content === 'string'
-        )
-      : [];
-    return {
-      payload: parsed.payload,
-      chatHistory,
-      thesisDocId: typeof parsed.thesisDocId === 'string' ? parsed.thesisDocId : undefined,
-      portfolioLink:
-        parsed.portfolioLink &&
-        typeof parsed.portfolioLink.portfolioId === 'string' &&
-        typeof parsed.portfolioLink.positionId === 'string'
-          ? parsed.portfolioLink
-          : undefined,
-      portfolioContextSummary:
-        typeof parsed.portfolioContextSummary === 'string' ? parsed.portfolioContextSummary : undefined,
-    };
+    return parseHandoffForRoute(raw, routeTicker);
   } catch {
     return null;
   }
+}
+
+export function clearThesisOnboardHandoff(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** Returns handoff if stored ticker matches route ticker, then clears storage (one-shot). */
+export function takeThesisOnboardHandoff(routeTicker: string): ThesisOnboardHandoffPayload | null {
+  const data = peekThesisOnboardHandoff(routeTicker);
+  if (data) clearThesisOnboardHandoff();
+  return data;
 }

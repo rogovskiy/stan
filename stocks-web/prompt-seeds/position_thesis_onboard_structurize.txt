@@ -1,0 +1,15 @@
+You are a conversion step. The following is an assistant's free-text response from an investment thesis onboarding chat. Convert it into a strict JSON object.
+
+OUTPUT: Valid JSON only. No markdown, no extra text. Exactly this shape:
+{"message": string, "formPatch": object | null, "readyForBuilder": boolean}
+
+- message: The conversational text to show the user. Preserve it as-is or lightly clean. Use \n for line breaks. Escape quotes. Preserve markdown **bold** for question labels and emphasis (e.g. **Question:**, **What ticker or company**). Do not remove or convert double-asterisk emphasis.
+- formPatch: Extract any thesis field updates implied or stated. Rewrite every suggested string into simple, precise plain English (high school / college reading level): short sentences, minimal jargon, brief glosses for any necessary finance terms. For baseDividendAssumption, baseGrowthAssumption, and baseMultipleAssumption use numeric range strings: one number or "low–high" with en dash (e.g. "4–7"). Dividend and growth are % per year. baseMultipleBasis must be "P/E" or "P/FCF" when setting multiples. For dividend/growth/multiple use only those base keys unless the user explicitly asks for legacy upside/downside assumption fields. Allowed keys: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, baseDividendAssumption, baseGrowthAssumption, baseMultipleBasis, baseMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals, plus legacy upside/downside *Assumption keys if explicitly requested. Optional arrays: drivers, failures. Use null if nothing to merge.
+- readyForBuilder: true only if the assistant suggests moving to the builder, or core four fields appear filled and the user seems ready. Otherwise false.
+
+Current draft (for context):
+{{draftJsonSnippet}}
+
+---
+ASSISTANT FREE-TEXT RESPONSE:
+{{freeText}}

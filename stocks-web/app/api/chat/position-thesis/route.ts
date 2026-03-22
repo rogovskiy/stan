@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
+import { PROMPT_POSITION_THESIS_BUILDER } from '@/app/lib/promptIds';
+import {
+  applyPromptPlaceholders,
+  isPromptExecutable,
+  loadPromptVersion,
+  promptNotConfiguredMessage,
+  resolveGeminiModel,
+} from '@/app/lib/server/loadPrompt';
 
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 const MAX_CONTEXT_CHARS = 48_000;
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 8_000;
@@ -14,12 +21,12 @@ interface IncomingMessage {
   content: string;
 }
 
-function buildSystemInstruction(
+function buildThesisBuilderPlaceholders(
   ticker: string,
   companyName: string | null,
   thesisContext: string,
   tickerLocked: boolean
-) {
+): Record<string, string> {
   const name = companyName ? `${companyName} (${ticker})` : ticker;
   const lockNote = tickerLocked
     ? 'The ticker is already fixed for this thesis document. Do not include "ticker" in formPatch.'
@@ -31,7 +38,9 @@ function buildSystemInstruction(
       const draft = JSON.parse(thesisContext.trim()) as Record<string, unknown>;
       const ok = (k: string) =>
         typeof draft[k] === 'string' && (draft[k] as string).trim().length > 0;
-      const count = [ok('ticker'), ok('positionRole'), ok('holdingHorizon'), ok('thesisStatement')].filter(Boolean).length;
+      const count = [ok('ticker'), ok('positionRole'), ok('holdingHorizon'), ok('thesisStatement')].filter(
+        Boolean
+      ).length;
       hasCoreFields = count >= 3;
     } catch {
       // not valid JSON, treat as empty
@@ -41,34 +50,16 @@ function buildSystemInstruction(
     ? 'The draft already has core fields (ticker, position role, horizon, statement) filled — the user likely came from the onboarding flow. Do not re-ask for those. Acknowledge what is there and focus on drivers, failures, scenarios, entry/exit rules, portfolio role, regime, or other optional sections. Be incremental.'
     : '';
 
-  const plainLanguage = [
-    'Writing style — applies to every reply: your conversational "message" and every string you put in formPatch.',
-    'When you suggest wording for the form (including drivers, failures, scenarios, and rules), use simple clear English a motivated high school or college student can follow—short sentences, everyday words, and brief plain-English explanations for any necessary finance terms. Stay precise with numbers and time horizons.',
-    'Avoid stiff corporate speak, buzzwords, and dense academic phrasing. Suggested form values should sound like clear notes the user could have written themselves.',
-  ].join('\n');
+  const thesisContextBlock = thesisContext.trim()
+    ? `Current draft JSON:\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`
+    : 'No draft JSON yet; help the user start from their description.';
 
-  return [
-    `You are an expert investment thesis coach helping build a structured position thesis for ${name}.`,
+  return {
+    name,
     lockNote,
     continuationNote,
-    plainLanguage,
-    '',
-    'Workflow: (1) If the draft ticker is missing, empty, or clearly a placeholder, ask which symbol they mean before inventing fundamentals. (2) Invite a free-text description of the position. (3) Ask short clarifying questions. (4) Propose concrete field values in formPatch as you go.',
-    'Be concise, practical, and specific. You do not give personalized financial advice or trade recommendations; you help structure and stress-test the user\'s own thesis.',
-    'For drivers, prefer 3–6 rows; for failures, 2–5 rows. Use short placeholders like "Unknown" or "TBD" instead of fabricating precise numbers.',
-    '',
-    'OUTPUT CONTRACT — reply with JSON only (no markdown code fences), exactly one object:',
-    '{"message": string, "formPatch": object | null}',
-    '- "message": conversational text shown to the user (questions, summary, what you changed).',
-    '- "formPatch": a partial object matching the draft shape (only keys you want to set). Omit keys you are not updating. Use null for formPatch if nothing to merge.',
-    'Allowed top-level string keys in formPatch: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, baseDividendAssumption, baseGrowthAssumption, baseMultipleBasis, baseMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals.',
-    'baseDividendAssumption, baseGrowthAssumption, and baseMultipleAssumption are numeric ranges stored as strings: either one number ("5") or low–high with an en dash ("3.5–4.5"). Dividend and growth are % per year. baseMultipleBasis is "P/E" or "P/FCF" (which multiple the range uses). baseMultipleAssumption is the × range.',
-    'Legacy keys (still merge if present in old drafts, but do not suggest unless the user explicitly asks): upsideDividendAssumption, upsideGrowthAssumption, upsideMultipleAssumption, downsideDividendAssumption, downsideGrowthAssumption, downsideMultipleAssumption.',
-    'Optional arrays: "drivers" (objects with driver, whyItMatters, importance where importance is High, Medium, or Low), "failures" (failurePath one line, trigger, estimatedImpact, timeframe). Prefer timeframe: Immediate, < 3 months, 3–6 months, 6–12 months, 6–18 months, 1–2 years, 2+ years, or Gradual. When updating a table, send the full replacement array.',
-    thesisContext.trim()
-      ? `Current draft JSON:\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`
-      : 'No draft JSON yet; help the user start from their description.',
-  ].join('\n');
+    thesisContextBlock,
+  };
 }
 
 function parseModelJson(text: string): { message: string; formPatchRaw: unknown } | null {
@@ -152,13 +143,35 @@ export async function POST(request: Request) {
       ? body.companyName.trim()
       : null;
 
+  const promptLoaded = await loadPromptVersion(PROMPT_POSITION_THESIS_BUILDER, null);
+  if (!isPromptExecutable(promptLoaded)) {
+    return NextResponse.json(
+      { error: promptNotConfiguredMessage(PROMPT_POSITION_THESIS_BUILDER) },
+      { status: 503 }
+    );
+  }
+
+  const systemInstruction = applyPromptPlaceholders(
+    promptLoaded.content,
+    buildThesisBuilderPlaceholders(ticker, companyName, thesisContext, tickerLocked)
+  );
+
+  const modelId = resolveGeminiModel(promptLoaded.params);
+  const generationConfig: {
+    responseMimeType: string;
+    temperature?: number;
+  } = {
+    responseMimeType: 'application/json',
+  };
+  if (promptLoaded.params.temperature != null) {
+    generationConfig.temperature = promptLoaded.params.temperature;
+  }
+
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: MODEL,
-    systemInstruction: buildSystemInstruction(ticker, companyName, thesisContext, tickerLocked),
-    generationConfig: {
-      responseMimeType: 'application/json',
-    },
+    model: modelId,
+    systemInstruction,
+    generationConfig,
   });
 
   const history = messages.slice(0, -1).map((m) => ({

@@ -1,8 +1,19 @@
 import { NextResponse } from 'next/server';
 import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
+import {
+  PROMPT_POSITION_THESIS_ONBOARD,
+  PROMPT_POSITION_THESIS_ONBOARD_STRUCTURIZE,
+} from '@/app/lib/promptIds';
+import {
+  applyPromptPlaceholders,
+  isPromptExecutable,
+  loadPromptVersion,
+  promptNotConfiguredMessage,
+  resolveGeminiModel,
+} from '@/app/lib/server/loadPrompt';
 
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 const MAX_CONTEXT_CHARS = 48_000;
+const MAX_STRUCT_DRAFT_CHARS = 4_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CHARS = 8_000;
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -14,68 +25,14 @@ interface IncomingMessage {
   content: string;
 }
 
-function buildOnboardSystemInstruction(draftJson: string) {
-  return [
-    'You are an **exploratory investment thesis advisor** — proactive, curious, and research-driven. The user is typing briefly; your job is to enrich their sparse input with thoughtful exploration and real-world context.',
-    '',
-    '**Plain language (required)**: Write like you are talking to a smart high school or college student. Short sentences, common words, no puffery. When you use a finance/markets term, add a quick plain-English gloss in parentheses or rephrase. Stay accurate: keep real numbers, timeframes, and concrete causes when you have them. Avoid corporate buzzwords and dense academic style.',
-    '',
-    '**Use Google Search** whenever it would strengthen your response: current price action, recent news, earnings, macro backdrop, sector trends, analyst views, or what might break the thesis. Be aware of the current situation. Cite or reference what you find when relevant.',
-    '',
-    '**Exploratory stance**: Do not act like a form-filler. Ask probing questions. Offer hypotheses and invite pushback. Suggest angles they might not have considered.',
-    '',
-    '**Advisory tone**: You are a sparring partner, not a clerk. Challenge assumptions gently. Propose concrete drivers, failure modes, or regime conditions. When the user is brief, infer and elaborate — then confirm rather than asking them to type everything out.',
-    '',
-    '**Make questions obvious**: When you need input from the user, put your question on its own line with a clear prefix. Examples:',
-    '- "**What ticker or company** are you thinking about?"',
-    '- "**Question:** How long do you plan to hold this?"',
-    '- When offering choices, number them: "1) Core compounder  2) Tactical trade  3) Macro hedge — which fits best?"',
-    'Never bury a question in the middle of a long paragraph. Lead with it or put it at the end with a clear **Question:** or **Which of these:** label.',
-    '',
-    '**Collect for the thesis builder** (ticker, positionRole, holdingHorizon, thesisStatement plus optional depth). Populate formPatch as you go, but prioritize rich dialogue over exhaustive field coverage.',
-    '',
-    '**Balance**: After core four fields + meaningful exploration (roughly 6–10 turns, or when the user says "enough" / "skip" / "let\'s go"), indicate they can continue to the builder.',
-    '',
-    'Tone: direct, insightful, non-advice, easy to read. You help them think; you do not recommend buys or sells.',
-    '',
-    'Respond in natural conversational text. Do not output JSON.',
-    '',
-    draftJson.trim()
-      ? `Current draft (JSON):\n${draftJson.slice(0, MAX_CONTEXT_CHARS)}`
-      : 'No draft yet — welcome them, ask what company or thesis they are considering, and use search if they name a ticker to offer relevant context.',
-  ].join('\n');
-}
-
-function buildStructurizePrompt(freeText: string, draftJson: string): string {
-  return [
-    'You are a conversion step. The following is an assistant\'s free-text response from an investment thesis onboarding chat. Convert it into a strict JSON object.',
-    '',
-    'OUTPUT: Valid JSON only. No markdown, no extra text. Exactly this shape:',
-    '{"message": string, "formPatch": object | null, "readyForBuilder": boolean}',
-    '',
-    '- message: The conversational text to show the user. Preserve it as-is or lightly clean. Use \\n for line breaks. Escape quotes. Preserve markdown **bold** for question labels and emphasis (e.g. **Question:**, **What ticker or company**). Do not remove or convert double-asterisk emphasis.',
-    '- formPatch: Extract any thesis field updates implied or stated. Rewrite every suggested string into simple, precise plain English (high school / college reading level): short sentences, minimal jargon, brief glosses for any necessary finance terms. For baseDividendAssumption, baseGrowthAssumption, and baseMultipleAssumption use numeric range strings: one number or "low–high" with en dash (e.g. "4–7"). Dividend and growth are % per year. baseMultipleBasis must be "P/E" or "P/FCF" when setting multiples. For dividend/growth/multiple use only those base keys unless the user explicitly asks for legacy upside/downside assumption fields. Allowed keys: ticker, positionRole, holdingHorizon, thesisStatement, portfolioRole, regimeDesignedFor, entryPrice, baseDividendAssumption, baseGrowthAssumption, baseMultipleBasis, baseMultipleAssumption, upsideScenario, baseScenario, downsideScenario, distanceToFailure, currentVolRegime, riskPosture, trimRule, exitRule, addRule, systemMonitoringSignals, plus legacy upside/downside *Assumption keys if explicitly requested. Optional arrays: drivers, failures. Use null if nothing to merge.',
-    '- readyForBuilder: true only if the assistant suggests moving to the builder, or core four fields appear filled and the user seems ready. Otherwise false.',
-    '',
-    'Current draft (for context):',
-    draftJson.trim().slice(0, 4000) || '(empty)',
-    '',
-    '---',
-    'ASSISTANT FREE-TEXT RESPONSE:',
-    freeText,
-  ].join('\n');
-}
-
 function extractJsonFromText(text: string): string | null {
   const trimmed = text.trim();
-  // 1. Direct parse
   try {
     JSON.parse(trimmed);
     return trimmed;
   } catch {
     // continue
   }
-  // 2. Markdown code block
   const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlock) {
     const inner = codeBlock[1].trim();
@@ -86,7 +43,6 @@ function extractJsonFromText(text: string): string | null {
       // ignore
     }
   }
-  // 3. THESIS_PATCH: delimiter
   const patchIdx = trimmed.lastIndexOf('THESIS_PATCH:');
   if (patchIdx >= 0) {
     const candidate = trimmed.slice(patchIdx + 'THESIS_PATCH:'.length).trim();
@@ -97,7 +53,6 @@ function extractJsonFromText(text: string): string | null {
       // ignore
     }
   }
-  // 4. Find outermost { } containing "message" (greedy from end)
   const startIdx = trimmed.lastIndexOf('{"message"');
   if (startIdx >= 0) {
     let depth = 0;
@@ -122,7 +77,6 @@ function extractJsonFromText(text: string): string | null {
       }
     }
   }
-  // 5. Any { ... } with "message" key (first match)
   const genericMatch = trimmed.match(/\{\s*"message"\s*:/);
   if (genericMatch) {
     const start = genericMatch.index!;
@@ -177,7 +131,6 @@ function parseOnboardJson(
     }
   }
 
-  // Fallback: use raw text as message when parsing fails (user sees response instead of error)
   return {
     message: trimmed,
     formPatchRaw: null,
@@ -228,6 +181,30 @@ export async function POST(request: Request) {
 
   const draftJson = typeof body.draftJson === 'string' ? body.draftJson : '';
 
+  const onboardPrompt = await loadPromptVersion(PROMPT_POSITION_THESIS_ONBOARD, null);
+  if (!isPromptExecutable(onboardPrompt)) {
+    return NextResponse.json(
+      { error: promptNotConfiguredMessage(PROMPT_POSITION_THESIS_ONBOARD) },
+      { status: 503 }
+    );
+  }
+
+  const structPrompt = await loadPromptVersion(PROMPT_POSITION_THESIS_ONBOARD_STRUCTURIZE, null);
+  if (!isPromptExecutable(structPrompt)) {
+    return NextResponse.json(
+      { error: promptNotConfiguredMessage(PROMPT_POSITION_THESIS_ONBOARD_STRUCTURIZE) },
+      { status: 503 }
+    );
+  }
+
+  const draftJsonSnippetOnboard = draftJson.trim()
+    ? `Current draft (JSON):\n${draftJson.slice(0, MAX_CONTEXT_CHARS)}`
+    : 'No draft yet — welcome them, ask what company or thesis they are considering, and use search if they name a ticker to offer relevant context.';
+
+  const onboardSystemText = applyPromptPlaceholders(onboardPrompt.content, {
+    draftJsonSnippet: draftJsonSnippetOnboard,
+  });
+
   const contents = [
     ...messages.slice(0, -1).map((m) => ({
       role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
@@ -236,20 +213,25 @@ export async function POST(request: Request) {
     { role: 'user' as const, parts: [{ text: last.content }] },
   ];
 
-  const requestBody = {
+  const modelStep1 = resolveGeminiModel(onboardPrompt.params);
+  const modelPath1 = modelStep1.startsWith('models/') ? modelStep1 : `models/${modelStep1}`;
+  const url1 = `${API_BASE}/${modelPath1}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const requestBody: Record<string, unknown> = {
     contents,
     systemInstruction: {
-      parts: [{ text: buildOnboardSystemInstruction(draftJson) }],
+      parts: [{ text: onboardSystemText }],
     },
-    tools: [{ google_search: {} }],
   };
-
-  const modelPath = MODEL.startsWith('models/') ? MODEL : `models/${MODEL}`;
-  const url = `${API_BASE}/${modelPath}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  if (onboardPrompt.params.groundingEnabled) {
+    requestBody.tools = [{ google_search: {} }];
+  }
+  if (onboardPrompt.params.temperature != null) {
+    requestBody.generationConfig = { temperature: onboardPrompt.params.temperature };
+  }
 
   try {
-    // Step 1: Grounded free-text response (with Google Search)
-    const res1 = await fetch(url, {
+    const res1 = await fetch(url1, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -279,12 +261,28 @@ export async function POST(request: Request) {
       );
     }
 
-    // Step 2: Convert free text to structured JSON (no tools, JSON mode)
-    const structurizeBody = {
-      contents: [{ role: 'user' as const, parts: [{ text: buildStructurizePrompt(freeText, draftJson) }] }],
-      generationConfig: { responseMimeType: 'application/json' as const },
+    const structUserText = applyPromptPlaceholders(structPrompt.content, {
+      draftJsonSnippet: draftJson.trim().slice(0, MAX_STRUCT_DRAFT_CHARS) || '(empty)',
+      freeText,
+    });
+
+    const modelStep2 = resolveGeminiModel(structPrompt.params);
+    const modelPath2 = modelStep2.startsWith('models/') ? modelStep2 : `models/${modelStep2}`;
+    const url2 = `${API_BASE}/${modelPath2}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    const structGenerationConfig: { responseMimeType: string; temperature?: number } = {
+      responseMimeType: 'application/json',
     };
-    const res2 = await fetch(url, {
+    if (structPrompt.params.temperature != null) {
+      structGenerationConfig.temperature = structPrompt.params.temperature;
+    }
+
+    const structurizeBody: Record<string, unknown> = {
+      contents: [{ role: 'user' as const, parts: [{ text: structUserText }] }],
+      generationConfig: structGenerationConfig,
+    };
+
+    const res2 = await fetch(url2, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(structurizeBody),
@@ -296,7 +294,6 @@ export async function POST(request: Request) {
     if (!res2.ok) {
       const msg = json2.error?.message ?? res2.statusText;
       console.error('POST /api/chat/position-thesis-onboard: step 2 API error', res2.status, msg);
-      // Fallback: use free text as message when structurize fails
       return NextResponse.json({
         reply: freeText,
         readyForBuilder: false,

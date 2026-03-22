@@ -25,7 +25,8 @@ function buildThesisBuilderPlaceholders(
   ticker: string,
   companyName: string | null,
   thesisContext: string,
-  tickerLocked: boolean
+  tickerLocked: boolean,
+  portfolioContext: string
 ): Record<string, string> {
   const name = companyName ? `${companyName} (${ticker})` : ticker;
   const lockNote = tickerLocked
@@ -54,11 +55,17 @@ function buildThesisBuilderPlaceholders(
     ? `Current draft JSON:\n${thesisContext.slice(0, MAX_CONTEXT_CHARS)}`
     : 'No draft JSON yet; help the user start from their description.';
 
+  const pc = portfolioContext.trim();
+  const portfolioContextBlock = pc
+    ? `Portfolio / position context (facts about sleeve, band, and holdings — use as signals; do not invent motives or reasons they bought):\n${pc.slice(0, MAX_CONTEXT_CHARS)}`
+    : 'No portfolio link context.';
+
   return {
     name,
     lockNote,
     continuationNote,
     thesisContextBlock,
+    portfolioContextBlock,
   };
 }
 
@@ -100,6 +107,7 @@ export async function POST(request: Request) {
     companyName?: string | null;
     thesisContext?: string;
     tickerLocked?: boolean;
+    portfolioContext?: string;
   };
   try {
     body = await request.json();
@@ -138,6 +146,8 @@ export async function POST(request: Request) {
 
   const thesisContext =
     typeof body.thesisContext === 'string' ? body.thesisContext : '';
+  const portfolioContext =
+    typeof body.portfolioContext === 'string' ? body.portfolioContext : '';
   const companyName =
     typeof body.companyName === 'string' && body.companyName.trim()
       ? body.companyName.trim()
@@ -153,7 +163,7 @@ export async function POST(request: Request) {
 
   const systemInstruction = applyPromptPlaceholders(
     promptLoaded.content,
-    buildThesisBuilderPlaceholders(ticker, companyName, thesisContext, tickerLocked)
+    buildThesisBuilderPlaceholders(ticker, companyName, thesisContext, tickerLocked, portfolioContext)
   );
 
   const modelId = resolveGeminiModel(promptLoaded.params);

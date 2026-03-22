@@ -1139,8 +1139,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         onCreate={handleCreatePortfolio}
       />
 
-      {editingPositionMetadata && (
+      {editingPositionMetadata && selectedPortfolio?.id && (
         <EditPositionMetadataModal
+          portfolioId={selectedPortfolio.id}
           position={editingPositionMetadata}
           bands={selectedPortfolio?.bands ?? []}
           positionBandId={positionBandId}

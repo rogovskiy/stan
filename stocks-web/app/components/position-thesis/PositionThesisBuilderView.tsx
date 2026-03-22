@@ -14,7 +14,12 @@ import {
   computeSectionCompleteness,
   type ThesisSectionCompleteness,
 } from '@/app/lib/positionThesisCompleteness';
-import type { DriverRow, FailureRow, PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type {
+  AuthoringContextEntry,
+  DriverRow,
+  FailureRow,
+  PositionThesisPayload,
+} from '@/app/lib/types/positionThesis';
 
 const MAX_TABLE_ROWS = 12;
 
@@ -43,11 +48,14 @@ const FAILURE_TIMEFRAME_STANDARD = [
   '2+ years',
   'Gradual',
 ] as const;
-import type { ChatHistoryEntry } from '@/app/lib/thesisOnboardHandoff';
+import { useSearchParams } from 'next/navigation';
+import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
 import { mergePositionThesisPayload } from '@/app/lib/positionThesisMerge';
+import { scratchPositionThesisPayload } from '@/app/lib/positionThesisScratch';
 import {
   defaultPositionThesisPayload,
-  savePositionThesis,
+  newThesisDocumentId,
+  savePositionThesisByDocId,
 } from '@/app/lib/services/positionThesisService';
 import ThesisBuilderChat from './ThesisBuilderChat';
 
@@ -81,23 +89,40 @@ function AssumptionRangeFields({
   titleAccessory,
   stored,
   onCommit,
-  step,
-  min = 0,
   placeholders,
+  formFieldKey,
+  registerAssumptionRangeFlush,
 }: {
   title: string;
   hint?: string;
   titleAccessory?: ReactNode;
   stored: string;
   onCommit: (value: string) => void;
-  step: number;
-  min?: number;
   placeholders: [string, string];
+  formFieldKey: keyof PositionThesisPayload;
+  registerAssumptionRangeFlush: (flush: () => Record<string, string>) => () => void;
 }) {
-  const { low, high } = parseAssumptionRange(stored);
-  const push = (nextLow: string, nextHigh: string) => {
-    onCommit(formatAssumptionRange(nextLow, nextHigh));
+  const [draftLow, setDraftLow] = useState(() => parseAssumptionRange(stored).low);
+  const [draftHigh, setDraftHigh] = useState(() => parseAssumptionRange(stored).high);
+  const pairRef = useRef({ low: draftLow, high: draftHigh });
+  pairRef.current.low = draftLow;
+  pairRef.current.high = draftHigh;
+
+  useEffect(() => {
+    const p = parseAssumptionRange(stored);
+    setDraftLow(p.low);
+    setDraftHigh(p.high);
+  }, [stored]);
+
+  const commit = () => {
+    onCommit(formatAssumptionRange(draftLow, draftHigh));
   };
+
+  useEffect(() => {
+    return registerAssumptionRangeFlush(() => ({
+      [formFieldKey]: formatAssumptionRange(pairRef.current.low, pairRef.current.high),
+    }));
+  }, [formFieldKey, registerAssumptionRangeFlush]);
 
   return (
     <div>
@@ -114,25 +139,25 @@ function AssumptionRangeFields({
       {hint ? <p className="text-xs text-slate-500 mb-2">{hint}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         <input
-          type="number"
+          type="text"
           inputMode="decimal"
-          min={min}
-          step={step}
+          autoComplete="off"
           className={`${numberAssumptionInput} min-w-0 flex-1`}
           placeholder={placeholders[0]}
-          value={low}
-          onChange={(e) => push(e.target.value, high)}
+          value={draftLow}
+          onChange={(e) => setDraftLow(e.target.value)}
+          onBlur={commit}
         />
         <span className="shrink-0 text-sm text-slate-400">–</span>
         <input
-          type="number"
+          type="text"
           inputMode="decimal"
-          min={min}
-          step={step}
+          autoComplete="off"
           className={`${numberAssumptionInput} min-w-0 flex-1`}
           placeholder={placeholders[1]}
-          value={high}
-          onChange={(e) => push(low, e.target.value)}
+          value={draftHigh}
+          onChange={(e) => setDraftHigh(e.target.value)}
+          onBlur={commit}
         />
       </div>
     </div>
@@ -774,6 +799,19 @@ export interface PositionThesisBuilderViewProps {
   lockTickerInitially?: boolean;
   /** Chat history from new-thesis onboarding to carry over. */
   initialChatHistory?: ChatHistoryEntry[];
+  /** Firestore thesis document id (opaque or legacy `userId_TICKER`). Omit for first save → mint new id. */
+  thesisDocId?: string | null;
+  /** When user arrived from a portfolio position funnel. */
+  portfolioLink?: ThesisOnboardPortfolioLink | null;
+  /** String passed to thesis coach (portfolio band, sizing, dates). */
+  portfolioContextForCoach?: string;
+  /** Latest authoring snapshots from Firestore. */
+  initialAuthoringHistory?: AuthoringContextEntry[];
+  /** After first save mints or confirms doc id, parent updates URL. */
+  onThesisDocIdCommitted?: (
+    docId: string,
+    portfolioForUrl?: { portfolioId: string; positionId: string }
+  ) => void;
 }
 
 export default function PositionThesisBuilderView({
@@ -785,14 +823,50 @@ export default function PositionThesisBuilderView({
   onTickerCommitted,
   lockTickerInitially,
   initialChatHistory,
+  thesisDocId: thesisDocIdProp,
+  portfolioLink,
+  portfolioContextForCoach,
+  initialAuthoringHistory,
+  onThesisDocIdCommitted,
 }: PositionThesisBuilderViewProps) {
   const routeTicker = ticker.toUpperCase();
   const displayTicker = routeTicker;
+  const searchParams = useSearchParams();
+  /** Prefer parent state; fall back to query params so PUT/link works if state hydration lags. */
+  const resolvedPortfolioLink = useMemo((): ThesisOnboardPortfolioLink | null => {
+    if (
+      portfolioLink &&
+      typeof portfolioLink.portfolioId === 'string' &&
+      portfolioLink.portfolioId.trim() &&
+      typeof portfolioLink.positionId === 'string' &&
+      portfolioLink.positionId.trim()
+    ) {
+      return {
+        portfolioId: portfolioLink.portfolioId.trim(),
+        positionId: portfolioLink.positionId.trim(),
+      };
+    }
+    const pid = searchParams.get('portfolioId');
+    const posid = searchParams.get('positionId');
+    if (pid?.trim() && posid?.trim()) {
+      return { portfolioId: pid.trim(), positionId: posid.trim() };
+    }
+    return null;
+  }, [portfolioLink, searchParams]);
+
+  const [resolvedThesisDocId, setResolvedThesisDocId] = useState<string | null>(
+    thesisDocIdProp ?? null
+  );
+  useEffect(() => {
+    setResolvedThesisDocId(thesisDocIdProp ?? null);
+  }, [thesisDocIdProp]);
 
   const [form, setForm] = useState<PositionThesisPayload>(() =>
-    initialPayload === null || initialPayload === undefined
+    initialPayload === undefined
       ? defaultPositionThesisPayload(displayTicker)
-      : initialPayload
+      : initialPayload === null
+        ? scratchPositionThesisPayload(displayTicker)
+        : initialPayload
   );
   const [tickerLocked, setTickerLocked] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -801,6 +875,15 @@ export default function PositionThesisBuilderView({
   const [chatAutoSend, setChatAutoSend] = useState<{ nonce: number; text: string } | null>(null);
   const [editingDriverIndex, setEditingDriverIndex] = useState<number | null>(null);
   const [editingFailureIndex, setEditingFailureIndex] = useState<number | null>(null);
+  const [authoringShown, setAuthoringShown] = useState(true);
+
+  const assumptionRangeFlushersRef = useRef<Array<() => Record<string, string>>>([]);
+  const registerAssumptionRangeFlush = useCallback((flush: () => Record<string, string>) => {
+    assumptionRangeFlushersRef.current.push(flush);
+    return () => {
+      assumptionRangeFlushersRef.current = assumptionRangeFlushersRef.current.filter((f) => f !== flush);
+    };
+  }, []);
 
   const requestSectionChatHelp = useCallback((text: string) => {
     setChatAutoSend({ nonce: Date.now(), text });
@@ -822,41 +905,102 @@ export default function PositionThesisBuilderView({
 
   const sectionCompleteness = useMemo(() => computeSectionCompleteness(form), [form]);
 
-  const persist = useCallback(
-    async (status: 'draft' | 'published') => {
+  const persist = useCallback(async () => {
       if (!userId) {
         setSaveState('error');
-        setSaveMessage('Sign in to save your thesis.');
+        setSaveMessage('Sign in to publish your thesis.');
         return;
       }
       const saveSymbol = form.ticker.trim().toUpperCase();
       if (!saveSymbol) {
         setSaveState('error');
-        setSaveMessage('Set a ticker before saving.');
+        setSaveMessage('Set a ticker before publishing.');
         return;
       }
       setSaveState('saving');
       setSaveMessage(null);
       try {
-        const payload = { ...form, ticker: saveSymbol };
-        await savePositionThesis(userId, saveSymbol, payload, status);
+        const rangeOverlay: Record<string, string> = {};
+        for (const flush of assumptionRangeFlushersRef.current) {
+          Object.assign(rangeOverlay, flush());
+        }
+        const payload = { ...form, ...rangeOverlay, ticker: saveSymbol };
+        let docId = resolvedThesisDocId;
+        if (!docId) {
+          docId = newThesisDocumentId();
+          setResolvedThesisDocId(docId);
+          onThesisDocIdCommitted?.(
+            docId,
+            resolvedPortfolioLink
+              ? {
+                  portfolioId: resolvedPortfolioLink.portfolioId,
+                  positionId: resolvedPortfolioLink.positionId,
+                }
+              : undefined
+          );
+        }
+
+        const authoringEntry: AuthoringContextEntry = {
+          source: resolvedPortfolioLink ? 'portfolio_position' : 'standalone',
+          capturedAt: new Date().toISOString(),
+          portfolioId: resolvedPortfolioLink?.portfolioId,
+          positionId: resolvedPortfolioLink?.positionId,
+          retroactive: Boolean(resolvedPortfolioLink),
+          coachContextSummary: portfolioContextForCoach?.trim().slice(0, 2000),
+        };
+
+        await savePositionThesisByDocId(userId, docId, saveSymbol, payload, 'published', {
+          portfolioId: resolvedPortfolioLink?.portfolioId ?? null,
+          positionId: resolvedPortfolioLink?.positionId ?? null,
+          authoringEntry,
+        });
         setForm(payload);
         setTickerLocked(true);
         setSaveState('saved');
-        setSaveMessage(status === 'draft' ? 'Draft saved.' : 'Thesis published.');
+        let msg = 'Thesis published.';
+        if (resolvedPortfolioLink) {
+          try {
+            const putRes = await fetch(
+              `/api/portfolios/${encodeURIComponent(resolvedPortfolioLink.portfolioId)}/positions/${encodeURIComponent(resolvedPortfolioLink.positionId)}`,
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ thesisId: docId }),
+              }
+            );
+            const putJson = (await putRes.json()) as { success?: boolean; error?: string };
+            if (!putRes.ok || putJson.success === false) {
+              msg += ' (could not link to portfolio position.)';
+            } else {
+              msg += ' Linked to portfolio position.';
+            }
+          } catch {
+            msg += ' (could not link to portfolio position.)';
+          }
+        }
+        setSaveMessage(msg);
         if (saveSymbol !== routeTicker && onTickerCommitted) {
           onTickerCommitted(saveSymbol);
         }
         window.setTimeout(() => {
           setSaveState('idle');
           setSaveMessage(null);
-        }, 3500);
+        }, 4500);
       } catch (e) {
         setSaveState('error');
-        setSaveMessage(e instanceof Error ? e.message : 'Save failed.');
+        setSaveMessage(e instanceof Error ? e.message : 'Publish failed.');
       }
     },
-    [userId, routeTicker, form, onTickerCommitted]
+    [
+      userId,
+      routeTicker,
+      form,
+      onTickerCommitted,
+      resolvedThesisDocId,
+      resolvedPortfolioLink,
+      portfolioContextForCoach,
+      onThesisDocIdCommitted,
+    ]
   );
 
   const handleFormPatch = useCallback(
@@ -881,31 +1025,31 @@ export default function PositionThesisBuilderView({
             <h1 className="text-3xl font-bold tracking-tight">Build Thesis — {titleName}</h1>
             <p className="text-slate-600 mt-2 max-w-3xl">
               Set or confirm the ticker, then use the assistant to describe your thesis in plain language
-              and fill sections collaboratively. Save locks the ticker. The system will later score
+              and fill sections collaboratively. Publishing locks the ticker. The system will later score
               this thesis against live market conditions.
             </p>
+            {resolvedPortfolioLink && portfolioContextForCoach?.trim() && (
+              <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-sm text-sky-950">
+                <p className="font-semibold text-sky-900">Portfolio context</p>
+                <pre className="mt-2 whitespace-pre-wrap font-sans text-sky-900/90 text-[13px] leading-relaxed">
+                  {portfolioContextForCoach.trim()}
+                </pre>
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-end gap-2">
             <div className="flex gap-3">
               <button
                 type="button"
                 disabled={loadingRemote}
-                onClick={() => persist('draft')}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium shadow-sm disabled:opacity-50"
-              >
-                Save Draft
-              </button>
-              <button
-                type="button"
-                disabled={loadingRemote}
-                onClick={() => persist('published')}
+                onClick={() => void persist()}
                 className="rounded-2xl bg-slate-900 text-white px-4 py-2 text-sm font-medium shadow-sm disabled:opacity-50"
               >
                 Publish Thesis
               </button>
             </div>
             {!userId && (
-              <p className="text-xs text-amber-700 max-w-xs text-right">Sign in to save to Firebase.</p>
+              <p className="text-xs text-amber-700 max-w-xs text-right">Sign in to publish to Firebase.</p>
             )}
             {loadError && <p className="text-xs text-red-600 max-w-xs text-right">{loadError}</p>}
             {saveMessage && (
@@ -914,7 +1058,7 @@ export default function PositionThesisBuilderView({
                   saveState === 'error' ? 'text-red-600' : 'text-emerald-700'
                 }`}
               >
-                {saveState === 'saving' ? 'Saving…' : saveMessage}
+                {saveState === 'saving' ? 'Publishing…' : saveMessage}
               </p>
             )}
             {patchHint && (
@@ -926,6 +1070,34 @@ export default function PositionThesisBuilderView({
         {loadingRemote && (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
             Loading saved thesis…
+          </div>
+        )}
+
+        {!loadingRemote && initialAuthoringHistory && initialAuthoringHistory.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between font-semibold text-slate-800"
+              onClick={() => setAuthoringShown((s) => !s)}
+            >
+              Authoring context
+              <span className="text-slate-500">{authoringShown ? '▼' : '▶'}</span>
+            </button>
+            {authoringShown && (
+              <ul className="mt-3 space-y-3 text-slate-700">
+                {initialAuthoringHistory.slice(0, 8).map((a, i) => (
+                  <li key={`${a.capturedAt}-${i}`} className="border-b border-slate-100 pb-3 last:border-0">
+                    <p className="text-xs text-slate-500">
+                      {a.capturedAt} · {a.source}
+                      {a.retroactive ? ' · retroactive' : ''}
+                    </p>
+                    {a.coachContextSummary && (
+                      <pre className="mt-1 whitespace-pre-wrap font-sans text-[13px]">{a.coachContextSummary}</pre>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -958,7 +1130,7 @@ export default function PositionThesisBuilderView({
                       aria-readonly={tickerLocked}
                     />
                     {tickerLocked && (
-                      <p className="text-[11px] text-slate-500 mt-1">Ticker is fixed after save.</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Ticker is fixed after publish.</p>
                     )}
                   </div>
                   <div>
@@ -1064,9 +1236,9 @@ export default function PositionThesisBuilderView({
                             [BASE_RETURN_ASSUMPTION_KEYS.dividendKey]: value,
                           }))
                         }
-                        step={0.1}
-                        min={0}
                         placeholders={['Low %', 'High %']}
+                        formFieldKey={BASE_RETURN_ASSUMPTION_KEYS.dividendKey}
+                        registerAssumptionRangeFlush={registerAssumptionRangeFlush}
                       />
                       <AssumptionRangeFields
                         title="Growth (% per year)"
@@ -1077,9 +1249,9 @@ export default function PositionThesisBuilderView({
                             [BASE_RETURN_ASSUMPTION_KEYS.growthKey]: value,
                           }))
                         }
-                        step={0.1}
-                        min={0}
                         placeholders={['Low %', 'High %']}
+                        formFieldKey={BASE_RETURN_ASSUMPTION_KEYS.growthKey}
+                        registerAssumptionRangeFlush={registerAssumptionRangeFlush}
                       />
                       <AssumptionRangeFields
                         title="Valuation multiple (×)"
@@ -1112,9 +1284,9 @@ export default function PositionThesisBuilderView({
                             [BASE_RETURN_ASSUMPTION_KEYS.multipleKey]: value,
                           }))
                         }
-                        step={0.5}
-                        min={0}
                         placeholders={['Low ×', 'High ×']}
+                        formFieldKey={BASE_RETURN_ASSUMPTION_KEYS.multipleKey}
+                        registerAssumptionRangeFlush={registerAssumptionRangeFlush}
                       />
                     </div>
                   </div>
@@ -1293,7 +1465,7 @@ export default function PositionThesisBuilderView({
                   <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
                     <span
                       className={`${badge} shrink-0 bg-slate-100 text-slate-600 border-slate-200`}
-                      title="You can save or publish without filling this section."
+                      title="You can publish without filling this section."
                     >
                       Optional
                     </span>
@@ -1359,6 +1531,7 @@ export default function PositionThesisBuilderView({
                 onFormPatch={handleFormPatch}
                 initialMessages={initialChatHistory}
                 autoSendMessage={chatAutoSend}
+                portfolioContext={portfolioContextForCoach ?? ''}
               />
             </div>
           </div>

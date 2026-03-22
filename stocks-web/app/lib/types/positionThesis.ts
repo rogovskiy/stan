@@ -1,6 +1,6 @@
 /**
  * Position thesis builder — Firestore payload (see positionThesisService).
- * Collection: position_theses, doc id: `${userId}_${TICKER}`.
+ * Collection: `position_theses`. Legacy doc id: `${userId}_${TICKER}`; new theses use opaque UUID ids.
  */
 
 export interface DriverRow {
@@ -53,6 +53,27 @@ export interface PositionThesisPayload {
 
 export type PositionThesisStatus = 'draft' | 'published';
 
+/** Provenance snapshot stored on the thesis document (not inside payload). */
+export interface AuthoringContextEntry {
+  source: 'standalone' | 'portfolio_position' | 'onboard_handoff';
+  capturedAt: string;
+  portfolioId?: string;
+  positionId?: string;
+  portfolioName?: string;
+  retroactive?: boolean;
+  coachContextSummary?: string;
+  positionSnapshot?: {
+    quantity?: number;
+    purchasePrice?: number;
+    purchaseDate?: string;
+    bandId?: string | null;
+    bandName?: string;
+    bandSummary?: string;
+    buyDateMin?: string;
+    buyDateMax?: string;
+  };
+}
+
 export interface PositionThesisFirestoreDoc {
   userId: string;
   ticker: string;
@@ -61,4 +82,9 @@ export interface PositionThesisFirestoreDoc {
   createdAt?: unknown;
   updatedAt?: unknown;
   publishedAt?: unknown;
+  /** Denormalized for queries / rules (optional). */
+  portfolioId?: string | null;
+  positionId?: string | null;
+  /** Capped append-only log of save-time context (newest first). */
+  authoringHistory?: AuthoringContextEntry[];
 }

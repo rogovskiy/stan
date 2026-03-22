@@ -1,15 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
-import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { AuthoringContextEntry, PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import {
+  buildPortfolioPositionUserFacts,
+  buildPortfolioThesisContext,
+  buyDateRangeFromTransactions,
+  resolveBandForPosition,
+  type PortfolioPositionUserFact,
+} from '@/app/lib/portfolioThesisContext';
 import { mergePositionThesisPayload, sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
 import {
+  newThesisDocumentId,
+  savePositionThesisByDocId,
   scratchPositionThesisPayload,
-  savePositionThesis,
 } from '@/app/lib/services/positionThesisService';
+import type { Portfolio } from '@/app/lib/services/portfolioService';
 import { writeThesisOnboardHandoff } from '@/app/lib/thesisOnboardHandoff';
 import { useAuth } from '@/app/lib/authContext';
 
@@ -38,6 +47,7 @@ function coreFieldsComplete(d: PositionThesisPayload): boolean {
 
 export default function NewThesisOnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const [draft, setDraft] = useState<PositionThesisPayload>(() => scratchPositionThesisPayload());
   const [companyName, setCompanyName] = useState<string | null>(null);
@@ -48,8 +58,111 @@ export default function NewThesisOnboardingPage() {
   const [continueError, setContinueError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [aiReadyForBuilder, setAiReadyForBuilder] = useState(false);
+  const [portfolioContext, setPortfolioContext] = useState('');
+  const [portfolioLink, setPortfolioLink] = useState<{
+    portfolioId: string;
+    positionId: string;
+  } | null>(null);
+  const [portfolioBanner, setPortfolioBanner] = useState<string | null>(null);
+  const [portfolioUserFacts, setPortfolioUserFacts] = useState<PortfolioPositionUserFact[] | null>(
+    null
+  );
+  const [portfolioLoadError, setPortfolioLoadError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const portfolioIdParam = searchParams.get('portfolioId');
+  const positionIdParam = searchParams.get('positionId');
+  const tickerParam = searchParams.get('ticker');
+
+  useEffect(() => {
+    if (!portfolioIdParam || !positionIdParam) {
+      setPortfolioContext('');
+      setPortfolioLink(null);
+      setPortfolioBanner(null);
+      setPortfolioUserFacts(null);
+      setPortfolioLoadError(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/portfolios/${encodeURIComponent(portfolioIdParam)}`);
+        const json = (await res.json()) as { success?: boolean; data?: Portfolio; error?: string };
+        if (cancelled) return;
+        if (!json.success || !json.data) {
+          setPortfolioUserFacts(null);
+          setPortfolioLoadError(json.error || 'Could not load portfolio');
+          return;
+        }
+        const portfolio = json.data;
+        const pos = portfolio.positions?.find((p) => p.id === positionIdParam);
+        if (!pos) {
+          setPortfolioUserFacts(null);
+          setPortfolioLoadError('Position not found in this portfolio');
+          return;
+        }
+        const t = tickerParam?.trim().toUpperCase() || pos.ticker.toUpperCase();
+        if (tickerParam && pos.ticker.toUpperCase() !== tickerParam.trim().toUpperCase()) {
+          setPortfolioUserFacts(null);
+          setPortfolioLoadError('Ticker does not match this position');
+          return;
+        }
+        setPortfolioLink({ portfolioId: portfolioIdParam, positionId: positionIdParam });
+        setDraft((d) => ({ ...d, ticker: t }));
+        setPortfolioBanner(
+          `Retroactive thesis for ${pos.ticker} in “${portfolio.name}”. Chat through role, horizon, and statement; your risk band and position sizing are sent to the assistant as context. When you’re ready, open the full builder to refine.`
+        );
+        let txRes: Response | null = null;
+        try {
+          txRes = await fetch(
+            `/api/portfolios/${encodeURIComponent(portfolioIdParam)}/transactions?ticker=${encodeURIComponent(pos.ticker)}`
+          );
+        } catch {
+          txRes = null;
+        }
+        let buyMin: string | undefined;
+        let buyMax: string | undefined;
+        if (txRes?.ok) {
+          const txJson = (await txRes.json()) as {
+            success?: boolean;
+            data?: import('@/app/lib/services/portfolioService').Transaction[];
+          };
+          const txs = Array.isArray(txJson.data) ? txJson.data : [];
+          const range = buyDateRangeFromTransactions(txs, pos.ticker.toUpperCase());
+          buyMin = range.buyDateMin;
+          buyMax = range.buyDateMax;
+        }
+        const band = resolveBandForPosition(portfolio, pos);
+        const ctx = buildPortfolioThesisContext({
+          portfolio,
+          position: pos,
+          band,
+          buyDateMin: buyMin,
+          buyDateMax: buyMax,
+          retroactive: true,
+        });
+        setPortfolioContext(ctx);
+        setPortfolioUserFacts(
+          buildPortfolioPositionUserFacts({
+            position: pos,
+            band,
+            buyDateMin: buyMin,
+            buyDateMax: buyMax,
+          })
+        );
+        setPortfolioLoadError(null);
+      } catch (e) {
+        if (!cancelled) {
+          setPortfolioUserFacts(null);
+          setPortfolioLoadError(e instanceof Error ? e.message : 'Load failed');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioIdParam, positionIdParam, tickerParam]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -113,6 +226,7 @@ export default function NewThesisOnboardingPage() {
         body: JSON.stringify({
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
           draftJson: serializeDraft(draft),
+          portfolioContext: portfolioContext.trim() || undefined,
         }),
       });
       const data = (await res.json()) as {
@@ -145,7 +259,7 @@ export default function NewThesisOnboardingPage() {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, messages, draft, onPatch]);
+  }, [input, loading, messages, draft, onPatch, portfolioContext]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -165,13 +279,39 @@ export default function NewThesisOnboardingPage() {
     const t = draft.ticker.trim().toUpperCase();
     const fullPayload = { ...draft, ticker: t };
     const chatHistory = messages.map((m) => ({ role: m.role, content: m.content }));
+    const thesisDocId = newThesisDocumentId();
+    const authoringEntry: AuthoringContextEntry = {
+      source: portfolioLink ? 'portfolio_position' : 'onboard_handoff',
+      capturedAt: new Date().toISOString(),
+      portfolioId: portfolioLink?.portfolioId,
+      positionId: portfolioLink?.positionId,
+      retroactive: Boolean(portfolioLink),
+      coachContextSummary: portfolioContext.trim().slice(0, 2000),
+    };
     setSaving(true);
     try {
       if (user?.uid) {
-        await savePositionThesis(user.uid, t, fullPayload, 'draft');
+        await savePositionThesisByDocId(user.uid, thesisDocId, t, fullPayload, 'draft', {
+          portfolioId: portfolioLink?.portfolioId ?? null,
+          positionId: portfolioLink?.positionId ?? null,
+          authoringEntry,
+        });
       }
-      writeThesisOnboardHandoff({ ticker: t, payload: fullPayload, chatHistory });
-      router.push(`/${t}/thesis-builder`);
+      writeThesisOnboardHandoff({
+        ticker: t,
+        payload: fullPayload,
+        chatHistory,
+        thesisDocId,
+        portfolioLink: portfolioLink ?? undefined,
+        portfolioContextSummary: portfolioContext.trim() || undefined,
+      });
+      const q = new URLSearchParams();
+      q.set('thesisDocId', thesisDocId);
+      if (portfolioLink) {
+        q.set('portfolioId', portfolioLink.portfolioId);
+        q.set('positionId', portfolioLink.positionId);
+      }
+      router.push(`/${t}/thesis-builder?${q.toString()}`);
     } catch (e) {
       setContinueError(e instanceof Error ? e.message : 'Could not save');
     } finally {
@@ -198,7 +338,11 @@ export default function NewThesisOnboardingPage() {
             {continueError}
           </div>
         )}
-
+        {portfolioLoadError && (
+          <div className="mb-3 rounded-lg border border-red-200/90 bg-red-50/90 px-3 py-2.5 text-sm text-red-900 shadow-sm">
+            {portfolioLoadError}
+          </div>
+        )}
         <div className="flex flex-col flex-1 min-h-0 rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/60 overflow-hidden">
           <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-gradient-to-br from-slate-50 via-white to-stone-50/60 border-b border-slate-100">
             <div className="min-w-0">
@@ -206,9 +350,30 @@ export default function NewThesisOnboardingPage() {
                 Thesis assistant
               </h2>
               <p className="text-sm sm:text-[15px] text-slate-600 mt-1 leading-relaxed">
-                New position thesis — chat through ticker, role, horizon, and statement, then open the
-                full builder to refine.
+                {portfolioBanner && !portfolioLoadError ? (
+                  portfolioBanner
+                ) : (
+                  <>
+                    New position thesis — chat through ticker, role, horizon, and statement, then open
+                    the full builder to refine.
+                  </>
+                )}
               </p>
+              {portfolioUserFacts && portfolioUserFacts.length > 0 && !portfolioLoadError && (
+                <div className="mt-3 border-t border-slate-200/90 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                    Position facts
+                  </p>
+                  <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[minmax(7rem,auto)_1fr]">
+                    {portfolioUserFacts.map((row) => (
+                      <Fragment key={row.label}>
+                        <dt className="text-slate-500">{row.label}</dt>
+                        <dd className="text-slate-800 min-w-0 break-words">{row.value}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </div>
+              )}
             </div>
           </div>
 

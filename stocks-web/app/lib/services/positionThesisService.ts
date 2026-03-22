@@ -5,7 +5,13 @@
  * (and the same on create with request.resource.data.userId).
  */
 
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  type DocumentSnapshot,
+} from 'firebase/firestore';
 import { db } from '../firebase';
 import {
   isFailureRow,
@@ -14,6 +20,7 @@ import {
 } from '../positionThesisMerge';
 import { scratchPositionThesisPayload } from '../positionThesisScratch';
 import type {
+  AuthoringContextEntry,
   DriverRow,
   PositionThesisPayload,
   PositionThesisStatus,
@@ -24,6 +31,46 @@ const COLLECTION = 'position_theses';
 
 export function positionThesisDocId(userId: string, ticker: string): string {
   return `${userId}_${ticker.toUpperCase()}`;
+}
+
+/** New thesis documents use opaque ids (UUID v4). */
+export function newThesisDocumentId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+const AUTHORING_HISTORY_MAX = 25;
+
+function normalizeAuthoringHistory(
+  raw: unknown
+): AuthoringContextEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: AuthoringContextEntry[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const e = r as Record<string, unknown>;
+    if (typeof e.source !== 'string' || typeof e.capturedAt !== 'string') continue;
+    if (!['standalone', 'portfolio_position', 'onboard_handoff'].includes(e.source)) continue;
+    out.push(e as unknown as AuthoringContextEntry);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Firestore rejects `undefined`; drop keys with undefined values in JSON-like authoring blobs. */
+function stripUndefinedFromJsonNode<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedFromJsonNode(item)) as unknown as T;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    out[k] = stripUndefinedFromJsonNode(v);
+  }
+  return out as T;
 }
 
 export { scratchPositionThesisPayload };
@@ -121,7 +168,8 @@ export function coercePositionThesisPayload(
 
   for (const key of POSITION_THESIS_MERGE_STRING_KEYS) {
     const v = r[key as string];
-    if (typeof v === 'string') (out as Record<string, string>)[key] = v;
+    if (typeof v === 'string')
+      (out as unknown as Record<string, string>)[key as string] = v;
   }
 
   if (Array.isArray(r.drivers)) {
@@ -144,6 +192,32 @@ export interface LoadedPositionThesis {
   createdAt?: string;
   updatedAt?: string;
   publishedAt?: string;
+  authoringHistory?: AuthoringContextEntry[];
+  portfolioId?: string | null;
+  positionId?: string | null;
+}
+
+function loadedFromSnap(snap: DocumentSnapshot, tickerHint: string): LoadedPositionThesis | null {
+  if (!snap.exists()) return null;
+  const data = snap.data() as Partial<PositionThesisFirestoreDoc>;
+  if (data.userId == null) return null;
+  const rawPayload = data.payload;
+  if (!rawPayload || typeof rawPayload !== 'object') return null;
+
+  const coerced = coercePositionThesisPayload(rawPayload, tickerHint);
+  const t = (coerced.ticker || tickerHint).toUpperCase();
+
+  return {
+    id: snap.id,
+    status: data.status === 'published' ? 'published' : 'draft',
+    payload: { ...coerced, ticker: t },
+    createdAt: toIso(data.createdAt),
+    updatedAt: toIso(data.updatedAt),
+    publishedAt: toIso(data.publishedAt),
+    authoringHistory: normalizeAuthoringHistory(data.authoringHistory),
+    portfolioId: data.portfolioId ?? null,
+    positionId: data.positionId ?? null,
+  };
 }
 
 export async function getPositionThesis(
@@ -156,30 +230,49 @@ export async function getPositionThesis(
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<PositionThesisFirestoreDoc>;
-  const rawPayload = data.payload;
-  if (!rawPayload || typeof rawPayload !== 'object') return null;
+  if (data.userId !== userId) return null;
 
-  const coerced = coercePositionThesisPayload(rawPayload, ticker);
-
-  return {
-    id: snap.id,
-    status: data.status === 'published' ? 'published' : 'draft',
-    payload: { ...coerced, ticker: (coerced.ticker || ticker).toUpperCase() },
-    createdAt: toIso(data.createdAt),
-    updatedAt: toIso(data.updatedAt),
-    publishedAt: toIso(data.publishedAt),
-  };
+  return loadedFromSnap(snap, ticker);
 }
 
-export async function savePositionThesis(
+export async function getPositionThesisByDocId(
   userId: string,
+  docId: string
+): Promise<LoadedPositionThesis | null> {
+  if (!db) throw new Error('Firestore not initialized');
+  if (!docId.trim()) return null;
+  const ref = doc(db, COLLECTION, docId.trim());
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+
+  const data = snap.data() as Partial<PositionThesisFirestoreDoc>;
+  if (data.userId !== userId) return null;
+
+  const hint =
+    typeof data.ticker === 'string' && data.ticker.trim()
+      ? data.ticker.trim()
+      : '';
+  return loadedFromSnap(snap, hint || 'UNKNOWN');
+}
+
+
+export interface SavePositionThesisOptions {
+  portfolioId?: string | null;
+  positionId?: string | null;
+  authoringEntry?: AuthoringContextEntry | null;
+}
+
+export async function savePositionThesisByDocId(
+  userId: string,
+  docId: string,
   ticker: string,
   payload: PositionThesisPayload,
-  status: PositionThesisStatus
+  status: PositionThesisStatus,
+  options?: SavePositionThesisOptions
 ): Promise<void> {
   if (!db) throw new Error('Firestore not initialized');
   const upper = ticker.toUpperCase();
-  const ref = doc(db, COLLECTION, positionThesisDocId(userId, ticker));
+  const ref = doc(db, COLLECTION, docId);
   const existing = await getDoc(ref);
 
   const mergedPayload: PositionThesisPayload = {
@@ -195,6 +288,23 @@ export async function savePositionThesis(
     updatedAt: serverTimestamp(),
   };
 
+  if (options?.portfolioId !== undefined) {
+    docData.portfolioId = options.portfolioId ?? null;
+  }
+  if (options?.positionId !== undefined) {
+    docData.positionId = options.positionId ?? null;
+  }
+
+  if (options?.authoringEntry) {
+    const prev = normalizeAuthoringHistory(
+      (existing.data() as Partial<PositionThesisFirestoreDoc>)?.authoringHistory
+    );
+    const next = [options.authoringEntry, ...(prev ?? [])].slice(0, AUTHORING_HISTORY_MAX);
+    docData.authoringHistory = next.map((entry) =>
+      stripUndefinedFromJsonNode(entry)
+    ) as AuthoringContextEntry[];
+  }
+
   if (!existing.exists()) {
     docData.createdAt = serverTimestamp();
   }
@@ -204,4 +314,22 @@ export async function savePositionThesis(
   }
 
   await setDoc(ref, docData, { merge: true });
+}
+
+/** Legacy single-doc-per-ticker save path (`userId_TICKER`). */
+export async function savePositionThesis(
+  userId: string,
+  ticker: string,
+  payload: PositionThesisPayload,
+  status: PositionThesisStatus,
+  options?: SavePositionThesisOptions
+): Promise<void> {
+  return savePositionThesisByDocId(
+    userId,
+    positionThesisDocId(userId, ticker),
+    ticker,
+    payload,
+    status,
+    options
+  );
 }

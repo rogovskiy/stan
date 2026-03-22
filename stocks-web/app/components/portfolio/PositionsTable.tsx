@@ -179,7 +179,52 @@ export default function PositionsTable({
                         </td>
                         <td className="py-3 px-4 text-right text-gray-700" />
                         <td className="py-3 px-4 text-gray-700">
-                          {position.thesisId ? 'Linked' : ''}
+                          {position.thesisId ? (
+                            <button
+                              type="button"
+                              title="Open thesis in builder"
+                              aria-label="Open thesis in builder"
+                              onClick={() => {
+                                const q = new URLSearchParams();
+                                q.set('thesisDocId', position.thesisId!);
+                                if (selectedPortfolio.id && position.id) {
+                                  q.set('portfolioId', selectedPortfolio.id);
+                                  q.set('positionId', position.id);
+                                }
+                                router.push(
+                                  `/${position.ticker}/thesis-builder?${q.toString()}`
+                                );
+                              }}
+                              className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors inline-flex"
+                            >
+                              <svg
+                                className="w-5 h-5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                                aria-hidden
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                              </svg>
+                            </button>
+                          ) : selectedPortfolio.id && position.id ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                router.push(
+                                  `/new-thesis?portfolioId=${encodeURIComponent(selectedPortfolio.id!)}&positionId=${encodeURIComponent(position.id!)}&ticker=${encodeURIComponent(position.ticker)}`
+                                )
+                              }
+                              className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              Add thesis
+                            </button>
+                          ) : null}
                         </td>
                         <td className="py-3 px-4 text-right text-gray-700">
                           {totalValue != null
@@ -254,29 +299,6 @@ export default function PositionsTable({
                                 />
                               </svg>
                             </button>
-                            {position.thesisId && (
-                              <button
-                                type="button"
-                                onClick={() => router.push(`/${position.ticker}/thesis`)}
-                                title="View thesis"
-                                aria-label="View thesis"
-                                className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                              >
-                                <svg
-                                  className="w-4 h-4"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                                  />
-                                </svg>
-                              </button>
-                            )}
                           </div>
                         </td>
                       </tr>

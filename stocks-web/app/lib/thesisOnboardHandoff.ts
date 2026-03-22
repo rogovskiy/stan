@@ -7,10 +7,20 @@ export interface ChatHistoryEntry {
   content: string;
 }
 
+export interface ThesisOnboardPortfolioLink {
+  portfolioId: string;
+  positionId: string;
+}
+
 export interface ThesisOnboardHandoff {
   ticker: string;
   payload: PositionThesisPayload;
   chatHistory?: ChatHistoryEntry[];
+  /** Opaque Firestore thesis doc id when using multi-thesis storage. */
+  thesisDocId?: string;
+  portfolioLink?: ThesisOnboardPortfolioLink;
+  /** Same string passed to coach APIs (optional echo for builder). */
+  portfolioContextSummary?: string;
 }
 
 export function writeThesisOnboardHandoff(data: ThesisOnboardHandoff): void {
@@ -22,10 +32,16 @@ export function writeThesisOnboardHandoff(data: ThesisOnboardHandoff): void {
   }
 }
 
-/** Returns payload and chat history if stored ticker matches route ticker, then clears storage (one-shot). */
+/** Returns handoff if stored ticker matches route ticker, then clears storage (one-shot). */
 export function takeThesisOnboardHandoff(
   routeTicker: string
-): { payload: PositionThesisPayload; chatHistory: ChatHistoryEntry[] } | null {
+): {
+  payload: PositionThesisPayload;
+  chatHistory: ChatHistoryEntry[];
+  thesisDocId?: string;
+  portfolioLink?: ThesisOnboardPortfolioLink;
+  portfolioContextSummary?: string;
+} | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = sessionStorage.getItem(KEY);
@@ -42,7 +58,19 @@ export function takeThesisOnboardHandoff(
             typeof e.content === 'string'
         )
       : [];
-    return { payload: parsed.payload, chatHistory };
+    return {
+      payload: parsed.payload,
+      chatHistory,
+      thesisDocId: typeof parsed.thesisDocId === 'string' ? parsed.thesisDocId : undefined,
+      portfolioLink:
+        parsed.portfolioLink &&
+        typeof parsed.portfolioLink.portfolioId === 'string' &&
+        typeof parsed.portfolioLink.positionId === 'string'
+          ? parsed.portfolioLink
+          : undefined,
+      portfolioContextSummary:
+        typeof parsed.portfolioContextSummary === 'string' ? parsed.portfolioContextSummary : undefined,
+    };
   } catch {
     return null;
   }

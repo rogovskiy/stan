@@ -45,6 +45,7 @@ export default function ThesisBuilderChat({
   onFormPatch,
   initialMessages = [],
   autoSendMessage = null,
+  portfolioContext = '',
 }: {
   /** Effective symbol for the coach (usually form.ticker). */
   apiTicker: string;
@@ -56,6 +57,8 @@ export default function ThesisBuilderChat({
   initialMessages?: Array<{ role: string; content: string }>;
   /** When `nonce` changes, send `text` as a user message (e.g. section help from the form). */
   autoSendMessage?: { nonce: number; text: string } | null;
+  /** Portfolio / position context for the coach API. */
+  portfolioContext?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.length > 0 ? toChatMessages(initialMessages) : []
@@ -95,6 +98,7 @@ export default function ThesisBuilderChat({
             companyName: companyName ?? null,
             thesisContext: ctx,
             tickerLocked,
+            portfolioContext: portfolioContext.trim() || undefined,
             messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
           }),
         });
@@ -125,7 +129,7 @@ export default function ThesisBuilderChat({
         setLoading(false);
       }
     },
-    [apiTicker, companyName, form, tickerLocked, onFormPatch]
+    [apiTicker, companyName, form, tickerLocked, onFormPatch, portfolioContext]
   );
 
   const runFactCheck = useCallback(async () => {

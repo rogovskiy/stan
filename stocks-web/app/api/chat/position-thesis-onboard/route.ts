@@ -150,6 +150,7 @@ export async function POST(request: Request) {
   let body: {
     messages?: IncomingMessage[];
     draftJson?: string;
+    portfolioContext?: string;
   };
   try {
     body = await request.json();
@@ -180,6 +181,10 @@ export async function POST(request: Request) {
   }
 
   const draftJson = typeof body.draftJson === 'string' ? body.draftJson : '';
+  const portfolioContextRaw = typeof body.portfolioContext === 'string' ? body.portfolioContext : '';
+  const portfolioContextBlock = portfolioContextRaw.trim()
+    ? `Portfolio / position context (facts about sleeve, band, and holdings — do not invent why they bought):\n${portfolioContextRaw.trim().slice(0, MAX_CONTEXT_CHARS)}`
+    : 'No portfolio link context.';
 
   const onboardPrompt = await loadPromptVersion(PROMPT_POSITION_THESIS_ONBOARD, null);
   if (!isPromptExecutable(onboardPrompt)) {
@@ -203,6 +208,7 @@ export async function POST(request: Request) {
 
   const onboardSystemText = applyPromptPlaceholders(onboardPrompt.content, {
     draftJsonSnippet: draftJsonSnippetOnboard,
+    portfolioContextBlock,
   });
 
   const contents = [
@@ -264,6 +270,7 @@ export async function POST(request: Request) {
     const structUserText = applyPromptPlaceholders(structPrompt.content, {
       draftJsonSnippet: draftJson.trim().slice(0, MAX_STRUCT_DRAFT_CHARS) || '(empty)',
       freeText,
+      portfolioContextBlock,
     });
 
     const modelStep2 = resolveGeminiModel(structPrompt.params);

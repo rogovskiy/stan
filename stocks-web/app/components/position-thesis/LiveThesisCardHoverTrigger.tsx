@@ -66,7 +66,7 @@ export default function LiveThesisCardHoverTrigger() {
         role="tooltip"
       >
         <p className="text-xs text-gray-500 px-1 pb-2 border-b border-gray-100 mb-2">
-          Sample live thesis snapshot (builder sidebar)
+          Layout preview — hover a row’s thesis icon for real values (forward return = band check).
         </p>
         <LiveThesisCardPanel />
       </div>,

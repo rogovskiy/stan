@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPortfolio } from '../../../../lib/services/portfolioService';
 import { getDailyPricesForTicker } from '../../../../lib/dailyPrices';
 import type { Band, Position } from '../../../../lib/services/portfolioService';
+import { computeBandThesisReturnSignal } from '../../../../lib/portfolioBandThesisReturnAlignment';
+import type { PositionThesisPayload } from '../../../../lib/types/positionThesis';
 
 export type ConcernSeverity = 'high' | 'medium' | 'low';
 
@@ -172,6 +174,57 @@ export async function GET(
             suggestion: 'Trim the position or move part of it to a different band.',
           });
         }
+      }
+    }
+
+    // 2b) Linked thesis implied return vs band expected return range (Admin SDK)
+    const ownerUserId = typeof portfolio.userId === 'string' ? portfolio.userId.trim() : '';
+    if (ownerUserId && bands.length > 0) {
+      try {
+        const { loadPositionThesisPayloadAdmin } = await import(
+          '../../../../lib/server/loadPositionThesisPayloadAdmin'
+        );
+        for (const band of bands) {
+          const bandPositions = positions.filter((p) => p.bandId === band.id);
+          const linked = bandPositions.filter((p) => p.thesisId?.trim());
+          if (linked.length === 0) continue;
+          const uniqueIds = [...new Set(linked.map((p) => p.thesisId!.trim()))];
+          const thesisPayloadByThesisId: Record<string, PositionThesisPayload> = {};
+          await Promise.all(
+            uniqueIds.map(async (tid) => {
+              const payload = await loadPositionThesisPayloadAdmin(tid, ownerUserId);
+              if (payload) thesisPayloadByThesisId[tid] = payload;
+            })
+          );
+          const signal = computeBandThesisReturnSignal(band, bandPositions, thesisPayloadByThesisId);
+          if (signal.kind === 'thesis_incomplete') {
+            concerns.push({
+              id: id(),
+              severity: 'medium',
+              prompt: `"${band.name}": can’t read a linked thesis?`,
+              opener: `Some positions in "${band.name}" link to a thesis, but we couldn’t load that thesis document (permissions, missing doc, or network). Until it loads, we can’t compare thesis implied return to your ~${signal.bandMin}–${signal.bandMax}%/yr band target. Blank growth or dividend fields count as 0%.`,
+              bandId: band.id,
+              bandName: band.name,
+              suggestion:
+                'Open each linked ticker’s thesis builder while signed in, or re-link the thesis from position settings.',
+            });
+          } else if (signal.kind === 'misaligned') {
+            const above = signal.averageMidPct > signal.bandMax;
+            const cmp = above ? 'higher' : 'lower';
+            concerns.push({
+              id: id(),
+              severity: 'low',
+              prompt: `"${band.name}": thesis expectations ${cmp} than band target?`,
+              opener: `Linked theses in "${band.name}" average about ${signal.averageMidPct.toFixed(1)}% per year vs this band’s ~${signal.bandMin}–${signal.bandMax}% target — ${cmp}, not necessarily wrong. We can align numbers, move tickers, or tweak the band if you want.`,
+              bandId: band.id,
+              bandName: band.name,
+              suggestion:
+                'Optional: adjust thesis assumptions, reassign positions, or edit the band’s expected return range.',
+            });
+          }
+        }
+      } catch (adminErr) {
+        console.warn('[concerns] Thesis vs band check skipped (Admin SDK / Firestore):', adminErr);
       }
     }
 

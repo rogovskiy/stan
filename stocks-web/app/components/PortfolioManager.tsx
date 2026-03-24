@@ -10,6 +10,8 @@ import {
   type Transaction,
 } from '../lib/services/portfolioService';
 import { useAuth } from '../lib/authContext';
+import type { PositionThesisPayload } from '../lib/types/positionThesis';
+import { getPositionThesisByDocId } from '../lib/services/positionThesisService';
 import type { WatchlistItem, WatchlistStatus } from '../lib/services/watchlistShared';
 import { TAX_RATES, computeTaxImpactFromLots, type Lot } from '../lib/taxEstimator';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
@@ -85,6 +87,11 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
   const [cashTransactions, setCashTransactions] = useState<Transaction[]>([]);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
+  const [thesisPayloadByThesisId, setThesisPayloadByThesisId] = useState<
+    Record<string, PositionThesisPayload>
+  >({});
+  const [thesisPayloadsLoading, setThesisPayloadsLoading] = useState(false);
+
   const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
   const [taxDrawerOpen, setTaxDrawerOpen] = useState(false);
   const [taxDrawerYear, setTaxDrawerYear] = useState(() => new Date().getFullYear());
@@ -124,6 +131,50 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       setCashTransactions([]);
     }
   }, [selectedPortfolio?.id]);
+
+  useEffect(() => {
+    const uid = user?.uid;
+    const plist = selectedPortfolio?.positions;
+    if (!uid || !plist?.length) {
+      setThesisPayloadByThesisId({});
+      setThesisPayloadsLoading(false);
+      return;
+    }
+    const ids = [
+      ...new Set(
+        plist.map((p) => p.thesisId?.trim()).filter((id): id is string => Boolean(id))
+      ),
+    ];
+    if (ids.length === 0) {
+      setThesisPayloadByThesisId({});
+      setThesisPayloadsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setThesisPayloadsLoading(true);
+    void (async () => {
+      const entries = await Promise.all(
+        ids.map(async (docId) => {
+          try {
+            const loaded = await getPositionThesisByDocId(uid, docId);
+            return [docId, loaded?.payload ?? null] as const;
+          } catch {
+            return [docId, null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const next: Record<string, PositionThesisPayload> = {};
+      for (const [docId, payload] of entries) {
+        if (payload) next[docId] = payload;
+      }
+      setThesisPayloadByThesisId(next);
+      setThesisPayloadsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, selectedPortfolio?.positions, selectedPortfolio?.id]);
 
   useEffect(() => {
     if (!selectedPortfolio?.id) {
@@ -1122,6 +1173,8 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
                     startEditPositionMetadata={startEditPositionMetadata}
                     openTransactionHistory={openTransactionHistory}
                     handleDeletePosition={handleDeletePosition}
+                    thesisPayloadByThesisId={thesisPayloadByThesisId}
+                    thesisPayloadsLoading={thesisPayloadsLoading}
                   />
                 ) : (
                   <PositionsEmptyState

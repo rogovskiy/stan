@@ -7,22 +7,31 @@ export interface LiveThesisCardPanelProps {
   statusBadge?: string;
   badgeClassName?: string;
   forwardReturn?: string;
+  /** Small line under forward return — only used for above/below band. */
+  forwardReturnSubtitle?: string;
+  /** When set with subtitle, tints band position lines (portfolio hover). */
+  forwardReturnSubtitleTone?: 'above_band' | 'below_band';
   downside?: string;
   volRegime?: string;
   ruleState?: string;
   recommendation?: string;
 }
 
-const defaults: Required<LiveThesisCardPanelProps> = {
-  phaseLabel: 'Harvest Phase',
-  statusBadge: 'Partially Realized',
-  badgeClassName: 'bg-amber-50 text-amber-700 border-amber-200',
-  forwardReturn: '5–7%',
-  downside: '-15% to -25%',
-  volRegime: 'High',
-  ruleState: 'Trim watch',
-  recommendation:
-    'Gains have likely pulled forward several years of expected return. Keep the core thesis, but consider trimming if current oil volatility persists and forward return remains compressed.',
+/** Empty-state placeholders — no sample narrative. */
+const defaults: Required<Omit<LiveThesisCardPanelProps, 'forwardReturnSubtitle' | 'forwardReturnSubtitleTone'>> & {
+  forwardReturnSubtitle: string;
+  forwardReturnSubtitleTone: undefined;
+} = {
+  phaseLabel: 'n/a',
+  statusBadge: 'n/a',
+  badgeClassName: 'bg-slate-100 text-slate-600 border-slate-200',
+  forwardReturn: '—',
+  forwardReturnSubtitle: '',
+  forwardReturnSubtitleTone: undefined,
+  downside: 'N/A',
+  volRegime: '—',
+  ruleState: 'n/a',
+  recommendation: 'n/a',
 };
 
 /** Inner card body (rounded slate panel) — use inside popovers or full section. */
@@ -31,6 +40,8 @@ export function LiveThesisCardPanel({
   statusBadge = defaults.statusBadge,
   badgeClassName = defaults.badgeClassName,
   forwardReturn = defaults.forwardReturn,
+  forwardReturnSubtitle = defaults.forwardReturnSubtitle,
+  forwardReturnSubtitleTone = defaults.forwardReturnSubtitleTone,
   downside = defaults.downside,
   volRegime = defaults.volRegime,
   ruleState = defaults.ruleState,
@@ -49,6 +60,17 @@ export function LiveThesisCardPanel({
         <div className="rounded-xl bg-white border border-slate-200 p-3">
           <div className="text-slate-500">Forward return</div>
           <div className="text-lg font-semibold">{forwardReturn}</div>
+          {forwardReturnSubtitle ? (
+            <div
+              className={
+                forwardReturnSubtitleTone === 'below_band'
+                  ? 'text-xs text-amber-800 mt-1 leading-snug'
+                  : 'text-xs text-slate-500 mt-1 leading-snug'
+              }
+            >
+              {forwardReturnSubtitle}
+            </div>
+          ) : null}
         </div>
         <div className="rounded-xl bg-white border border-slate-200 p-3">
           <div className="text-slate-500">Downside</div>

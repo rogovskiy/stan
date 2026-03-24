@@ -2,7 +2,13 @@
 
 import { Fragment, type RefObject } from 'react';
 import type { Portfolio, Position } from '../../lib/services/portfolioService';
+import type { PositionThesisPayload } from '../../lib/types/positionThesis';
+import {
+  computeBandThesisReturnSignal,
+  computePositionThesisReturnRowIssue,
+} from '../../lib/portfolioBandThesisReturnAlignment';
 import LiveThesisCardHoverTrigger from '../position-thesis/LiveThesisCardHoverTrigger';
+import PositionThesisCardHoverTrigger from '../position-thesis/PositionThesisCardHoverTrigger';
 import { buildPositionSections } from './positionsTableUtils';
 
 export default function PositionsTable({
@@ -18,6 +24,8 @@ export default function PositionsTable({
   startEditPositionMetadata,
   openTransactionHistory,
   handleDeletePosition,
+  thesisPayloadByThesisId = {},
+  thesisPayloadsLoading = false,
 }: {
   router: { push: (href: string) => void };
   selectedPortfolio: Portfolio;
@@ -31,6 +39,8 @@ export default function PositionsTable({
   startEditPositionMetadata: (position: Position) => void;
   openTransactionHistory: (ticker: string) => void;
   handleDeletePosition: (positionId: string) => void;
+  thesisPayloadByThesisId?: Record<string, PositionThesisPayload>;
+  thesisPayloadsLoading?: boolean;
 }) {
   const sections = buildPositionSections(selectedPortfolio);
 
@@ -103,6 +113,37 @@ export default function PositionsTable({
                 section.band != null &&
                 actualPct != null &&
                 (actualPct < section.band.sizeMinPct || actualPct > section.band.sizeMaxPct);
+              const sectionHasLinkedThesis = section.positions.some((p) => p.thesisId?.trim());
+              const thesisErLoading =
+                thesisPayloadsLoading &&
+                section.band != null &&
+                sectionHasLinkedThesis &&
+                typeof section.band.expectedReturnMinPct === 'number' &&
+                typeof section.band.expectedReturnMaxPct === 'number';
+              const thesisSignal =
+                !thesisPayloadsLoading && section.band
+                  ? computeBandThesisReturnSignal(
+                      section.band,
+                      section.positions,
+                      thesisPayloadByThesisId
+                    )
+                  : { kind: 'no_signal' as const };
+              const bandERForHover =
+                section.band != null &&
+                typeof section.band.expectedReturnMinPct === 'number' &&
+                typeof section.band.expectedReturnMaxPct === 'number'
+                  ? { min: section.band.expectedReturnMinPct, max: section.band.expectedReturnMaxPct }
+                  : null;
+              let thesisMisalignedPlain: string | null = null;
+              if (!thesisErLoading && thesisSignal.kind === 'misaligned') {
+                const avg = thesisSignal.averageMidPct.toFixed(1);
+                const lo = thesisSignal.bandMin.toFixed(0);
+                const hi = thesisSignal.bandMax.toFixed(0);
+                const above = thesisSignal.averageMidPct > thesisSignal.bandMax;
+                thesisMisalignedPlain = above
+                  ? `Thesis expectations higher than band (~${avg}%/yr vs ~${lo}–${hi}%).`
+                  : `Thesis expectations lower than band (~${avg}%/yr vs ~${lo}–${hi}%).`;
+              }
               return (
                 <Fragment key={section.bandId ?? 'none'}>
                   <tr
@@ -121,6 +162,25 @@ export default function PositionsTable({
                         >
                           — {actualPct.toFixed(1)}% of portfolio
                           {targetRange != null && <span> (target {targetRange})</span>}
+                        </span>
+                      )}
+                      {thesisErLoading && (
+                        <span className="font-normal ml-2 text-xs text-slate-500">Checking thesis vs band…</span>
+                      )}
+                      {!thesisErLoading && thesisSignal.kind === 'thesis_incomplete' && (
+                        <span
+                          className="font-normal ml-2 text-xs text-amber-800 font-medium"
+                          title={`Could not load thesis for: ${thesisSignal.incompleteTickers.join(', ')} (needed to compare to band target)`}
+                        >
+                          Thesis vs band: can’t load thesis ({thesisSignal.incompleteTickers.join(', ')})
+                        </span>
+                      )}
+                      {thesisMisalignedPlain != null && (
+                        <span
+                          className="font-normal ml-2 text-xs text-gray-500"
+                          title="Average implied return from linked theses vs this band’s expected return range in settings."
+                        >
+                          {thesisMisalignedPlain}
                         </span>
                       )}
                     </td>
@@ -143,6 +203,11 @@ export default function PositionsTable({
                     const maxPositionPct = section.band?.maxPositionSizePct;
                     const isOversized =
                       maxPositionPct != null && weightPct != null && weightPct > maxPositionPct;
+                    const tid = position.thesisId?.trim();
+                    const thesisRowIssue =
+                      !thesisPayloadsLoading && section.band && tid
+                        ? computePositionThesisReturnRowIssue(section.band, position, thesisPayloadByThesisId[tid])
+                        : 'none';
                     return (
                       <tr
                         key={position.id}
@@ -156,6 +221,14 @@ export default function PositionsTable({
                               title={`Position is ${weightPct?.toFixed(1)}% of portfolio; max for this band is ${maxPositionPct}%`}
                             >
                               Oversized
+                            </span>
+                          )}
+                          {thesisRowIssue === 'incomplete' && (
+                            <span
+                              className="ml-2 text-amber-700 font-normal text-xs"
+                              title="Linked thesis didn’t load — open portfolio with same account or check thesis link"
+                            >
+                              Thesis not loaded
                             </span>
                           )}
                         </td>
@@ -180,38 +253,45 @@ export default function PositionsTable({
                         <td className="py-3 px-4 text-right text-gray-700" />
                         <td className="py-3 px-4 text-gray-700">
                           {position.thesisId ? (
-                            <button
-                              type="button"
-                              title="Open thesis in builder"
-                              aria-label="Open thesis in builder"
-                              onClick={() => {
-                                const q = new URLSearchParams();
-                                q.set('thesisDocId', position.thesisId!);
-                                if (selectedPortfolio.id && position.id) {
-                                  q.set('portfolioId', selectedPortfolio.id);
-                                  q.set('positionId', position.id);
-                                }
-                                router.push(
-                                  `/${position.ticker}/thesis-builder?${q.toString()}`
-                                );
-                              }}
-                              className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors inline-flex"
+                            <PositionThesisCardHoverTrigger
+                              ticker={position.ticker}
+                              thesisPayload={tid ? thesisPayloadByThesisId[tid] : undefined}
+                              loading={thesisPayloadsLoading}
+                              bandExpectedReturn={bandERForHover}
                             >
-                              <svg
-                                className="w-5 h-5"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                                aria-hidden
+                              <button
+                                type="button"
+                                title="Open thesis in builder (hover for snapshot)"
+                                aria-label="Open thesis in builder"
+                                onClick={() => {
+                                  const q = new URLSearchParams();
+                                  q.set('thesisDocId', position.thesisId!);
+                                  if (selectedPortfolio.id && position.id) {
+                                    q.set('portfolioId', selectedPortfolio.id);
+                                    q.set('positionId', position.id);
+                                  }
+                                  router.push(
+                                    `/${position.ticker}/thesis-builder?${q.toString()}`
+                                  );
+                                }}
+                                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors inline-flex"
                               >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                                />
-                              </svg>
-                            </button>
+                                <svg
+                                  className="w-5 h-5"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                  aria-hidden
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                  />
+                                </svg>
+                              </button>
+                            </PositionThesisCardHoverTrigger>
                           ) : selectedPortfolio.id && position.id ? (
                             <button
                               type="button"

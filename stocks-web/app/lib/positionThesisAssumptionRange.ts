@@ -1,3 +1,26 @@
+/** Remove % signs so numeric regexes match values like "3.5%–6%". */
+export function stripAssumptionPercentSigns(stored: string): string {
+  return stored.replace(/%/g, '').trim();
+}
+
+/**
+ * Parse a stored dividend / growth assumption string into numeric [min, max] (inclusive).
+ * Returns null if empty or unparseable. Uses `parseAssumptionRange` after stripping `%`.
+ */
+export function parseAssumptionRangeToPctInterval(stored: string): { min: number; max: number } | null {
+  const t = stripAssumptionPercentSigns(stored);
+  if (!t) return null;
+  const { low, high } = parseAssumptionRange(t);
+  if (!low.trim() || !high.trim()) return null;
+  const min = parseFloat(low);
+  const max = parseFloat(high);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  if (min > max) {
+    return { min: max, max: min };
+  }
+  return { min, max };
+}
+
 /** Parse stored assumption into low / high for inputs (legacy single number or "3.5%"). */
 export function parseAssumptionRange(stored: string): { low: string; high: string } {
   const t = stored.trim();

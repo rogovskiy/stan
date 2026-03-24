@@ -200,6 +200,24 @@ function TranscriptDrawer({
     [video.transcriptSummaryTheses]
   );
 
+  /** One row per ticker; preserves first-seen order of tickers. */
+  const thesesGroupedByTicker = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, Array<{ title: string; summary: string }>>();
+    for (const t of thesesWithTicker) {
+      const tick = t.ticker!.trim().toUpperCase();
+      if (!map.has(tick)) {
+        order.push(tick);
+        map.set(tick, []);
+      }
+      map.get(tick)!.push({
+        title: (t.title || '').trim(),
+        summary: (t.summary || '').trim(),
+      });
+    }
+    return order.map((tick) => ({ ticker: tick, items: map.get(tick)! }));
+  }, [thesesWithTicker]);
+
   const buildNotesForTicker = useCallback(
     (tick: string) => {
       const upper = tick.trim().toUpperCase();
@@ -414,12 +432,7 @@ function TranscriptDrawer({
     [user, video.videoId, buildNotesForTicker]
   );
 
-  const handleWatchlist = async (
-    ticker: string,
-    rowKey: string,
-    thesisTitle: string,
-    thesisSummary: string
-  ) => {
+  const handleWatchlist = async (ticker: string, rowKey: string) => {
     if (!user) return;
     setRowLoading((m) => ({ ...m, [rowKey]: true }));
     setRowFeedback((m) => {
@@ -427,7 +440,7 @@ function TranscriptDrawer({
       delete next[rowKey];
       return next;
     });
-    const notes = formatThesisCardNotesForWatchlist(thesisTitle, thesisSummary);
+    const notes = buildNotesForTicker(ticker);
     try {
       const token = await user.getIdToken();
       const res = await fetch('/api/watchlist', {
@@ -543,17 +556,14 @@ function TranscriptDrawer({
               Transcript not yet summarized. Run the transcript script locally to fetch and analyze.
             </p>
           )}
-          {thesesWithTicker.length > 0 && (
+          {thesesGroupedByTicker.length > 0 && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
                 Watchlist from summary
               </h3>
               <ul className="space-y-3">
-                {thesesWithTicker.map((t, idx) => {
-                  const tick = t.ticker!.trim().toUpperCase();
-                  const rowKey = `${tick}-${idx}`;
-                  const title = (t.title || '').trim();
-                  const summary = (t.summary || '').trim();
+                {thesesGroupedByTicker.map(({ ticker: tick, items }) => {
+                  const rowKey = tick;
                   const hasRow = tickerToLinkedIds.has(tick);
                   const isLinked = (tickerToLinkedIds.get(tick) ?? []).includes(video.videoId);
                   const autoLinking = linkingTickers.has(tick);
@@ -561,12 +571,39 @@ function TranscriptDrawer({
                   const loadingManual = rowLoading[rowKey];
                   const feedback = rowFeedback[rowKey];
                   return (
-                    <li key={rowKey} className="text-sm text-gray-800 rounded-lg border border-gray-100 bg-gray-50/80 p-2.5">
-                      <div className="font-medium text-gray-900">
-                        {tick}
-                        {title ? <span className="font-normal text-gray-600"> — {title}</span> : null}
-                      </div>
-                      {summary ? <p className="text-xs text-gray-600 mt-1 leading-relaxed">{summary}</p> : null}
+                    <li key={tick} className="text-sm text-gray-800 rounded-lg border border-gray-100 bg-gray-50/80 p-2.5">
+                      {items.length === 1 ? (
+                        <>
+                          <div className="font-medium text-gray-900">
+                            {tick}
+                            {items[0].title ? (
+                              <span className="font-normal text-gray-600"> — {items[0].title}</span>
+                            ) : null}
+                          </div>
+                          {items[0].summary ? (
+                            <p className="text-xs text-gray-600 mt-1 leading-relaxed">{items[0].summary}</p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-medium text-gray-900">{tick}</div>
+                          <div className="mt-1 space-y-2">
+                            {items.map((item, i) => (
+                              <div
+                                key={i}
+                                className={i > 0 ? 'pt-2 border-t border-gray-100/80' : undefined}
+                              >
+                                {item.title ? (
+                                  <div className="text-xs font-medium text-gray-800">{item.title}</div>
+                                ) : null}
+                                {item.summary ? (
+                                  <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{item.summary}</p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {!user ? (
                           <span className="text-xs text-gray-500">Sign in to add to watchlist.</span>
@@ -591,7 +628,7 @@ function TranscriptDrawer({
                             <button
                               type="button"
                               disabled={!watchlistLoaded || loadingManual}
-                              onClick={() => handleWatchlist(tick, rowKey, title, summary)}
+                              onClick={() => handleWatchlist(tick, rowKey)}
                               className="text-xs font-medium px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {loadingManual ? '…' : 'Add to watchlist'}

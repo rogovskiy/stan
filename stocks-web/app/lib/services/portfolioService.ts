@@ -11,7 +11,6 @@ import {
   where,
   orderBy,
   limit,
-  Timestamp,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -113,6 +112,10 @@ export interface StressDrawdownPosition {
   ticker: string;
   quantity: number;
   stressDrawdownPct: number | null;
+  /** Historical-only remaining downside after subtracting today's drawdown from the stress DD. */
+  remainingStressDrawdownPct?: number | null;
+  /** Historical-only current drawdown from the running peak over the bounded price window. */
+  currentDrawdownPct?: number | null;
   method: 'normal_multiple' | 'historical_percentile' | 'none';
   valueUsd: number | null;
   /** Trailing P/E when method is normal_multiple (price ÷ TTM EPS). */
@@ -127,6 +130,8 @@ export interface StressDrawdown {
   /** Years of daily prices used for percentile / normal P/E window (scheduled job). */
   historyYears?: number;
   aggregatePct?: number | null;
+  /** Weighted average of remainingStressDrawdownPct for historical-path holdings only. */
+  remainingAggregatePct?: number | null;
   positions?: StressDrawdownPosition[];
   warnings?: string[];
 }
@@ -152,7 +157,7 @@ export interface Portfolio {
 /**
  * Get all portfolios for a user
  */
-export async function getAllPortfolios(userId?: string): Promise<Portfolio[]> {
+export async function getAllPortfolios(): Promise<Portfolio[]> {
   try {
     const portfoliosRef = collection(db, 'portfolios');
     const q = query(portfoliosRef, orderBy('createdAt', 'desc'));

@@ -24,13 +24,19 @@ function stressDownsideFromRow(
   stressRow: StressDrawdownPosition | null | undefined,
   stressPercentile: number | null | undefined,
 ): { downside: string; downsideSubtitle?: string } | null {
-  if (rawStressDrawdownPct == null || !Number.isFinite(rawStressDrawdownPct)) {
+  const stressPct = stressRow?.stressDrawdownPct;
+  const displayedStressPct =
+    stressPct != null && Number.isFinite(stressPct) ? stressPct : rawStressDrawdownPct;
+
+  if (displayedStressPct == null || !Number.isFinite(displayedStressPct)) {
     return null;
   }
-  const downside = `${rawStressDrawdownPct.toFixed(1)}%`;
+  const downside = `${displayedStressPct.toFixed(1)}%`;
   const method = stressRow?.method;
   const cur = stressRow?.currentPe;
   const norm = stressRow?.normalPe;
+  const currentDd = stressRow?.currentDrawdownPct;
+  const remainingDd = stressRow?.remainingStressDrawdownPct;
   // Prefer P/E copy whenever the job saved multiples (even if method string is stale on the doc).
   if (
     cur != null &&
@@ -63,16 +69,20 @@ function stressDownsideFromRow(
   }
 
   if (method === 'historical_percentile') {
-    const p =
-      stressPercentile != null && Number.isFinite(stressPercentile)
-        ? Math.round(stressPercentile * 100)
-        : null;
+    const realizedText =
+      currentDd != null && Number.isFinite(currentDd)
+        ? `Already down ${currentDd.toFixed(1)}%`
+        : 'Current drawdown not available';
+    const remainingText =
+      remainingDd != null && Number.isFinite(remainingDd)
+        ? `leaving ${remainingDd.toFixed(1)}% downside under this stress case`
+        : 'remaining downside not available';
     return {
       downside,
       downsideSubtitle:
-        p != null
-          ? `~${p}th percentile of rolling drawdowns (bounded price history)`
-          : 'Rolling drawdown percentile (bounded daily prices)',
+        stressPercentile != null && Number.isFinite(stressPercentile)
+          ? `${realizedText}, ${remainingText}. Stress is based on past selloffs.`
+          : `${realizedText}, ${remainingText}. Stress is based on this asset's historical swings.`,
     };
   }
 
@@ -88,7 +98,7 @@ export default function PositionThesisCardHoverTrigger({
   thesisPayload,
   loading = false,
   bandExpectedReturn,
-  /** Raw stress DD % for this name; shown in Downside on the snapshot card. */
+  /** Fallback displayed downside % when row-level stress details are unavailable. */
   rawStressDrawdownPct,
   /** Per-position row from portfolio stressDrawdown (method, P/E breakdown for stocks). */
   stressRow,

@@ -54,7 +54,7 @@ PRICE_HISTORY_YEARS = 25
 # Normal P/E uses quarterly rows within this window only (aligns with bounded price fetch).
 TICKER_STRESS_CACHE_TTL_DAYS = 7
 # Bump when stress method / EPS logic changes so per-ticker cache is recomputed.
-STRESS_CACHE_SCHEMA_VERSION = 4
+STRESS_CACHE_SCHEMA_VERSION = 6
 
 # Yahoo quoteType values that use rolling drawdown percentile only (no P/E valuation path).
 QUOTETYPE_HISTORICAL_STRESS = frozenset(
@@ -334,9 +334,9 @@ def rolling_drawdown_series(closes: np.ndarray) -> np.ndarray:
     return np.clip(dd, 0.0, 1.0)
 
 
-def stress_from_historical_percentile(
+def historical_drawdown_snapshot(
     price_map: Dict[str, float], percentile: float
-) -> Optional[float]:
+) -> Optional[Tuple[float, float, float]]:
     if not price_map or len(price_map) < MIN_PRICE_DAYS_HISTORICAL:
         return None
     sorted_dates = sorted(price_map.keys())
@@ -346,7 +346,20 @@ def stress_from_historical_percentile(
     dd = rolling_drawdown_series(closes)
     if dd.size == 0:
         return None
-    return float(np.percentile(dd, percentile * 100.0))
+    historical = float(np.percentile(dd, percentile * 100.0))
+    current = float(dd[-1])
+    remaining = max(0.0, historical - current)
+    return historical, current, remaining
+
+
+def stress_from_historical_percentile(
+    price_map: Dict[str, float], percentile: float
+) -> Optional[float]:
+    snapshot = historical_drawdown_snapshot(price_map, percentile)
+    if snapshot is None:
+        return None
+    historical, _, _ = snapshot
+    return historical
 
 
 def _trailing_quarters_for_latest_price(
@@ -373,9 +386,25 @@ def stress_for_ticker(
     *,
     quarterly_full_row_count: int = 0,
     use_historical_percentile: bool = False,
-) -> Tuple[Optional[float], str, List[str], Optional[float], Optional[float]]:
+) -> Tuple[
+    Optional[float],
+    str,
+    List[str],
+    Optional[float],
+    Optional[float],
+    Optional[float],
+    Optional[float],
+]:
     """
-    Returns (stress_pct or None, method, warnings, current_pe, normal_pe).
+    Returns (
+        stress_pct or None,
+        method,
+        warnings,
+        remaining_stress_pct,
+        current_drawdown_pct,
+        current_pe,
+        normal_pe,
+    ).
 
     use_historical_percentile=True (ETFs/funds/etc.): rolling drawdown percentile only — no fallback.
     use_historical_percentile=False (EQUITY): valuation-based stress only — raises ValuationStressDataError
@@ -392,13 +421,22 @@ def stress_for_ticker(
         raise ValuationStressDataError(f"{ticker}: invalid last close price")
 
     if use_historical_percentile:
-        hist = stress_from_historical_percentile(price_map, percentile)
-        if hist is None:
+        snapshot = historical_drawdown_snapshot(price_map, percentile)
+        if snapshot is None:
             raise ValuationStressDataError(
                 f"{ticker}: insufficient daily price history for {percentile:.0%} rolling "
                 "drawdown percentile (need more trading days / valid closes)"
             )
-        return round(hist * 100.0, 4), "historical_percentile", warnings, None, None
+        hist, current_dd, remaining = snapshot
+        return (
+            round(hist * 100.0, 4),
+            "historical_percentile",
+            warnings,
+            round(remaining * 100.0, 4),
+            round(current_dd * 100.0, 4),
+            None,
+            None,
+        )
 
     # Equity: valuation-based path only
     if not quarterly_rows:
@@ -440,6 +478,8 @@ def stress_for_ticker(
         round(dd, 4),
         "normal_multiple",
         warnings,
+        None,
+        None,
         round(current_pe, 4),
         round(float(normal_pe), 4),
     )
@@ -509,6 +549,28 @@ def write_ticker_stress_cache(db: Any, ticker: str, payload: Dict[str, Any]) -> 
         logger.warning("stress cache write failed for %s: %s", ticker, e)
 
 
+def aggregate_stress_drawdown_pct(position_rows: List[Dict[str, Any]]) -> Optional[float]:
+    """Portfolio aggregate uses remaining downside for historical rows, raw stress otherwise."""
+    numer = 0.0
+    wsum = 0.0
+    for row in position_rows:
+        v = row.get("valueUsd")
+        if v is None or v <= 0:
+            continue
+        method = row.get("method")
+        if method == "historical_percentile":
+            s = row.get("remainingStressDrawdownPct")
+        else:
+            s = row.get("stressDrawdownPct")
+        if s is None:
+            continue
+        numer += (s / 100.0) * v
+        wsum += v
+    if wsum <= 0:
+        return None
+    return round((numer / wsum) * 100.0, 4)
+
+
 def run_stress_drawdown(
     portfolio_id: str,
     *,
@@ -564,6 +626,8 @@ def run_stress_drawdown(
             and cache_matches_stress_policy(cached, use_hist)
         ):
             stress = cached.get("stressDrawdownPct")
+            remaining_stress = cached.get("remainingStressDrawdownPct")
+            current_drawdown = cached.get("currentDrawdownPct")
             method = str(cached.get("method") or "none")
             px = cached.get("lastPriceUsd")
             if px is None or not isinstance(px, (int, float)) or float(px) <= 0:
@@ -580,6 +644,12 @@ def run_stress_drawdown(
                     "ticker": t,
                     "quantity": qty,
                     "stressDrawdownPct": float(stress) if stress is not None else None,
+                    "remainingStressDrawdownPct": (
+                        float(remaining_stress) if remaining_stress is not None else None
+                    ),
+                    "currentDrawdownPct": (
+                        float(current_drawdown) if current_drawdown is not None else None
+                    ),
                     "method": method,
                     "valueUsd": round(val, 2) if val is not None else None,
                     "currentPe": cached.get("currentPe"),
@@ -598,7 +668,15 @@ def run_stress_drawdown(
             continue
 
         try:
-            stress, method, warns, current_pe, normal_pe = stress_for_ticker(
+            (
+                stress,
+                method,
+                warns,
+                remaining_stress,
+                current_drawdown,
+                current_pe,
+                normal_pe,
+            ) = stress_for_ticker(
                 t,
                 pm,
                 quarterly_trim,
@@ -618,6 +696,8 @@ def run_stress_drawdown(
                 "schemaVersion": STRESS_CACHE_SCHEMA_VERSION,
                 "computedAt": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
                 "stressDrawdownPct": stress,
+                "remainingStressDrawdownPct": remaining_stress,
+                "currentDrawdownPct": current_drawdown,
                 "method": method,
                 "percentile": percentile,
                 "historyYears": PRICE_HISTORY_YEARS,
@@ -635,6 +715,8 @@ def run_stress_drawdown(
                 "ticker": t,
                 "quantity": qty,
                 "stressDrawdownPct": stress,
+                "remainingStressDrawdownPct": remaining_stress,
+                "currentDrawdownPct": current_drawdown,
                 "method": method,
                 "valueUsd": round(val, 2) if val is not None else None,
                 "currentPe": float(current_pe) if current_pe is not None else None,
@@ -653,22 +735,25 @@ def run_stress_drawdown(
         return EXIT_ERROR
 
     aggregate: Optional[float] = None
-    wsum = 0.0
-    numer = 0.0
+    remaining_aggregate: Optional[float] = None
+    remaining_wsum = 0.0
+    remaining_numer = 0.0
     for row in position_rows:
-        s = row.get("stressDrawdownPct")
+        remaining_s = row.get("remainingStressDrawdownPct")
         v = row.get("valueUsd")
-        if s is not None and v is not None and v > 0:
-            numer += (s / 100.0) * v
-            wsum += v
-    if wsum > 0:
-        aggregate = round((numer / wsum) * 100.0, 4)
+        if remaining_s is not None and v is not None and v > 0:
+            remaining_numer += (remaining_s / 100.0) * v
+            remaining_wsum += v
+    aggregate = aggregate_stress_drawdown_pct(position_rows)
+    if remaining_wsum > 0:
+        remaining_aggregate = round((remaining_numer / remaining_wsum) * 100.0, 4)
 
     payload = {
         "computedAt": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         "percentile": percentile,
         "historyYears": PRICE_HISTORY_YEARS,
         "aggregatePct": aggregate,
+        "remainingAggregatePct": remaining_aggregate,
         "positions": sorted(position_rows, key=lambda x: x["ticker"]),
         "warnings": [],
     }
@@ -677,9 +762,16 @@ def run_stress_drawdown(
         print(f"\nStress drawdown — {portfolio.get('name', portfolio_id)}")
         print(f"Aggregate (value-weighted): {aggregate}%")
         for row in position_rows:
+            current_dd = row.get("currentDrawdownPct")
+            remaining_dd = row.get("remainingStressDrawdownPct")
+            extras = ""
+            if current_dd is not None and row.get("method") == "historical_percentile":
+                extras = f", current DD {current_dd}%"
+                if remaining_dd is not None:
+                    extras += f", remaining {remaining_dd}%"
             print(
                 f"  {row['ticker']}: {row.get('stressDrawdownPct')}% "
-                f"({row.get('method')})"
+                f"({row.get('method')}{extras})"
             )
         if ticker_cache_hits > 0 and not force_refresh_cache:
             print(

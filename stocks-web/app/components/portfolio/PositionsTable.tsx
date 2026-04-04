@@ -44,6 +44,14 @@ export default function PositionsTable({
 }) {
   const sections = buildPositionSections(selectedPortfolio);
 
+  const displayedStressPctForRow = (row: StressDrawdownPosition | undefined): number | null => {
+    if (!row) return null;
+    if (row.method === 'historical_percentile') {
+      return row.remainingStressDrawdownPct ?? null;
+    }
+    return row.stressDrawdownPct ?? null;
+  };
+
   const stressRowByTicker = useMemo(() => {
     const m = new Map<string, StressDrawdownPosition>();
     for (const row of selectedPortfolio.stressDrawdown?.positions ?? []) {
@@ -92,7 +100,7 @@ export default function PositionsTable({
               <th className="text-right py-3 px-4 font-medium text-gray-700">Return (since buy)</th>
               <th
                 className="text-right py-3 px-4 font-medium text-gray-700"
-                title="Position weight × stress drawdown — this name's contribution to total portfolio stress"
+                title="Position weight × remaining downside. Historical assets use stress drawdown minus current drawdown; valuation names use full stress drawdown."
               >
                 Weighted risk
               </th>
@@ -222,7 +230,7 @@ export default function PositionsTable({
                         ? computePositionThesisReturnRowIssue(section.band, position, thesisPayloadByThesisId[tid])
                         : 'none';
                     const stressRow = stressRowByTicker.get(tickerKey);
-                    const stressPct = stressRow?.stressDrawdownPct ?? null;
+                    const stressPct = displayedStressPctForRow(stressRow);
                     const weightedStressPct =
                       weightPct != null &&
                       stressPct != null &&

@@ -24,6 +24,7 @@ import {
   BENCHMARK_CONE_PARAMS,
 } from '../lib/portfolioForecast';
 import { computePortfolioKpis, computeYearlyAndYtdReturns } from '../lib/portfolioKpis';
+import type { StressDrawdownPosition } from '../lib/services/portfolioService';
 
 /** 2 years in days so forecast has daily resolution and cone lines render as one segment. */
 const FORECAST_DAYS = 365 * 2;
@@ -81,6 +82,30 @@ const DEFAULT_STRESS_PARAMS: StressParams = {
   betaMultiplier: 1,
 };
 
+function aggregateStressFromRows(
+  rows: StressDrawdownPosition[],
+  selector: (row: StressDrawdownPosition) => number | null | undefined,
+): number | null {
+  let numer = 0;
+  let denom = 0;
+  for (const row of rows) {
+    const value = row.valueUsd;
+    const pct = selector(row);
+    if (
+      value == null ||
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      pct == null ||
+      !Number.isFinite(pct)
+    ) {
+      continue;
+    }
+    numer += (pct / 100) * value;
+    denom += value;
+  }
+  return denom > 0 ? (numer / denom) * 100 : null;
+}
+
 export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchmarkChartProps) {
   const [period, setPeriod] = useState('5y');
   const [benchmark, setBenchmark] = useState<Lowercase<BenchmarkTicker>>('spy');
@@ -93,6 +118,7 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
   const [stressParams, setStressParams] = useState<StressParams>(DEFAULT_STRESS_PARAMS);
   /** Value-weighted stress drawdown from scheduled job (portfolio doc). */
   const [scheduledStressDrawdownPct, setScheduledStressDrawdownPct] = useState<number | null>(null);
+  const [scheduledRemainingStressDrawdownPct, setScheduledRemainingStressDrawdownPct] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,15 +126,42 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
       .then((res) => res.json())
       .then((json) => {
         if (cancelled) return;
-        const agg = json?.data?.stressDrawdown?.aggregatePct;
+        const rows = Array.isArray(json?.data?.stressDrawdown?.positions)
+          ? (json.data.stressDrawdown.positions as StressDrawdownPosition[])
+          : [];
+        const fullAggFromRows = aggregateStressFromRows(
+          rows,
+          (row) => row.stressDrawdownPct,
+        );
+        const remainingAggFromRows = aggregateStressFromRows(rows, (row) =>
+          row.method === 'historical_percentile'
+            ? row.remainingStressDrawdownPct
+            : row.stressDrawdownPct
+        );
+        const agg =
+          fullAggFromRows != null && Number.isFinite(fullAggFromRows)
+            ? fullAggFromRows
+            : json?.data?.stressDrawdown?.aggregatePct;
+        const remainingAgg =
+          remainingAggFromRows != null && Number.isFinite(remainingAggFromRows)
+            ? remainingAggFromRows
+            : json?.data?.stressDrawdown?.remainingAggregatePct;
         if (typeof agg === 'number' && Number.isFinite(agg)) {
           setScheduledStressDrawdownPct(agg);
         } else {
           setScheduledStressDrawdownPct(null);
         }
+        if (typeof remainingAgg === 'number' && Number.isFinite(remainingAgg)) {
+          setScheduledRemainingStressDrawdownPct(remainingAgg);
+        } else {
+          setScheduledRemainingStressDrawdownPct(null);
+        }
       })
       .catch(() => {
-        if (!cancelled) setScheduledStressDrawdownPct(null);
+        if (!cancelled) {
+          setScheduledStressDrawdownPct(null);
+          setScheduledRemainingStressDrawdownPct(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -765,6 +818,11 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
               </div>
               <p className="text-lg font-semibold text-gray-900 mt-0.5">
                 {kpis.stressDrawdown != null ? `${kpis.stressDrawdown.toFixed(1)}%` : '—'}
+              </p>
+              <p className="text-xs text-gray-500 mt-1 leading-snug min-h-[2rem]">
+                {scheduledRemainingStressDrawdownPct != null && Number.isFinite(scheduledRemainingStressDrawdownPct)
+                  ? `${(Math.max(0, (scheduledStressDrawdownPct ?? 0) - scheduledRemainingStressDrawdownPct)).toFixed(1)}% is already realized. ${scheduledRemainingStressDrawdownPct.toFixed(1)}% remains under this stress case.`
+                  : 'Shows full stress drawdown. Weighted risk uses remaining downside where applicable.'}
               </p>
             </div>
           </div>

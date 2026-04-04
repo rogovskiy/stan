@@ -15,8 +15,11 @@ for _p in (_vendor, _pkg):
 
 from portfolio_stress_drawdown import (  # noqa: E402
     _extract_eps_from_quarter_raw,
+    aggregate_stress_drawdown_pct,
     calculate_normal_pe_ratio,
+    historical_drawdown_snapshot,
     rolling_drawdown_series,
+    stress_for_ticker,
     stress_from_historical_percentile,
     trim_quarterly_to_lookback,
     use_historical_stress_path,
@@ -51,6 +54,87 @@ class TestHistoricalPercentile(unittest.TestCase):
         assert s is not None
         self.assertGreaterEqual(s, 0.0)
         self.assertLessEqual(s, 1.0)
+
+    def test_snapshot_uses_last_point_for_current_drawdown(self):
+        pm = {f"2020-01-{i+1:02d}": 100.0 for i in range(60)}
+        for i in range(60, 80):
+            pm[f"2020-01-{i+1:02d}"] = 50.0
+        snapshot = historical_drawdown_snapshot(pm, 0.9)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        _historical, current, _remaining = snapshot
+        self.assertAlmostEqual(current, 0.5, places=6)
+
+    def test_historical_path_returns_remaining_stress_pct(self):
+        pm = {f"2020-01-{i+1:02d}": 100.0 for i in range(40)}
+        for i in range(40, 60):
+            pm[f"2020-01-{i+1:02d}"] = 90.0
+        for i in range(60, 80):
+            pm[f"2020-01-{i+1:02d}"] = 60.0
+
+        (
+            stress_pct,
+            method,
+            warnings,
+            remaining_pct,
+            current_dd_pct,
+            current_pe,
+            normal_pe,
+        ) = stress_for_ticker(
+            "SPY", pm, [], 0.9, use_historical_percentile=True
+        )
+
+        self.assertEqual(method, "historical_percentile")
+        self.assertEqual(warnings, [])
+        self.assertIsNotNone(current_dd_pct)
+        self.assertIsNone(current_pe)
+        self.assertIsNone(normal_pe)
+        self.assertIsNotNone(stress_pct)
+        self.assertIsNotNone(remaining_pct)
+        assert stress_pct is not None
+        assert remaining_pct is not None
+        assert current_dd_pct is not None
+        self.assertAlmostEqual(stress_pct, 40.0, places=4)
+        self.assertAlmostEqual(current_dd_pct, 40.0, places=4)
+        self.assertAlmostEqual(remaining_pct, 0.0, places=4)
+
+    def test_remaining_stress_is_zero_when_current_exceeds_percentile(self):
+        pm = {f"2020-01-{i+1:02d}": 100.0 for i in range(71)}
+        for i in range(71, 79):
+            pm[f"2020-01-{i+1:02d}"] = 95.0
+        pm["2020-01-80"] = 50.0
+
+        snapshot = historical_drawdown_snapshot(pm, 0.9)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        historical, current, remaining = snapshot
+        self.assertLess(historical, current)
+        self.assertAlmostEqual(current, 0.5, places=6)
+        self.assertAlmostEqual(remaining, 0.0, places=6)
+
+
+class TestAggregateStressDrawdown(unittest.TestCase):
+    def test_uses_remaining_for_historical_and_raw_for_normal_multiple(self):
+        rows = [
+            {
+                "ticker": "SPY",
+                "method": "historical_percentile",
+                "stressDrawdownPct": 30.0,
+                "remainingStressDrawdownPct": 10.0,
+                "valueUsd": 100.0,
+            },
+            {
+                "ticker": "CVX",
+                "method": "normal_multiple",
+                "stressDrawdownPct": 20.0,
+                "remainingStressDrawdownPct": None,
+                "valueUsd": 300.0,
+            },
+        ]
+        agg = aggregate_stress_drawdown_pct(rows)
+        self.assertIsNotNone(agg)
+        assert agg is not None
+        self.assertAlmostEqual(agg, 17.5, places=4)
 
 
 class TestTrimQuarterly(unittest.TestCase):

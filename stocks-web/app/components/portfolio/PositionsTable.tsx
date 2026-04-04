@@ -141,8 +141,8 @@ export default function PositionsTable({
                 const hi = thesisSignal.bandMax.toFixed(0);
                 const above = thesisSignal.averageMidPct > thesisSignal.bandMax;
                 thesisMisalignedPlain = above
-                  ? `Thesis expectations higher than band (~${avg}%/yr vs ~${lo}–${hi}%).`
-                  : `Thesis expectations lower than band (~${avg}%/yr vs ~${lo}–${hi}%).`;
+                  ? `Thesis expectations higher than band (${avg}% vs ${lo}–${hi}%).`
+                  : `Thesis expectations lower than band (${avg}% vs ${lo}–${hi}%).`;
               }
               return (
                 <Fragment key={section.bandId ?? 'none'}>
@@ -177,7 +177,7 @@ export default function PositionsTable({
                       )}
                       {thesisMisalignedPlain != null && (
                         <span
-                          className="font-normal ml-2 text-xs text-gray-500"
+                          className={`font-normal ml-2 ${isViolation ? 'text-red-800' : 'text-gray-600'}`}
                           title="Average implied return from linked theses vs this band’s expected return range in settings."
                         >
                           {thesisMisalignedPlain}

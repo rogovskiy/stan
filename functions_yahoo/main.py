@@ -67,7 +67,11 @@ initialize_app()
 from firebase_functions import pubsub_fn
 
 from yahoo.refresh_driver import refresh_yahoo_data
-from services.job_run_service import record_job_run, JOB_TYPE_PRICE_REFRESH
+from services.job_run_service import (
+    record_job_run,
+    JOB_TYPE_PRICE_REFRESH,
+    JOB_TYPE_QUARTERLY_TIMESERIES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +79,7 @@ logger = logging.getLogger(__name__)
 @pubsub_fn.on_message_published(
     topic="yf-refresh-requests",
     memory=512,
-    timeout_sec=120,
+    timeout_sec=180,
     concurrency=2,
     max_instances=2,
 )
@@ -110,18 +114,38 @@ def yahoo_refresh(event: pubsub_fn.CloudEvent[pubsub_fn.MessagePublishedData]) -
 
     try:
         result = refresh_yahoo_data(ticker, verbose=True)
+        finished_at = datetime.utcnow()
         record_job_run(
             JOB_TYPE_PRICE_REFRESH,
             execution_id,
             "success",
             entity=ticker,
             started_at=started_at,
-            finished_at=datetime.utcnow(),
+            finished_at=finished_at,
             payload={
                 "success": result.get("success"),
                 "results": result.get("results", {}),
             },
         )
+
+        qt = result.get("results", {}).get("quarterly_timeseries")
+        if qt and not qt.get("skipped"):
+            qt_exec_id = (
+                f"{execution_id}-quarterly-timeseries"
+                if execution_id
+                else str(uuid.uuid4())
+            )
+            record_job_run(
+                JOB_TYPE_QUARTERLY_TIMESERIES,
+                qt_exec_id,
+                "success" if qt.get("success") else "error",
+                entity=ticker,
+                error_message=qt.get("error"),
+                started_at=qt.get("started_at"),
+                finished_at=qt.get("finished_at"),
+                payload=qt.get("payload_summary"),
+            )
+
         logger.info("Yahoo refresh done for %s: success=%s", ticker, result.get("success"))
     except Exception as e:
         logger.exception("Yahoo refresh failed for %s: %s", ticker, e)

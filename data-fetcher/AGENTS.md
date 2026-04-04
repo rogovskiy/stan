@@ -68,7 +68,7 @@ python generate_quarterly_summary.py --ticker AAPL
 ### Data Generation
 - `generate_company_summary.py` - Generate company summaries
 - `generate_quarterly_summary.py` - Generate quarterly analysis summaries
-- `generate_quarterly_timeseries.py` - Generate quarterly timeseries data
+- Quarterly timeseries generation lives in `functions_yahoo/yahoo/generate_quarterly_timeseries.py`. Backfill Firestore `timeseries/quarterly` from `quarters/*`: from `functions_yahoo`, `make backfill-quarterly TICKER=SYM` or `TICKERS="A B"` (see `functions_yahoo/README.md`).
 
 ### Utilities
 - `download_max_data.py` - Main script for downloading maximum historical data

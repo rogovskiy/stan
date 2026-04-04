@@ -49,14 +49,19 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    from portfolio_channel_exposure import EXIT_SKIPPED, run_channel_exposure
+    from portfolio_channel_exposure import EXIT_OK, EXIT_SKIPPED, run_channel_exposure
+    from portfolio_stress_drawdown import EXIT_SKIPPED as STRESS_SKIP, run_stress_drawdown
 
     rc = run_channel_exposure(
         args.portfolio_id, period="1y", verbose=True, quiet=False
     )
-    if rc == EXIT_SKIPPED:
+    if rc != EXIT_OK and rc != EXIT_SKIPPED:
+        sys.exit(rc)
+
+    rc2 = run_stress_drawdown(args.portfolio_id, verbose=True, quiet=False)
+    if rc2 == STRESS_SKIP:
         sys.exit(0)
-    sys.exit(rc)
+    sys.exit(rc2)
 
 
 if __name__ == "__main__":

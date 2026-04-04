@@ -74,7 +74,8 @@ const STRESS_DRAWDOWN_PLACEHOLDER = 0;
 export function computePortfolioKpis(
   dates: string[],
   portfolio: number[],
-  benchmark: number[]
+  benchmark: number[],
+  options?: { stressDrawdownPct?: number | null }
 ): PortfolioKpis {
   const n = dates.length;
   if (n < 2 || portfolio.length !== n || benchmark.length !== n) {
@@ -87,7 +88,10 @@ export function computePortfolioKpis(
       benchmarkMaxDrawdown: null,
       benchmarkMaxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
-      stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
+      stressDrawdown:
+        options?.stressDrawdownPct != null && Number.isFinite(options.stressDrawdownPct)
+          ? options.stressDrawdownPct
+          : STRESS_DRAWDOWN_PLACEHOLDER,
     };
   }
 
@@ -129,7 +133,10 @@ export function computePortfolioKpis(
       benchmarkMaxDrawdown: null,
       benchmarkMaxDrawdownRecovery: null,
       expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
-      stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
+      stressDrawdown:
+        options?.stressDrawdownPct != null && Number.isFinite(options.stressDrawdownPct)
+          ? options.stressDrawdownPct
+          : STRESS_DRAWDOWN_PLACEHOLDER,
     };
   }
 
@@ -226,7 +233,10 @@ export function computePortfolioKpis(
     benchmarkMaxDrawdown,
     benchmarkMaxDrawdownRecovery,
     expectedReturn: EXPECTED_RETURN_PLACEHOLDER,
-    stressDrawdown: STRESS_DRAWDOWN_PLACEHOLDER,
+    stressDrawdown:
+      options?.stressDrawdownPct != null && Number.isFinite(options.stressDrawdownPct)
+        ? options.stressDrawdownPct
+        : STRESS_DRAWDOWN_PLACEHOLDER,
   };
 }
 

@@ -1,6 +1,18 @@
 # Yahoo refresh function (codebase: yahoo)
 
-Pub/Sub-triggered function that refreshes Yahoo Finance data (price, earnings, analyst, splits) for one ticker per message. The scheduler in `functions` publishes to `yf-refresh-requests`; this function subscribes to that topic.
+Pub/Sub-triggered function that refreshes Yahoo Finance data (price, earnings, analyst, splits, options) for one ticker per message. When earnings or split history updates, it also rebuilds `tickers/{TICKER}/timeseries/quarterly` (see `yahoo/generate_quarterly_timeseries.py`). The scheduler in `functions` publishes to `yf-refresh-requests`; this function subscribes to that topic.
+
+**Backfill `timeseries/quarterly` for one or more tickers** (reads all `tickers/{TICKER}/quarters/*` in Firestore, writes `tickers/{TICKER}/timeseries/quarterly`):
+
+```bash
+cd functions_yahoo
+source venv/bin/activate
+make backfill-quarterly TICKER=ADBE
+# multiple symbols:
+make backfill-quarterly TICKERS="ADBE MSFT AAPL"
+```
+
+Equivalent manual command (needs vendored `services` on the path): `PYTHONPATH=vendor:. python -m yahoo.generate_quarterly_timeseries …` after `make vendor`. Uses `../data-fetcher/.env.local` for Firebase (loaded by the CLI). A separate `job_runs` document with job type `quarterly_timeseries` is written only when that step runs **inside the deployed** Yahoo refresh (not for this local backfill).
 
 ## Make targets
 
@@ -12,6 +24,7 @@ Run from the `functions_yahoo` directory:
 | `make deploy` | Deploy the Yahoo Pub/Sub function. Populates `vendor/` if missing. |
 | `make vendor` | Copy shared code from `../data-fetcher/` into `vendor/` (done automatically by `run` and `deploy`). Does not copy `yahoo/` (lives in this package). |
 | `make trigger-function` | Publish one message to `yf-refresh-requests` to trigger the deployed function (default ticker AAPL). Override: `make trigger-function TICKER=MSFT PROJECT_ID=my-project`. |
+| `make backfill-quarterly` | Recompute `timeseries/quarterly` from Firestore quarter docs. `TICKER=SYM` (default AAPL) or `TICKERS="A B C"`. Needs venv + `../data-fetcher/.env.local`. |
 
 The `vendor/` directory is gitignored and is filled by the Makefile (services, yfinance_service, financial_data_validator, cloud_logging_setup). The `yahoo/` package lives in this repo.
 

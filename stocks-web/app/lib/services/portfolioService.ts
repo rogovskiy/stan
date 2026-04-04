@@ -108,6 +108,29 @@ export interface ChannelExposures {
   channels?: Record<string, ChannelExposure>;
 }
 
+/** From portfolio_stress_drawdown.py (scheduled job). */
+export interface StressDrawdownPosition {
+  ticker: string;
+  quantity: number;
+  stressDrawdownPct: number | null;
+  method: 'normal_multiple' | 'historical_percentile' | 'none';
+  valueUsd: number | null;
+  /** Trailing P/E when method is normal_multiple (price ÷ TTM EPS). */
+  currentPe?: number | null;
+  /** Historical average P/E when method is normal_multiple. */
+  normalPe?: number | null;
+}
+
+export interface StressDrawdown {
+  computedAt?: string;
+  percentile?: number;
+  /** Years of daily prices used for percentile / normal P/E window (scheduled job). */
+  historyYears?: number;
+  aggregatePct?: number | null;
+  positions?: StressDrawdownPosition[];
+  warnings?: string[];
+}
+
 export interface Portfolio {
   id?: string;
   name: string;
@@ -118,6 +141,8 @@ export interface Portfolio {
   bands?: Band[];
   /** Channel exposures (from portfolio_channel_exposure.py). */
   channelExposures?: ChannelExposures;
+  /** Stress drawdown (from portfolio_stress_drawdown.py). */
+  stressDrawdown?: StressDrawdown;
   positions?: Position[];
   createdAt?: string;
   updatedAt?: string;
@@ -204,6 +229,7 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       : [];
 
     const channelExposures = portfolioData.channelExposures ?? undefined;
+    const stressDrawdown = portfolioData.stressDrawdown ?? undefined;
 
     return {
       id: portfolioSnap.id,
@@ -213,6 +239,7 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       cashBalance,
       bands,
       channelExposures,
+      stressDrawdown,
       positions: positions.sort((a, b) => a.ticker.localeCompare(b.ticker)),
       createdAt: portfolioData.createdAt?.toDate?.()?.toISOString() || portfolioData.createdAt,
       updatedAt: portfolioData.updatedAt?.toDate?.()?.toISOString() || portfolioData.updatedAt,

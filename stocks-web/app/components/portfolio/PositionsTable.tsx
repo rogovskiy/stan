@@ -1,7 +1,7 @@
 'use client';
 
-import { Fragment, type RefObject } from 'react';
-import type { Portfolio, Position } from '../../lib/services/portfolioService';
+import { Fragment, useMemo, type RefObject } from 'react';
+import type { Portfolio, Position, StressDrawdownPosition } from '../../lib/services/portfolioService';
 import type { PositionThesisPayload } from '../../lib/types/positionThesis';
 import {
   computeBandThesisReturnSignal,
@@ -44,6 +44,14 @@ export default function PositionsTable({
 }) {
   const sections = buildPositionSections(selectedPortfolio);
 
+  const stressRowByTicker = useMemo(() => {
+    const m = new Map<string, StressDrawdownPosition>();
+    for (const row of selectedPortfolio.stressDrawdown?.positions ?? []) {
+      m.set(row.ticker.toUpperCase(), row);
+    }
+    return m;
+  }, [selectedPortfolio.stressDrawdown?.positions]);
+
   const toolbar = (
     <>
       <input
@@ -82,7 +90,12 @@ export default function PositionsTable({
               <th className="text-right py-3 px-4 font-medium text-gray-700">Shares</th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Weight %</th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Return (since buy)</th>
-              <th className="text-right py-3 px-4 font-medium text-gray-700">Drawdown Impact %</th>
+              <th
+                className="text-right py-3 px-4 font-medium text-gray-700"
+                title="Weight % × name stress DD — contribution to portfolio aggregate stress (not allocation %)"
+              >
+                Weighted stress DD %
+              </th>
               <th className="text-left py-3 px-4 font-medium text-gray-700">
                 <div className="inline-flex items-center gap-1.5">
                   <span>Thesis Status</span>
@@ -208,6 +221,15 @@ export default function PositionsTable({
                       !thesisPayloadsLoading && section.band && tid
                         ? computePositionThesisReturnRowIssue(section.band, position, thesisPayloadByThesisId[tid])
                         : 'none';
+                    const stressRow = stressRowByTicker.get(tickerKey);
+                    const stressPct = stressRow?.stressDrawdownPct ?? null;
+                    const weightedStressPct =
+                      weightPct != null &&
+                      stressPct != null &&
+                      Number.isFinite(stressPct) &&
+                      Number.isFinite(weightPct)
+                        ? (weightPct / 100) * stressPct
+                        : null;
                     return (
                       <tr
                         key={position.id}
@@ -250,7 +272,11 @@ export default function PositionsTable({
                             ''
                           )}
                         </td>
-                        <td className="py-3 px-4 text-right text-gray-700" />
+                        <td className="py-3 px-4 text-right text-gray-700">
+                          {weightedStressPct != null && Number.isFinite(weightedStressPct)
+                            ? `${weightedStressPct.toFixed(2)}%`
+                            : '—'}
+                        </td>
                         <td className="py-3 px-4 text-gray-700">
                           {position.thesisId ? (
                             <PositionThesisCardHoverTrigger
@@ -258,6 +284,11 @@ export default function PositionsTable({
                               thesisPayload={tid ? thesisPayloadByThesisId[tid] : undefined}
                               loading={thesisPayloadsLoading}
                               bandExpectedReturn={bandERForHover}
+                              rawStressDrawdownPct={
+                                stressPct != null && Number.isFinite(stressPct) ? stressPct : null
+                              }
+                              stressRow={stressRow ?? null}
+                              stressPercentile={selectedPortfolio.stressDrawdown?.percentile ?? null}
                             >
                               <button
                                 type="button"

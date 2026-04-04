@@ -13,6 +13,7 @@ Integration (when ready):
   )
 - functions_macro: after macro_refresh, write one run (e.g. with uuid as execution_id).
 - functions_portfolio: portfolio_weekly_publish and portfolio_channel_exposure_refresh call record_job_run.
+- functions_yahoo: yahoo_refresh records `quarterly_timeseries` when the quarterly aggregate step runs (after earnings or splits update).
 """
 
 import os
@@ -37,6 +38,8 @@ JOB_TYPE_YOUTUBE = "youtube"
 JOB_TYPE_YOUTUBE_TRANSCRIPT = "youtube_transcript"
 JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE = "portfolio_channel_exposure"
 JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE_PUBLISH = "portfolio_channel_exposure_publish"
+JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN = "portfolio_stress_drawdown"
+JOB_TYPE_QUARTERLY_TIMESERIES = "quarterly_timeseries"
 
 
 def _is_cloud_run() -> bool:

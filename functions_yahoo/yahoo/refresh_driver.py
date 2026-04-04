@@ -21,6 +21,7 @@ from yahoo.refresh_earnings_data import refresh_earnings_data
 from yahoo.refresh_analyst_data import refresh_analyst_data
 from yahoo.refresh_split_history import refresh_split_history
 from yahoo.refresh_options_data import refresh_options_data
+from yahoo.refresh_quarterly_timeseries import refresh_quarterly_timeseries
 from yfinance_service import YFinanceService
 
 # Repo root (parent of functions_yahoo) for option_data output when local; /tmp when deployed (writable)
@@ -148,6 +149,29 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
         }
         results['success'] = False
 
+    # Quarterly timeseries (Firestore aggregate) after splits so EPS adjustment uses fresh split history
+    earnings_for_qt = results['results'].get('earnings', {})
+    splits_for_qt = results['results'].get('splits', {})
+    if skip_earnings_analyst:
+        results['results']['quarterly_timeseries'] = {
+            'skipped': True,
+            'reason': 'etf_or_no_fundamentals',
+        }
+    elif earnings_for_qt.get('updated') or splits_for_qt.get('updated'):
+        qt = refresh_quarterly_timeseries(ticker, verbose=verbose)
+        results['results']['quarterly_timeseries'] = qt
+        if not qt.get('success'):
+            logger.error(
+                'Quarterly timeseries failed for %s: %s',
+                ticker,
+                qt.get('error') or 'unknown',
+            )
+    else:
+        results['results']['quarterly_timeseries'] = {
+            'skipped': True,
+            'reason': 'no_earnings_or_split_update',
+        }
+
     # Refresh options data (snapshot to option_data/<ticker>/<as_of>.csv.gz)
     try:
         if verbose:
@@ -208,6 +232,17 @@ def refresh_yahoo_data(ticker: str, verbose: bool = False) -> Dict[str, Any]:
             logger.info(f"Splits: - {splits.get('reason', 'No update needed')}")
         else:
             logger.info(f"Splits: ✗ Error: {splits.get('error', 'Unknown')}")
+
+        qt = results['results'].get('quarterly_timeseries', {})
+        if qt.get('skipped'):
+            logger.info(f"Quarterly timeseries: - skipped ({qt.get('reason', '')})")
+        elif qt.get('success'):
+            ps = qt.get('payload_summary') or {}
+            logger.info(
+                f"Quarterly timeseries: ✓ {ps.get('total_quarters', 0)} quarters (latest {ps.get('latest_quarter', '—')})"
+            )
+        else:
+            logger.info(f"Quarterly timeseries: ✗ Error: {qt.get('error', 'Unknown')}")
 
         options = results['results'].get('options', {})
         if options.get('success'):

@@ -12,13 +12,17 @@ export interface LiveThesisCardPanelProps {
   /** When set with subtitle, tints band position lines (portfolio hover). */
   forwardReturnSubtitleTone?: 'above_band' | 'below_band';
   downside?: string;
+  /** Small line under downside (e.g. source label). */
+  downsideSubtitle?: string;
   volRegime?: string;
   ruleState?: string;
   recommendation?: string;
 }
 
 /** Empty-state placeholders — no sample narrative. */
-const defaults: Required<Omit<LiveThesisCardPanelProps, 'forwardReturnSubtitle' | 'forwardReturnSubtitleTone'>> & {
+const defaults: Required<
+  Omit<LiveThesisCardPanelProps, 'forwardReturnSubtitle' | 'forwardReturnSubtitleTone' | 'downsideSubtitle'>
+> & {
   forwardReturnSubtitle: string;
   forwardReturnSubtitleTone: undefined;
 } = {
@@ -43,6 +47,7 @@ export function LiveThesisCardPanel({
   forwardReturnSubtitle = defaults.forwardReturnSubtitle,
   forwardReturnSubtitleTone = defaults.forwardReturnSubtitleTone,
   downside = defaults.downside,
+  downsideSubtitle,
   volRegime = defaults.volRegime,
   ruleState = defaults.ruleState,
   recommendation = defaults.recommendation,
@@ -75,6 +80,9 @@ export function LiveThesisCardPanel({
         <div className="rounded-xl bg-white border border-slate-200 p-3">
           <div className="text-slate-500">Downside</div>
           <div className="text-lg font-semibold">{downside}</div>
+          {downsideSubtitle ? (
+            <div className="text-xs text-slate-500 mt-1 leading-snug">{downsideSubtitle}</div>
+          ) : null}
         </div>
         <div className="rounded-xl bg-white border border-slate-200 p-3">
           <div className="text-slate-500">Vol regime</div>

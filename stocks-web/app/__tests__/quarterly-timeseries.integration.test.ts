@@ -36,7 +36,7 @@ describe('Quarterly Time Series Integration Tests', () => {
       console.log('Latest Revenue:', result.revenue.latest_value);
     } else {
       console.log('No quarterly timeseries data found for AAPL');
-      console.log('Make sure to run: python generate_quarterly_timeseries.py AAPL');
+      console.log('Make sure to run: cd functions_yahoo && make backfill-quarterly TICKER=AAPL');
     }
   }, 30000); // 30 second timeout for Firebase operations
 

@@ -66,10 +66,16 @@ from portfolio_channel_exposure import (
     EXIT_SKIPPED,
     run_channel_exposure,
 )
+from portfolio_stress_drawdown import (
+    EXIT_OK as STRESS_EXIT_OK,
+    EXIT_SKIPPED as STRESS_EXIT_SKIPPED,
+    run_stress_drawdown,
+)
 from services.job_run_service import (
     record_job_run,
     JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE,
     JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE_PUBLISH,
+    JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
 )
 from services.portfolio_service import PortfolioService
 
@@ -218,6 +224,7 @@ def portfolio_channel_exposure_refresh(
 
     pid = str(portfolio_id)
     execution_id = _resolve_invocation_execution_id()
+    stress_execution_id = f"{execution_id}-stress-drawdown"
     p_started = datetime.utcnow()
     try:
         rc = run_channel_exposure(
@@ -238,18 +245,18 @@ def portfolio_channel_exposure_refresh(
                 payload={"skipped": True},
             )
             logger.info("Channel exposure skipped for %s (insufficient data)", pid)
-            return
-        if rc != EXIT_OK:
+        elif rc != EXIT_OK:
             raise RuntimeError(f"exit code {rc}")
-        record_job_run(
-            JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE,
-            execution_id,
-            "success",
-            entity=pid,
-            started_at=p_started,
-            finished_at=datetime.utcnow(),
-        )
-        logger.info("Channel exposure done for %s", pid)
+        else:
+            record_job_run(
+                JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE,
+                execution_id,
+                "success",
+                entity=pid,
+                started_at=p_started,
+                finished_at=datetime.utcnow(),
+            )
+            logger.info("Channel exposure done for %s", pid)
     except Exception as e:
         logger.exception("Channel exposure failed for %s: %s", pid, e)
         record_job_run(
@@ -262,3 +269,55 @@ def portfolio_channel_exposure_refresh(
             finished_at=datetime.utcnow(),
         )
         raise
+    finally:
+        s_started = datetime.utcnow()
+        try:
+            rc_stress = run_stress_drawdown(
+                pid,
+                verbose=True,
+                save_to_firebase=True,
+                quiet=True,
+            )
+            if rc_stress == STRESS_EXIT_SKIPPED:
+                record_job_run(
+                    JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
+                    stress_execution_id,
+                    "success",
+                    entity=pid,
+                    started_at=s_started,
+                    finished_at=datetime.utcnow(),
+                    payload={"skipped": True},
+                )
+                logger.info("Stress drawdown skipped for %s (no positions)", pid)
+            elif rc_stress != STRESS_EXIT_OK:
+                record_job_run(
+                    JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
+                    stress_execution_id,
+                    "error",
+                    entity=pid,
+                    error_message=f"exit code {rc_stress}",
+                    started_at=s_started,
+                    finished_at=datetime.utcnow(),
+                )
+                logger.warning("Stress drawdown non-OK exit for %s: %s", pid, rc_stress)
+            else:
+                record_job_run(
+                    JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
+                    stress_execution_id,
+                    "success",
+                    entity=pid,
+                    started_at=s_started,
+                    finished_at=datetime.utcnow(),
+                )
+                logger.info("Stress drawdown done for %s", pid)
+        except Exception as es:
+            logger.exception("Stress drawdown failed for %s: %s", pid, es)
+            record_job_run(
+                JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
+                stress_execution_id,
+                "error",
+                entity=pid,
+                error_message=str(es),
+                started_at=s_started,
+                finished_at=datetime.utcnow(),
+            )

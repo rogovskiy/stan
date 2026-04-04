@@ -91,6 +91,29 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
   const [error, setError] = useState<string | null>(null);
   const [stressPanelOpen, setStressPanelOpen] = useState(false);
   const [stressParams, setStressParams] = useState<StressParams>(DEFAULT_STRESS_PARAMS);
+  /** Value-weighted stress drawdown from scheduled job (portfolio doc). */
+  const [scheduledStressDrawdownPct, setScheduledStressDrawdownPct] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/portfolios/${portfolioId}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        const agg = json?.data?.stressDrawdown?.aggregatePct;
+        if (typeof agg === 'number' && Number.isFinite(agg)) {
+          setScheduledStressDrawdownPct(agg);
+        } else {
+          setScheduledStressDrawdownPct(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setScheduledStressDrawdownPct(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,8 +158,10 @@ export default function PortfolioBenchmarkChart({ portfolioId }: PortfolioBenchm
 
   const kpis = useMemo(() => {
     if (!data || data.dates.length < 2) return null;
-    return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark);
-  }, [data]);
+    return computePortfolioKpis(data.dates, data.series.portfolio, data.series.benchmark, {
+      stressDrawdownPct: scheduledStressDrawdownPct,
+    });
+  }, [data, scheduledStressDrawdownPct]);
 
   const chartData = useMemo(() => {
     if (!data) return [];

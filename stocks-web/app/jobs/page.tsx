@@ -5,6 +5,7 @@ import AppNavigation from '../components/AppNavigation';
 
 const JOB_TYPES = [
   'price_refresh',
+  'quarterly_timeseries',
   'macro',
   'ir_scan',
   'youtube',
@@ -31,6 +32,7 @@ const LOGGING_SERVICE_BY_JOB_TYPE: Partial<Record<(typeof JOB_TYPES)[number], st
   macro: 'macro-refresh',
   // functions_yahoo deploys `yahoo_refresh` → Cloud Run service name is typically `yahoo-refresh`
   price_refresh: 'yahoo-refresh',
+  quarterly_timeseries: 'yahoo-refresh',
   // functions_youtube deploys `youtube_refresh` → Cloud Run service name is typically `youtube-refresh`
   youtube: 'youtube-refresh',
   youtube_transcript: 'youtube-transcript-analysis',

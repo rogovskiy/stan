@@ -26,7 +26,7 @@ export async function GET(
         { 
           error: 'Quarterly time series data not found',
           message: `No time series data found for ${ticker}. Run the quarterly time series generator script first.`,
-          suggestion: `python generate_quarterly_timeseries.py ${ticker}`
+          suggestion: `cd functions_yahoo && make backfill-quarterly TICKER=${ticker}`
         },
         { status: 404 }
       );

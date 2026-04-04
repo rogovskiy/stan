@@ -13,10 +13,71 @@ import { createPortal } from 'react-dom';
 import { LiveThesisCardPanel, type LiveThesisCardPanelProps } from '@/app/components/position-thesis/LiveThesisCard';
 import { thesisPayloadToLiveCardPanelProps } from '@/app/lib/thesisPayloadToLiveCardPanel';
 import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { StressDrawdownPosition } from '@/app/lib/services/portfolioService';
 
 const HOVER_LEAVE_MS = 200;
 const VIEWPORT_MARGIN = 8;
 const GAP = 6;
+
+function stressDownsideFromRow(
+  rawStressDrawdownPct: number | null | undefined,
+  stressRow: StressDrawdownPosition | null | undefined,
+  stressPercentile: number | null | undefined,
+): { downside: string; downsideSubtitle?: string } | null {
+  if (rawStressDrawdownPct == null || !Number.isFinite(rawStressDrawdownPct)) {
+    return null;
+  }
+  const downside = `${rawStressDrawdownPct.toFixed(1)}%`;
+  const method = stressRow?.method;
+  const cur = stressRow?.currentPe;
+  const norm = stressRow?.normalPe;
+  // Prefer P/E copy whenever the job saved multiples (even if method string is stale on the doc).
+  if (
+    cur != null &&
+    norm != null &&
+    Number.isFinite(cur) &&
+    Number.isFinite(norm) &&
+    norm > 0
+  ) {
+    const cx = cur.toFixed(1);
+    const nx = norm.toFixed(1);
+    let downsideSubtitle: string;
+    if (cur < norm) {
+      downsideSubtitle = `Trades below normal P/E — about ${cx}× vs a typical ~${nx}×`;
+    } else if (cur > norm) {
+      downsideSubtitle = `Trades above normal P/E — about ${cx}× vs a typical ~${nx}×`;
+    } else {
+      downsideSubtitle = `Near the historical average P/E (~${nx}×)`;
+    }
+    return {
+      downside,
+      downsideSubtitle,
+    };
+  }
+
+  if (method === 'normal_multiple') {
+    return {
+      downside,
+      downsideSubtitle: 'Drawdown if price reverts to trailing EPS × historical average P/E',
+    };
+  }
+
+  if (method === 'historical_percentile') {
+    const p =
+      stressPercentile != null && Number.isFinite(stressPercentile)
+        ? Math.round(stressPercentile * 100)
+        : null;
+    return {
+      downside,
+      downsideSubtitle:
+        p != null
+          ? `~${p}th percentile of rolling drawdowns (bounded price history)`
+          : 'Rolling drawdown percentile (bounded daily prices)',
+    };
+  }
+
+  return { downside };
+}
 
 /**
  * Wraps the thesis icon (or any control): hover shows the same Live Thesis Card layout as the (i) demo,
@@ -27,6 +88,12 @@ export default function PositionThesisCardHoverTrigger({
   thesisPayload,
   loading = false,
   bandExpectedReturn,
+  /** Raw stress DD % for this name; shown in Downside on the snapshot card. */
+  rawStressDrawdownPct,
+  /** Per-position row from portfolio stressDrawdown (method, P/E breakdown for stocks). */
+  stressRow,
+  /** Portfolio-level percentile (e.g. 0.9) for historical_percentile subtitle. */
+  stressPercentile,
   children,
 }: {
   ticker: string;
@@ -34,6 +101,9 @@ export default function PositionThesisCardHoverTrigger({
   loading?: boolean;
   /** Band target %/yr (min–max); used only to tint the growth+yield subtitle when above/below band. */
   bandExpectedReturn?: { min: number; max: number } | null;
+  rawStressDrawdownPct?: number | null;
+  stressRow?: StressDrawdownPosition | null;
+  stressPercentile?: number | null;
   children: ReactElement;
 }) {
   const [open, setOpen] = useState(false);
@@ -50,6 +120,7 @@ export default function PositionThesisCardHoverTrigger({
   }, []);
 
   const panelProps: LiveThesisCardPanelProps = useMemo(() => {
+    const stressDown = stressDownsideFromRow(rawStressDrawdownPct, stressRow, stressPercentile);
     if (loading) {
       const base = thesisPayloadToLiveCardPanelProps(null, bandExpectedReturn);
       return {
@@ -57,10 +128,15 @@ export default function PositionThesisCardHoverTrigger({
         forwardReturn: '…',
         forwardReturnSubtitle: '',
         forwardReturnSubtitleTone: undefined,
+        ...(stressDown ?? {}),
       };
     }
-    return thesisPayloadToLiveCardPanelProps(thesisPayload, bandExpectedReturn);
-  }, [loading, thesisPayload, bandExpectedReturn]);
+    const base = thesisPayloadToLiveCardPanelProps(thesisPayload, bandExpectedReturn);
+    if (stressDown) {
+      return { ...base, ...stressDown };
+    }
+    return base;
+  }, [loading, thesisPayload, bandExpectedReturn, rawStressDrawdownPct, stressRow, stressPercentile]);
 
   const computePosition = useCallback(() => {
     const trigger = wrapRef.current;

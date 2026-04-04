@@ -4,7 +4,7 @@
 
 3. python download_max_data.py TEM
 
-4. python  generate_quarterly_timeseries.py TEM
+4. From repo `functions_yahoo`: `source venv/bin/activate && make vendor && make backfill-quarterly TICKER=TEM` (or `PYTHONPATH=vendor:. python -m yahoo.generate_quarterly_timeseries TEM`)
 
 5. Add IR urls in the web 
 

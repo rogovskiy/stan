@@ -50,6 +50,7 @@ class PortfolioService(FirebaseBaseService):
             "cashBalance": data.get("cashBalance", 0),
             "bands": data.get("bands", []),
             "positions": positions,
+            "stressDrawdown": data.get("stressDrawdown"),
         }
 
     def get_snapshots_up_to_date(
@@ -110,3 +111,12 @@ class PortfolioService(FirebaseBaseService):
             }
         }
         ref.update(payload)
+
+    def save_stress_drawdown(
+        self,
+        portfolio_id: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Write stressDrawdown blob to the portfolio document (from portfolio_stress_drawdown job)."""
+        ref = self.db.collection("portfolios").document(portfolio_id)
+        ref.set({"stressDrawdown": payload}, merge=True)

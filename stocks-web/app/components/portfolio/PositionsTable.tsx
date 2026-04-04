@@ -92,9 +92,9 @@ export default function PositionsTable({
               <th className="text-right py-3 px-4 font-medium text-gray-700">Return (since buy)</th>
               <th
                 className="text-right py-3 px-4 font-medium text-gray-700"
-                title="Weight % × name stress DD — contribution to portfolio aggregate stress (not allocation %)"
+                title="Position weight × stress drawdown — this name's contribution to total portfolio stress"
               >
-                Weighted stress DD %
+                Weighted risk
               </th>
               <th className="text-left py-3 px-4 font-medium text-gray-700">
                 <div className="inline-flex items-center gap-1.5">

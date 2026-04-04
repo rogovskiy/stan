@@ -37,7 +37,7 @@ export default function PortfolioManagerSidebar({
   portfolios,
   watchlistItems,
   selectedPortfolio,
-  loadPortfolio,
+  onSelectPortfolioId,
   onOpenCreatePortfolio,
   watchlistSignedIn,
   onWatchlistSignIn,
@@ -47,7 +47,7 @@ export default function PortfolioManagerSidebar({
   portfolios: Portfolio[];
   watchlistItems: WatchlistItem[];
   selectedPortfolio: Portfolio | null;
-  loadPortfolio: (id: string) => void;
+  onSelectPortfolioId: (id: string) => void;
   onOpenCreatePortfolio: () => void;
   watchlistSignedIn: boolean;
   onWatchlistSignIn: () => void;
@@ -116,9 +116,9 @@ export default function PortfolioManagerSidebar({
                   key={portfolio.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => loadPortfolio(portfolio.id!)}
+                  onClick={() => onSelectPortfolioId(portfolio.id!)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') loadPortfolio(portfolio.id!);
+                    if (e.key === 'Enter' || e.key === ' ') onSelectPortfolioId(portfolio.id!);
                   }}
                   className={`p-3 mb-2 rounded-lg cursor-pointer transition-colors ${
                     selectedPortfolio?.id === portfolio.id

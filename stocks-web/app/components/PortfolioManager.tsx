@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Position,
@@ -31,10 +31,11 @@ import WatchlistItemModal from './portfolio/WatchlistItemModal';
 import WatchlistMainPanel from './portfolio/WatchlistMainPanel';
 
 interface PortfolioManagerProps {
-  initialPortfolioId?: string;
+  /** Set when the route is `/portfolios/[portfolioId]`; omitted on `/portfolios`. */
+  portfolioIdFromRoute?: string;
 }
 
-export default function PortfolioManager({ initialPortfolioId }: PortfolioManagerProps) {
+export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioManagerProps) {
   const router = useRouter();
   const { user, signInWithGoogle } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('portfolios');
@@ -114,15 +115,6 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
       fetchWatchlistItems();
     }
   }, [viewMode, user]);
-
-  useEffect(() => {
-    if (initialPortfolioId && portfolios.length > 0) {
-      const portfolio = portfolios.find((p) => p.id === initialPortfolioId);
-      if (portfolio) {
-        loadPortfolio(portfolio.id!);
-      }
-    }
-  }, [initialPortfolioId, portfolios]);
 
   useEffect(() => {
     if (selectedPortfolio?.id) {
@@ -353,9 +345,6 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
 
       if (result.success) {
         setPortfolios(result.data);
-        if (result.data.length > 0 && !selectedPortfolio) {
-          loadPortfolio(result.data[0].id!);
-        }
       } else {
         setError(result.error || 'Failed to fetch portfolios');
       }
@@ -366,7 +355,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     }
   };
 
-  const loadPortfolio = async (portfolioId: string) => {
+  const loadPortfolio = useCallback(async (portfolioId: string) => {
     try {
       setLoading(true);
       const response = await fetch(`/api/portfolios/${portfolioId}`);
@@ -382,7 +371,44 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'portfolios') return;
+
+    // While the portfolio list is still loading, `portfolios` is [] — do not treat that as
+    // "user has zero portfolios" or we strip `/portfolios/[id]` from the URL prematurely.
+    if (portfolios.length === 0) {
+      if (portfolioIdFromRoute && !loading) {
+        router.replace('/portfolios', { scroll: false });
+      }
+      return;
+    }
+
+    const firstId = portfolios[0].id!;
+    if (!portfolioIdFromRoute) {
+      router.replace(`/portfolios/${encodeURIComponent(firstId)}`, { scroll: false });
+      return;
+    }
+
+    const valid = portfolios.some((p) => p.id === portfolioIdFromRoute);
+    if (!valid) {
+      router.replace(`/portfolios/${encodeURIComponent(firstId)}`, { scroll: false });
+      return;
+    }
+
+    if (selectedPortfolio?.id !== portfolioIdFromRoute) {
+      void loadPortfolio(portfolioIdFromRoute);
+    }
+  }, [
+    viewMode,
+    portfolios,
+    portfolioIdFromRoute,
+    selectedPortfolio?.id,
+    loadPortfolio,
+    router,
+    loading,
+  ]);
 
   const handleCreatePortfolio = async () => {
     if (!portfolioName.trim()) {
@@ -408,7 +434,7 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         setPortfolioName('');
         setPortfolioDescription('');
         if (result.data.id) {
-          loadPortfolio(result.data.id);
+          router.replace(`/portfolios/${encodeURIComponent(result.data.id)}`, { scroll: false });
         }
       } else {
         setError(result.error || 'Failed to create portfolio');
@@ -1082,7 +1108,9 @@ export default function PortfolioManager({ initialPortfolioId }: PortfolioManage
         portfolios={portfolios}
         watchlistItems={watchlistItems}
         selectedPortfolio={selectedPortfolio}
-        loadPortfolio={loadPortfolio}
+        onSelectPortfolioId={(id) => {
+          router.replace(`/portfolios/${encodeURIComponent(id)}`, { scroll: false });
+        }}
         onOpenCreatePortfolio={() => {
           setShowCreatePortfolio(true);
           setPortfolioName('');

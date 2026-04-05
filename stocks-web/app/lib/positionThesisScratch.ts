@@ -26,6 +26,7 @@ export function scratchPositionThesisPayload(initialTicker = ''): PositionThesis
     downsideScenario: '',
     drivers: [],
     failures: [],
+    returnPhases: [],
     distanceToFailure: '',
     currentVolRegime: '',
     riskPosture: '',

@@ -11,6 +11,8 @@ export interface LiveThesisCardPanelProps {
   forwardReturnSubtitle?: string;
   /** When set with subtitle, tints band position lines (portfolio hover). */
   forwardReturnSubtitleTone?: 'above_band' | 'below_band';
+  /** Active return-phase label from thesis (e.g. "Repricing"). */
+  currentReturnPhase?: string;
   downside?: string;
   /** Small line under downside (e.g. source label). */
   downsideSubtitle?: string;
@@ -19,10 +21,11 @@ export interface LiveThesisCardPanelProps {
 
 /** Empty-state placeholders — no sample narrative. */
 const defaults: Required<
-  Omit<LiveThesisCardPanelProps, 'forwardReturnSubtitle' | 'forwardReturnSubtitleTone' | 'downsideSubtitle'>
+  Omit<LiveThesisCardPanelProps, 'forwardReturnSubtitle' | 'forwardReturnSubtitleTone' | 'currentReturnPhase' | 'downsideSubtitle'>
 > & {
   forwardReturnSubtitle: string;
   forwardReturnSubtitleTone: undefined;
+  currentReturnPhase: undefined;
 } = {
   phaseLabel: 'n/a',
   statusBadge: 'n/a',
@@ -30,6 +33,7 @@ const defaults: Required<
   forwardReturn: '—',
   forwardReturnSubtitle: '',
   forwardReturnSubtitleTone: undefined,
+  currentReturnPhase: undefined,
   downside: 'N/A',
   recommendation: 'n/a',
 };
@@ -42,6 +46,7 @@ export function LiveThesisCardPanel({
   forwardReturn = defaults.forwardReturn,
   forwardReturnSubtitle = defaults.forwardReturnSubtitle,
   forwardReturnSubtitleTone = defaults.forwardReturnSubtitleTone,
+  currentReturnPhase = defaults.currentReturnPhase,
   downside = defaults.downside,
   downsideSubtitle,
   recommendation = defaults.recommendation,
@@ -68,6 +73,11 @@ export function LiveThesisCardPanel({
               }
             >
               {forwardReturnSubtitle}
+            </div>
+          ) : null}
+          {currentReturnPhase ? (
+            <div className="text-xs text-blue-700 mt-1 leading-snug">
+              Phase: {currentReturnPhase}
             </div>
           ) : null}
         </div>

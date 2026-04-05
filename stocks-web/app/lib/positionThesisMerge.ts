@@ -1,4 +1,4 @@
-import type { DriverRow, FailureRow, PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { DriverRow, FailureRow, PositionThesisPayload, ReturnPhaseRow } from '@/app/lib/types/positionThesis';
 
 /** String keys merged by sanitizeFormPatch / mergePositionThesisPayload (excludes ticker). */
 export const POSITION_THESIS_MERGE_STRING_KEYS: (keyof PositionThesisPayload)[] = [
@@ -55,6 +55,32 @@ export function isFailureRow(x: unknown): x is FailureRow {
   );
 }
 
+function toFiniteOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function normalizeReturnPhaseRow(x: unknown): ReturnPhaseRow | null {
+  if (typeof x !== 'object' || x === null) return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.label !== 'string') return null;
+  const durationMonths = Number(o.durationMonths);
+  if (!Number.isFinite(durationMonths) || durationMonths <= 0) return null;
+  return {
+    label: o.label,
+    durationMonths,
+    active: o.active === true,
+    growthMinPct: toFiniteOrNull(o.growthMinPct),
+    growthMaxPct: toFiniteOrNull(o.growthMaxPct),
+    dividendMinPct: toFiniteOrNull(o.dividendMinPct),
+    dividendMaxPct: toFiniteOrNull(o.dividendMaxPct),
+    multipleStart: toFiniteOrNull(o.multipleStart),
+    multipleEnd: toFiniteOrNull(o.multipleEnd),
+    narrative: typeof o.narrative === 'string' ? o.narrative : '',
+  };
+}
+
 /** Server/client: coerce unknown JSON into a safe partial payload. */
 export function sanitizeFormPatch(
   raw: unknown,
@@ -86,6 +112,12 @@ export function sanitizeFormPatch(
   if (Array.isArray(src.failures)) {
     const rows = src.failures.filter(isFailureRow);
     if (rows.length > 0 && rows.length <= 12) out.failures = rows;
+  }
+  if (Array.isArray(src.returnPhases)) {
+    const rows = src.returnPhases
+      .map(normalizeReturnPhaseRow)
+      .filter((r): r is ReturnPhaseRow => r !== null);
+    if (rows.length <= 12) out.returnPhases = rows;
   }
 
   return Object.keys(out).length > 0 ? out : null;
@@ -122,6 +154,12 @@ export function mergePositionThesisPayload(
   if (Array.isArray(patch.failures) && patch.failures.length > 0) {
     const rows = patch.failures.filter(isFailureRow);
     if (rows.length > 0) next.failures = rows;
+  }
+  if (Array.isArray(patch.returnPhases)) {
+    const rows = patch.returnPhases
+      .map(normalizeReturnPhaseRow)
+      .filter((r): r is ReturnPhaseRow => r !== null);
+    next.returnPhases = rows;
   }
 
   return next;

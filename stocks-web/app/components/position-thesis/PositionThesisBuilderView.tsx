@@ -26,10 +26,12 @@ import type {
   FailureRow,
   LoadedPositionThesisEvaluation,
   PositionThesisPayload,
+  ReturnPhaseRow,
   ThesisDriverEvaluation,
   ThesisEvidenceItem,
   ThesisFailureEvaluation,
 } from '@/app/lib/types/positionThesis';
+import { getImpliedReturnFromPhasesForDisplay, getPhaseBaseCaseDrift, getPhaseWeightedComponents } from '@/app/lib/thesisImpliedReturnFromPayload';
 
 const MAX_TABLE_ROWS = 12;
 
@@ -58,6 +60,19 @@ const FAILURE_TIMEFRAME_STANDARD = [
   '2+ years',
   'Gradual',
 ] as const;
+
+const EMPTY_RETURN_PHASE_ROW: ReturnPhaseRow = {
+  label: '',
+  durationMonths: 12,
+  active: false,
+  growthMinPct: null,
+  growthMaxPct: null,
+  dividendMinPct: null,
+  dividendMaxPct: null,
+  multipleStart: null,
+  multipleEnd: null,
+  narrative: '',
+};
 import { useSearchParams } from 'next/navigation';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
 import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
@@ -179,6 +194,171 @@ function AssumptionRangeFields({
   );
 }
 
+function NumericPairInputs({
+  labelText,
+  loVal,
+  hiVal,
+  loPlaceholder,
+  hiPlaceholder,
+  separator,
+  onChange,
+}: {
+  labelText: string;
+  loVal: number | null;
+  hiVal: number | null;
+  loPlaceholder: string;
+  hiPlaceholder: string;
+  separator: string;
+  onChange: (lo: number | null, hi: number | null) => void;
+}) {
+  const parse = (s: string): number | null => {
+    const v = parseFloat(s);
+    return Number.isFinite(v) ? v : null;
+  };
+  return (
+    <div>
+      <div className={`${label} mb-0 leading-snug`}>{labelText}</div>
+      <div className="flex items-center gap-1.5 mt-1.5">
+        <input
+          type="number"
+          step="any"
+          autoComplete="off"
+          className={`${numberAssumptionInput} min-w-0 flex-1`}
+          placeholder={loPlaceholder}
+          value={loVal ?? ''}
+          onChange={(e) => onChange(parse(e.target.value), hiVal)}
+        />
+        <span className="shrink-0 text-xs text-slate-400">{separator}</span>
+        <input
+          type="number"
+          step="any"
+          autoComplete="off"
+          className={`${numberAssumptionInput} min-w-0 flex-1`}
+          placeholder={hiPlaceholder}
+          value={hiVal ?? ''}
+          onChange={(e) => onChange(loVal, parse(e.target.value))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ReturnPhaseCard({
+  row,
+  index,
+  onActivate,
+  onRemove,
+  onChange,
+}: {
+  row: ReturnPhaseRow;
+  index: number;
+  onActivate: () => void;
+  onRemove: () => void;
+  onChange: <K extends keyof ReturnPhaseRow>(field: K, value: ReturnPhaseRow[K]) => void;
+}) {
+  return (
+    <div
+      className={`${repeatableCard} w-full sm:w-[calc(50%-0.5rem)] ${row.active ? 'border-l-4 border-l-blue-400' : ''}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={onActivate}
+            className={`shrink-0 h-4 w-4 rounded-full border-2 ${row.active ? 'border-blue-500 bg-blue-500' : 'border-slate-300 bg-white hover:border-slate-400'}`}
+            title={row.active ? 'Active phase' : 'Set as active phase'}
+            aria-label={`Set phase ${index + 1} as active`}
+          >
+            {row.active && (
+              <span className="block h-full w-full rounded-full border-2 border-white" />
+            )}
+          </button>
+          <input
+            className={`${input} min-w-0 flex-1 font-medium`}
+            placeholder={`Phase ${index + 1} label`}
+            value={row.label}
+            onChange={(e) => onChange('label', e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          className="shrink-0 text-slate-400 hover:text-red-500 p-1"
+          title="Remove phase"
+          onClick={onRemove}
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="mb-3">
+        <div className={`${label} mb-0 leading-snug`}>Duration (months)</div>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          className={`${numberAssumptionInput} mt-1.5 max-w-[8rem]`}
+          value={row.durationMonths || ''}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            onChange('durationMonths', Number.isFinite(v) && v > 0 ? v : 0);
+          }}
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        <NumericPairInputs
+          labelText="Growth (% ann.)"
+          loVal={row.growthMinPct}
+          hiVal={row.growthMaxPct}
+          loPlaceholder="Low"
+          hiPlaceholder="High"
+          separator="–"
+          onChange={(lo, hi) => {
+            onChange('growthMinPct', lo);
+            onChange('growthMaxPct', hi);
+          }}
+        />
+        <NumericPairInputs
+          labelText="Dividend (% ann.)"
+          loVal={row.dividendMinPct}
+          hiVal={row.dividendMaxPct}
+          loPlaceholder="Low"
+          hiPlaceholder="High"
+          separator="–"
+          onChange={(lo, hi) => {
+            onChange('dividendMinPct', lo);
+            onChange('dividendMaxPct', hi);
+          }}
+        />
+        <NumericPairInputs
+          labelText="Multiple (×)"
+          loVal={row.multipleStart}
+          hiVal={row.multipleEnd}
+          loPlaceholder="Start"
+          hiPlaceholder="End"
+          separator="→"
+          onChange={(lo, hi) => {
+            onChange('multipleStart', lo);
+            onChange('multipleEnd', hi);
+          }}
+        />
+      </div>
+
+      <div>
+        <div className={`${label} mb-0 leading-snug`}>Narrative</div>
+        <textarea
+          className={`${cardTextarea} mt-1.5`}
+          placeholder="What drives returns in this phase?"
+          value={row.narrative}
+          onChange={(e) => onChange('narrative', e.target.value)}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Single visible tier: base-case dividend / growth / multiple (upside & downside assumption keys remain on payload for older saves). */
 const BASE_RETURN_ASSUMPTION_KEYS = {
   dividendKey: 'baseDividendAssumption' as const satisfies keyof PositionThesisPayload,
@@ -192,7 +372,7 @@ const SECTION_HELP = {
   thesis:
     'Please help me strengthen **section 1 — thesis statement**, **portfolio role**, **regime designed for**, and **risk posture**. Review what I have in the draft and propose improvements or follow-up questions.',
   returns:
-    'Please help me with **section 2 — return expectations**: entry price, **base-case ranges** (low–high) for dividend yield (% per year), growth (% per year), valuation multiple (×) with **P/E vs P/FCF**, plus the **upside / base / downside scenario** narratives.',
+    'Please help me with **section 2 — return expectations**: entry price, **base-case ranges** (low–high) for dividend yield (% per year), growth (% per year), valuation multiple (×) with **P/E vs P/FCF**, the **upside / base / downside scenario** narratives, and optional **return phases** that model how returns unfold over time (e.g. accumulation → repricing → steady state, each with its own growth, dividend, and multiple assumptions).',
   drivers:
     'Please help me fill or improve **section 3 — drivers and dependencies**. Suggest drivers, why they matter, and importance (High, Medium, or Low).',
   failures:
@@ -1557,6 +1737,58 @@ export default function PositionThesisBuilderView({
                     </div>
                   </div>
                 </div>
+                {(() => {
+                  const drift = getPhaseBaseCaseDrift(form);
+                  if (!drift) return null;
+                  return (
+                    <div className="mt-4 rounded-lg bg-amber-50 border border-amber-300 px-3 py-3 text-sm text-amber-900">
+                      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                        <span className="font-medium">Phases differ from base-case assumptions</span>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-lg bg-amber-200 hover:bg-amber-300 border border-amber-400 px-2.5 py-1 text-xs font-medium text-amber-900"
+                          onClick={() =>
+                            setForm((f) => {
+                              const wc = getPhaseWeightedComponents(f.returnPhases);
+                              if (!wc) return f;
+                              const r = (v: number) => v.toFixed(1);
+                              const fmtRange = (lo: number, hi: number) =>
+                                formatAssumptionRange(r(lo), r(hi));
+                              return {
+                                ...f,
+                                baseGrowthAssumption: fmtRange(wc.growth.min, wc.growth.max),
+                                baseDividendAssumption: fmtRange(wc.dividend.min, wc.dividend.max),
+                                baseMultipleAssumption: wc.multiple
+                                  ? fmtRange(wc.multiple.min, wc.multiple.max)
+                                  : '',
+                              };
+                            })
+                          }
+                        >
+                          Sync base case from phases
+                        </button>
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-amber-800/70">
+                            <th className="text-left font-medium pr-3 pb-1"></th>
+                            <th className="text-right font-medium pr-3 pb-1">Phases (weighted)</th>
+                            <th className="text-right font-medium pb-1">Base case</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {drift.components.map((c) => (
+                            <tr key={c.label}>
+                              <td className="pr-3 py-0.5 font-medium">{c.label}</td>
+                              <td className="text-right pr-3 py-0.5 tabular-nums">{c.phases}</td>
+                              <td className="text-right py-0.5 tabular-nums">{c.baseCase}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
                 <div className="grid md:grid-cols-3 gap-4 mt-6">
                   <div>
                     <div className={label}>Upside Scenario</div>
@@ -1583,6 +1815,97 @@ export default function PositionThesisBuilderView({
                     />
                   </div>
                 </div>
+
+                <div className="mt-6">
+                  <div className={assumptionTierCard}>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h3 className={tierHeading}>
+                        Return phases
+                        <span className={`ml-2 ${badge} bg-slate-100 text-slate-600 border-slate-200`}>Optional</span>
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Model how returns unfold over time. Each phase has its own growth, dividend, and multiple
+                      assumptions. Mark one phase as <span className="font-medium text-slate-600">active</span> to
+                      indicate where the position currently sits.
+                    </p>
+                    {(() => {
+                      const phaseReturn = getImpliedReturnFromPhasesForDisplay(form.returnPhases);
+                      if (!phaseReturn) return null;
+                      const fmt = (v: number) => v.toFixed(1);
+                      const text =
+                        phaseReturn.min === phaseReturn.max
+                          ? `${fmt(phaseReturn.min)}%`
+                          : `${fmt(phaseReturn.min)}–${fmt(phaseReturn.max)}%`;
+                      return (
+                        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
+                          Phase-weighted annualized return: <span className="font-semibold">{text}</span>
+                        </div>
+                      );
+                    })()}
+                    <div className="flex flex-wrap items-stretch gap-4">
+                      {form.returnPhases.length === 0 ? (
+                        <p className="w-full rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-8 text-center text-sm text-slate-500">
+                          No phases defined. Add one to model timing of returns.
+                        </p>
+                      ) : (
+                        form.returnPhases.map((row, i) => (
+                          <ReturnPhaseCard
+                            key={i}
+                            row={row}
+                            index={i}
+                            onActivate={() =>
+                              setForm((f) => ({
+                                ...f,
+                                returnPhases: f.returnPhases.map((p, j) => ({
+                                  ...p,
+                                  active: j === i,
+                                })),
+                              }))
+                            }
+                            onRemove={() =>
+                              setForm((f) => ({
+                                ...f,
+                                returnPhases: f.returnPhases.filter((_, idx) => idx !== i),
+                              }))
+                            }
+                            onChange={(field, value) =>
+                              setForm((f) => ({
+                                ...f,
+                                returnPhases: f.returnPhases.map((p, j) =>
+                                  j === i ? { ...p, [field]: value } : p
+                                ),
+                              }))
+                            }
+                          />
+                        ))
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className={addRowBtn}
+                      disabled={form.returnPhases.length >= MAX_TABLE_ROWS}
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          returnPhases: [
+                            ...f.returnPhases,
+                            {
+                              ...EMPTY_RETURN_PHASE_ROW,
+                              active: f.returnPhases.length === 0,
+                            },
+                          ],
+                        }))
+                      }
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add phase
+                    </button>
+                  </div>
+                </div>
+
                 <LatestSectionAnalysis
                   summary={sectionAnalysis.summary}
                   blockedReason={sectionAnalysis.blockedReason}

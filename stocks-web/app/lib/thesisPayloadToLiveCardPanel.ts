@@ -78,6 +78,10 @@ export function thesisPayloadToLiveCardPanelProps(
     }
   }
 
+  const activePhase = Array.isArray(payload.returnPhases)
+    ? payload.returnPhases.find((p) => p.active)
+    : undefined;
+
   return {
     phaseLabel: statusUi.phaseLabel,
     statusBadge: statusUi.statusBadge,
@@ -85,6 +89,7 @@ export function thesisPayloadToLiveCardPanelProps(
     forwardReturn,
     forwardReturnSubtitle,
     forwardReturnSubtitleTone,
+    currentReturnPhase: activePhase?.label?.trim() || undefined,
     downside: 'N/A',
     recommendation:
       evaluation?.structuredResult?.systemRecommendation ?? dash(evaluation?.blockedReason, 120),

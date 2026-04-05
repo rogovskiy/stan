@@ -1,6 +1,6 @@
 import { mergePositionThesisPayload } from '@/app/lib/positionThesisMerge';
 import { scratchPositionThesisPayload } from '@/app/lib/positionThesisScratch';
-import type { DriverRow, FailureRow, PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type { DriverRow, FailureRow, PositionThesisPayload, ReturnPhaseRow } from '@/app/lib/types/positionThesis';
 import { parseAssumptionRange } from '@/app/lib/positionThesisAssumptionRange';
 
 export type ThesisSectionCompleteness = 'green' | 'yellow' | 'red';
@@ -66,6 +66,18 @@ function failureRowRatio(row: FailureRow): number {
   ]);
 }
 
+function returnPhaseRowRatio(row: ReturnPhaseRow): number {
+  const hasGrowth = row.growthMinPct != null;
+  const hasDividend = row.dividendMinPct != null;
+  const hasMultiple = row.multipleStart != null && row.multipleEnd != null;
+  return weightedRatio([
+    { w: 2, ok: fieldFilled(row.label) },
+    { w: 3, ok: row.durationMonths > 0 },
+    { w: 3, ok: hasGrowth || hasDividend || hasMultiple },
+    { w: 1, ok: fieldFilled(row.narrative) },
+  ]);
+}
+
 export function computeSectionCompleteness(form: PositionThesisPayload): {
   basics: ThesisSectionCompleteness;
   thesis: ThesisSectionCompleteness;
@@ -91,6 +103,10 @@ export function computeSectionCompleteness(form: PositionThesisPayload): {
   const thesis =
     !fieldFilled(form.thesisStatement) ? 'red' : ratioToCompleteness(thesisRatio, 'required');
 
+  const hasFilledPhases =
+    Array.isArray(form.returnPhases) &&
+    form.returnPhases.length > 0 &&
+    form.returnPhases.reduce((s, p) => s + returnPhaseRowRatio(p), 0) / form.returnPhases.length > 0.5;
   const returnsRatio = weightedRatio([
     { w: 1, ok: fieldFilled(form.entryPrice) },
     { w: 2, ok: assumptionFilled(form.baseDividendAssumption) },
@@ -99,6 +115,7 @@ export function computeSectionCompleteness(form: PositionThesisPayload): {
     { w: 1, ok: fieldFilled(form.upsideScenario) },
     { w: 2, ok: fieldFilled(form.baseScenario) },
     { w: 1, ok: fieldFilled(form.downsideScenario) },
+    { w: 2, ok: hasFilledPhases },
   ]);
   const returns = ratioToCompleteness(returnsRatio, 'required');
 

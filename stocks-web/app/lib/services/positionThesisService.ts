@@ -16,6 +16,7 @@ import { db } from '../firebase';
 import {
   isFailureRow,
   normalizeDriverRow,
+  normalizeReturnPhaseRow,
   POSITION_THESIS_MERGE_STRING_KEYS,
 } from '../positionThesisMerge';
 import { scratchPositionThesisPayload } from '../positionThesisScratch';
@@ -27,6 +28,7 @@ import type {
   PositionThesisPayload,
   PositionThesisStatus,
   PositionThesisFirestoreDoc,
+  ReturnPhaseRow,
   ThesisDriverEvaluation,
   ThesisEvaluationDerivedResult,
   ThesisEvaluationPromptMetadata,
@@ -124,6 +126,7 @@ export function defaultPositionThesisPayload(ticker: string): PositionThesisPayl
       { failurePath: 'Demand slowdown', trigger: 'Global recession', estimatedImpact: '-15%', timeframe: '6–18 months' },
       { failurePath: 'Rotation out of energy', trigger: 'Lower commodity risk premium', estimatedImpact: '-10%', timeframe: 'Gradual' },
     ],
+    returnPhases: [],
     distanceToFailure: 'Oil $90 now vs failure at $60 → 33% buffer',
     currentVolRegime: 'High',
     riskPosture: 'Elevated but thesis intact',
@@ -377,6 +380,11 @@ export function coercePositionThesisPayload(
   }
   if (Array.isArray(r.failures)) {
     out.failures = r.failures.filter(isFailureRow);
+  }
+  if (Array.isArray(r.returnPhases)) {
+    out.returnPhases = r.returnPhases
+      .map((p) => normalizeReturnPhaseRow(p))
+      .filter((row): row is ReturnPhaseRow => row !== null);
   }
 
   applyLegacyReturnAssumptions(out, r);

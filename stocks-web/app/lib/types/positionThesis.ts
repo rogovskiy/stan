@@ -17,6 +17,22 @@ export interface FailureRow {
   timeframe: string;
 }
 
+export interface ReturnPhaseRow {
+  label: string;
+  durationMonths: number;
+  /** User manually marks exactly one phase as current. */
+  active: boolean;
+  growthMinPct: number | null;
+  growthMaxPct: number | null;
+  dividendMinPct: number | null;
+  dividendMaxPct: number | null;
+  /** Entry valuation multiple for this phase (absolute, e.g. 18). */
+  multipleStart: number | null;
+  /** Exit valuation multiple for this phase (absolute, e.g. 22). */
+  multipleEnd: number | null;
+  narrative: string;
+}
+
 export interface PositionThesisPayload {
   /** Display ticker (uppercase in storage) */
   ticker: string;
@@ -42,6 +58,7 @@ export interface PositionThesisPayload {
   downsideScenario: string;
   drivers: DriverRow[];
   failures: FailureRow[];
+  returnPhases: ReturnPhaseRow[];
   distanceToFailure: string;
   currentVolRegime: string;
   riskPosture: string;

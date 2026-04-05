@@ -102,3 +102,27 @@ export async function getDailyPricesForTicker(
     .map(([date, data]) => ({ date, price: data.c }))
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
+
+/**
+ * Find the closing price on `dateStr` or the latest trading day before it.
+ * Assumes `prices` is sorted ascending by date.
+ */
+export function findPriceOnOrBefore(
+  prices: DailyPricePoint[],
+  dateStr: string
+): number | null {
+  if (prices.length === 0) return null;
+  let lo = 0;
+  let hi = prices.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (prices[mid].date <= dateStr) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best >= 0 ? prices[best].price : null;
+}

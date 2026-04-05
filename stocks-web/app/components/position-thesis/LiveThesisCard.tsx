@@ -57,6 +57,11 @@ export function LiveThesisCardPanel({
         <div>
           <div className="text-sm text-slate-500">Status</div>
           <div className="text-xl font-semibold">{phaseLabel}</div>
+          {currentReturnPhase ? (
+            <div className="text-xs text-slate-500 mt-1 leading-snug">
+              Phase: {currentReturnPhase}
+            </div>
+          ) : null}
         </div>
         <span className={`${badgeBase} ${badgeClassName}`}>{statusBadge}</span>
       </div>
@@ -73,11 +78,6 @@ export function LiveThesisCardPanel({
               }
             >
               {forwardReturnSubtitle}
-            </div>
-          ) : null}
-          {currentReturnPhase ? (
-            <div className="text-xs text-blue-700 mt-1 leading-snug">
-              Phase: {currentReturnPhase}
             </div>
           ) : null}
         </div>

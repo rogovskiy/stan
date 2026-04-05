@@ -82,6 +82,24 @@ export function thesisPayloadToLiveCardPanelProps(
     ? payload.returnPhases.find((p) => p.active)
     : undefined;
 
+  let currentReturnPhase: string | undefined;
+  if (activePhase?.label?.trim()) {
+    currentReturnPhase = activePhase.label.trim();
+    if (activePhase.startedAt) {
+      const start = new Date(activePhase.startedAt);
+      const now = new Date();
+      const elapsed = Math.max(
+        0,
+        Math.round(
+          (now.getFullYear() - start.getFullYear()) * 12
+          + (now.getMonth() - start.getMonth())
+          + (now.getDate() - start.getDate()) / 30
+        )
+      );
+      if (elapsed > 0) currentReturnPhase += ` (${elapsed}mo in)`;
+    }
+  }
+
   return {
     phaseLabel: statusUi.phaseLabel,
     statusBadge: statusUi.statusBadge,
@@ -89,7 +107,7 @@ export function thesisPayloadToLiveCardPanelProps(
     forwardReturn,
     forwardReturnSubtitle,
     forwardReturnSubtitleTone,
-    currentReturnPhase: activePhase?.label?.trim() || undefined,
+    currentReturnPhase,
     downside: 'N/A',
     recommendation:
       evaluation?.structuredResult?.systemRecommendation ?? dash(evaluation?.blockedReason, 120),

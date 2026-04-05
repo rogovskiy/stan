@@ -78,6 +78,11 @@ export function normalizeReturnPhaseRow(x: unknown): ReturnPhaseRow | null {
     multipleStart: toFiniteOrNull(o.multipleStart),
     multipleEnd: toFiniteOrNull(o.multipleEnd),
     narrative: typeof o.narrative === 'string' ? o.narrative : '',
+    priceAtStart: toFiniteOrNull(o.priceAtStart),
+    priceAtEnd: toFiniteOrNull(o.priceAtEnd),
+    startedAt: typeof o.startedAt === 'string' && o.startedAt ? o.startedAt : null,
+    completedAt: typeof o.completedAt === 'string' && o.completedAt ? o.completedAt : null,
+    actualDurationMonths: toFiniteOrNull(o.actualDurationMonths),
   };
 }
 

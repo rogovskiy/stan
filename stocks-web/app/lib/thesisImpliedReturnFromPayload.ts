@@ -128,6 +128,80 @@ export function getImpliedReturnFromPhasesForDisplay(
 }
 
 // ---------------------------------------------------------------------------
+// Realized return for a completed phase
+// ---------------------------------------------------------------------------
+
+/**
+ * Annualized return interval for a completed phase, using actualDurationMonths
+ * when available (falls back to planned durationMonths).
+ */
+export function getPhaseRealizedReturn(
+  phase: ReturnPhaseRow
+): { min: number; max: number } | null {
+  if (!phase.completedAt) return null;
+  const months = phase.actualDurationMonths ?? phase.durationMonths;
+  if (months <= 0) return null;
+  const growth = resolveRange(phase.growthMinPct, phase.growthMaxPct);
+  const dividend = resolveRange(phase.dividendMinPct, phase.dividendMaxPct);
+  const mult = multipleAnnualizedPct(phase.multipleStart, phase.multipleEnd, months);
+  return {
+    min: growth.min + dividend.min + mult,
+    max: growth.max + dividend.max + mult,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Residual forward return (active remainder + planned phases)
+// ---------------------------------------------------------------------------
+
+function monthsSince(isoDate: string): number {
+  const start = new Date(isoDate);
+  const now = new Date();
+  return (now.getFullYear() - start.getFullYear()) * 12
+    + (now.getMonth() - start.getMonth())
+    + (now.getDate() - start.getDate()) / 30;
+}
+
+/**
+ * Compound only the remaining portion of the active phase plus all future
+ * (planned) phases. Returns null when there is no active or planned work left.
+ */
+export function getResidualForwardReturn(
+  phases: ReturnPhaseRow[]
+): { min: number; max: number; remainingMonths: number } | null {
+  if (!Array.isArray(phases) || phases.length === 0) return null;
+
+  let totalMonths = 0;
+  let cumulativeMin = 1;
+  let cumulativeMax = 1;
+
+  for (const phase of phases) {
+    if (phase.completedAt) continue;
+
+    let months = phase.durationMonths;
+    if (phase.active && phase.startedAt) {
+      const elapsed = monthsSince(phase.startedAt);
+      months = Math.max(phase.durationMonths - elapsed, 1);
+    }
+    if (months <= 0) continue;
+
+    const ann = getPhaseAnnualizedInterval(phase);
+    const years = months / 12;
+    cumulativeMin *= Math.pow(1 + ann.min / 100, years);
+    cumulativeMax *= Math.pow(1 + ann.max / 100, years);
+    totalMonths += months;
+  }
+
+  if (totalMonths <= 0) return null;
+  const totalYears = totalMonths / 12;
+  return {
+    min: (Math.pow(cumulativeMin, 1 / totalYears) - 1) * 100,
+    max: (Math.pow(cumulativeMax, 1 / totalYears) - 1) * 100,
+    remainingMonths: Math.round(totalMonths),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Phase-weighted component decomposition
 // ---------------------------------------------------------------------------
 

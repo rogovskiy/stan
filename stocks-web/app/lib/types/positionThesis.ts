@@ -19,8 +19,9 @@ export interface FailureRow {
 
 export interface ReturnPhaseRow {
   label: string;
+  /** Planned duration in months. */
   durationMonths: number;
-  /** User manually marks exactly one phase as current. */
+  /** Exactly one phase should be active at a time. */
   active: boolean;
   growthMinPct: number | null;
   growthMaxPct: number | null;
@@ -31,6 +32,16 @@ export interface ReturnPhaseRow {
   /** Exit valuation multiple for this phase (absolute, e.g. 22). */
   multipleEnd: number | null;
   narrative: string;
+  /** Security price when the phase started. */
+  priceAtStart: number | null;
+  /** Security price when the phase ended (or current price for active). */
+  priceAtEnd: number | null;
+  /** ISO date when the phase became active. */
+  startedAt: string | null;
+  /** ISO date when the phase was marked complete. */
+  completedAt: string | null;
+  /** Actual duration — auto-computed from dates, user-overridable. */
+  actualDurationMonths: number | null;
 }
 
 export interface PositionThesisPayload {

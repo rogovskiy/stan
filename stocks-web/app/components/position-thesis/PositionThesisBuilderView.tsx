@@ -31,7 +31,7 @@ import type {
   ThesisEvidenceItem,
   ThesisFailureEvaluation,
 } from '@/app/lib/types/positionThesis';
-import { getImpliedReturnFromPhasesForDisplay, getPhaseBaseCaseDrift, getPhaseWeightedComponents } from '@/app/lib/thesisImpliedReturnFromPayload';
+import { getImpliedReturnFromPhasesForDisplay, getPhaseAnnualizedInterval, getPhaseBaseCaseDrift, getPhaseWeightedComponents, getPhaseRealizedReturn, getResidualForwardReturn } from '@/app/lib/thesisImpliedReturnFromPayload';
 
 const MAX_TABLE_ROWS = 12;
 
@@ -72,12 +72,23 @@ const EMPTY_RETURN_PHASE_ROW: ReturnPhaseRow = {
   multipleStart: null,
   multipleEnd: null,
   narrative: '',
+  priceAtStart: null,
+  priceAtEnd: null,
+  startedAt: null,
+  completedAt: null,
+  actualDurationMonths: null,
 };
 import { useSearchParams } from 'next/navigation';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
 import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
 import { savePositionThesisChatTranscript } from '@/app/lib/services/positionThesisChatClient';
 import { mergePositionThesisPayload } from '@/app/lib/positionThesisMerge';
+import { findPriceOnOrBefore, type DailyPricePoint } from '@/app/lib/dailyPrices';
+
+interface QuarterlyDividendPoint {
+  date: string;
+  dividendsPOR: number;
+}
 import { scratchPositionThesisPayload } from '@/app/lib/positionThesisScratch';
 import {
   defaultPositionThesisPayload,
@@ -243,118 +254,357 @@ function NumericPairInputs({
   );
 }
 
+function fmtShortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function fmtReturnBadge(r: { min: number; max: number }): string {
+  if (r.min === r.max) return `${r.min.toFixed(1)}%`;
+  return `${r.min.toFixed(1)}–${r.max.toFixed(1)}%`;
+}
+
+function isPhaseRowEmpty(row: ReturnPhaseRow): boolean {
+  return (
+    !row.label.trim()
+    && row.growthMinPct == null && row.growthMaxPct == null
+    && row.dividendMinPct == null && row.dividendMaxPct == null
+    && row.multipleStart == null && row.multipleEnd == null
+    && !row.narrative.trim()
+  );
+}
+
 function ReturnPhaseCard({
   row,
   index,
-  onActivate,
+  editing,
+  dailyPrices,
+  quarterlyDividends,
+  onEdit,
+  onDoneEditing,
+  onStartPhase,
+  onCompletePhase,
   onRemove,
   onChange,
 }: {
   row: ReturnPhaseRow;
   index: number;
-  onActivate: () => void;
+  editing: boolean;
+  dailyPrices: DailyPricePoint[];
+  quarterlyDividends: QuarterlyDividendPoint[];
+  onEdit: () => void;
+  onDoneEditing: () => void;
+  onStartPhase: () => void;
+  onCompletePhase: () => void;
   onRemove: () => void;
   onChange: <K extends keyof ReturnPhaseRow>(field: K, value: ReturnPhaseRow[K]) => void;
 }) {
+  const isCompleted = !!row.completedAt;
+  const isActive = row.active && !isCompleted;
+
+  const borderClass = isCompleted
+    ? 'border-l-4 border-l-emerald-400'
+    : isActive
+    ? 'border-l-4 border-l-blue-400'
+    : '';
+
+  const empty = isPhaseRowEmpty(row);
+  const showForm = empty || editing;
+
+  const realized = isCompleted ? getPhaseRealizedReturn(row) : null;
+  const activeReturn = isActive ? getPhaseAnnualizedInterval(row) : null;
+
+  const effectiveEndPrice = row.priceAtEnd
+    ?? (isActive && dailyPrices.length > 0 ? dailyPrices[dailyPrices.length - 1].price : null);
+  const hasPrice = row.priceAtStart != null && effectiveEndPrice != null && row.priceAtStart > 0;
+  const absPct = hasPrice ? ((effectiveEndPrice! - row.priceAtStart!) / row.priceAtStart!) * 100 : null;
+
+  const activePriceAnnualized = (() => {
+    if (!isActive || !hasPrice || !row.startedAt) return null;
+    const startMs = new Date(row.startedAt).getTime();
+    const elapsedYears = (Date.now() - startMs) / (365.25 * 24 * 3600 * 1000);
+    if (elapsedYears < 1 / 12) return null;
+    const totalReturn = effectiveEndPrice! / row.priceAtStart!;
+    const ann = (Math.pow(totalReturn, 1 / elapsedYears) - 1) * 100;
+    return { min: ann, max: ann };
+  })();
+
+  const returnInterval = realized ?? activePriceAnnualized ?? activeReturn;
+
+  const avgDividendYield = (() => {
+    const phaseStart = row.startedAt;
+    const phaseEnd = row.completedAt ?? (isActive ? new Date().toISOString().slice(0, 10) : null);
+    if (!phaseStart || !phaseEnd || quarterlyDividends.length === 0 || dailyPrices.length === 0) return null;
+    const qInRange = quarterlyDividends.filter((q) => q.date >= phaseStart && q.date <= phaseEnd);
+    if (qInRange.length === 0) return null;
+    let sum = 0;
+    let count = 0;
+    for (const q of qInRange) {
+      const price = findPriceOnOrBefore(dailyPrices, q.date);
+      if (price && price > 0) {
+        sum += (q.dividendsPOR / price) * 100;
+        count++;
+      }
+    }
+    return count > 0 ? { pct: sum / count, n: count } : null;
+  })();
+
   return (
-    <div
-      className={`${repeatableCard} w-full sm:w-[calc(50%-0.5rem)] ${row.active ? 'border-l-4 border-l-blue-400' : ''}`}
-    >
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={onActivate}
-            className={`shrink-0 h-4 w-4 rounded-full border-2 ${row.active ? 'border-blue-500 bg-blue-500' : 'border-slate-300 bg-white hover:border-slate-400'}`}
-            title={row.active ? 'Active phase' : 'Set as active phase'}
-            aria-label={`Set phase ${index + 1} as active`}
-          >
-            {row.active && (
-              <span className="block h-full w-full rounded-full border-2 border-white" />
-            )}
+    <div className={`${repeatableCard} ${showForm ? 'w-full basis-full' : 'h-full min-w-[min(100%,17rem)] max-w-md flex-1'} ${borderClass}`}>
+      {/* Header with edit/done + remove buttons */}
+      <div className={`mb-3 flex items-start gap-2 ${showForm ? 'justify-between' : 'justify-end'}`}>
+        {showForm ? (
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Phase {index + 1}
+          </span>
+        ) : null}
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Lifecycle action button */}
+          {showForm && !isCompleted && (
+            isActive ? (
+              <button type="button" className={rowIconBtn} title="Complete this phase" onClick={onCompletePhase}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            ) : (
+              <button type="button" className={rowIconBtn} title="Start this phase" onClick={onStartPhase}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            )
+          )}
+          {showForm ? (
+            <button type="button" className={rowIconBtn} title="Finish editing" aria-label={`Finish editing phase ${index + 1}`} onClick={onDoneEditing}>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+          ) : (
+            <button type="button" className={rowIconBtn} title="Edit phase" aria-label={`Edit phase ${index + 1}`} onClick={onEdit}>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+          )}
+          <button type="button" className={rowRemoveBtn} title="Remove phase" aria-label={`Remove phase ${index + 1}`} onClick={onRemove}>
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
           </button>
-          <input
-            className={`${input} min-w-0 flex-1 font-medium`}
-            placeholder={`Phase ${index + 1} label`}
-            value={row.label}
-            onChange={(e) => onChange('label', e.target.value)}
-          />
         </div>
-        <button
-          type="button"
-          className="shrink-0 text-slate-400 hover:text-red-500 p-1"
-          title="Remove phase"
-          onClick={onRemove}
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
       </div>
 
-      <div className="mb-3">
-        <div className={`${label} mb-0 leading-snug`}>Duration (months)</div>
-        <input
-          type="number"
-          min={1}
-          step={1}
-          className={`${numberAssumptionInput} mt-1.5 max-w-[8rem]`}
-          value={row.durationMonths || ''}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            onChange('durationMonths', Number.isFinite(v) && v > 0 ? v : 0);
-          }}
-        />
-      </div>
+      {showForm ? (
+        <>
+          {/* Label */}
+          <div className="mb-3">
+            <div className={label}>Label</div>
+            <input
+              className={`${input} font-medium`}
+              placeholder={`Phase ${index + 1} label`}
+              value={row.label}
+              onChange={(e) => onChange('label', e.target.value)}
+            />
+          </div>
 
-      <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <NumericPairInputs
-          labelText="Growth (% ann.)"
-          loVal={row.growthMinPct}
-          hiVal={row.growthMaxPct}
-          loPlaceholder="Low"
-          hiPlaceholder="High"
-          separator="–"
-          onChange={(lo, hi) => {
-            onChange('growthMinPct', lo);
-            onChange('growthMaxPct', hi);
-          }}
-        />
-        <NumericPairInputs
-          labelText="Dividend (% ann.)"
-          loVal={row.dividendMinPct}
-          hiVal={row.dividendMaxPct}
-          loPlaceholder="Low"
-          hiPlaceholder="High"
-          separator="–"
-          onChange={(lo, hi) => {
-            onChange('dividendMinPct', lo);
-            onChange('dividendMaxPct', hi);
-          }}
-        />
-        <NumericPairInputs
-          labelText="Multiple (×)"
-          loVal={row.multipleStart}
-          hiVal={row.multipleEnd}
-          loPlaceholder="Start"
-          hiPlaceholder="End"
-          separator="→"
-          onChange={(lo, hi) => {
-            onChange('multipleStart', lo);
-            onChange('multipleEnd', hi);
-          }}
-        />
-      </div>
+          {/* Dates and duration */}
+          <div className="mb-3 flex flex-wrap items-end gap-3">
+            <div>
+              <span className="text-[10px] text-slate-400 block">Started</span>
+              <input
+                type="date"
+                className={`${input} mt-0.5 max-w-[9rem] text-xs tabular-nums`}
+                value={row.startedAt ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  onChange('startedAt', val);
+                  if (val && dailyPrices.length > 0) {
+                    const p = findPriceOnOrBefore(dailyPrices, val);
+                    if (p != null) onChange('priceAtStart', p);
+                  }
+                }}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Completed</span>
+              <input
+                type="date"
+                className={`${input} mt-0.5 max-w-[9rem] text-xs tabular-nums`}
+                value={row.completedAt ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  onChange('completedAt', val);
+                  if (val && row.startedAt) {
+                    const s = new Date(row.startedAt);
+                    const c = new Date(val);
+                    const mo = Math.max(1, Math.round(
+                      (c.getFullYear() - s.getFullYear()) * 12
+                      + (c.getMonth() - s.getMonth())
+                      + (c.getDate() - s.getDate()) / 30
+                    ));
+                    onChange('actualDurationMonths', mo);
+                  }
+                  if (val && dailyPrices.length > 0) {
+                    const p = findPriceOnOrBefore(dailyPrices, val);
+                    if (p != null) onChange('priceAtEnd', p);
+                  }
+                }}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Planned mo.</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                className={`${numberAssumptionInput} mt-0.5 max-w-[5rem]`}
+                value={row.durationMonths || ''}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  onChange('durationMonths', Number.isFinite(v) && v > 0 ? v : 0);
+                }}
+              />
+            </div>
+          </div>
 
-      <div>
-        <div className={`${label} mb-0 leading-snug`}>Narrative</div>
-        <textarea
-          className={`${cardTextarea} mt-1.5`}
-          placeholder="What drives returns in this phase?"
-          value={row.narrative}
-          onChange={(e) => onChange('narrative', e.target.value)}
-        />
-      </div>
+          {/* Prices */}
+          <div className="mb-3 flex flex-wrap items-end gap-3">
+            <div>
+              <span className="text-[10px] text-slate-400 block">Price at start</span>
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={`${numberAssumptionInput} mt-0.5 max-w-[7rem]`}
+                value={row.priceAtStart ?? ''}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  onChange('priceAtStart', Number.isFinite(v) && v >= 0 ? v : null);
+                }}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block">Price at end</span>
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={`${numberAssumptionInput} mt-0.5 max-w-[7rem]`}
+                value={row.priceAtEnd ?? ''}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  onChange('priceAtEnd', Number.isFinite(v) && v >= 0 ? v : null);
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Return components */}
+          <div className="grid gap-3 sm:grid-cols-3 mb-3">
+            <NumericPairInputs
+              labelText="Growth (% ann.)"
+              loVal={row.growthMinPct}
+              hiVal={row.growthMaxPct}
+              loPlaceholder="Low"
+              hiPlaceholder="High"
+              separator="–"
+              onChange={(lo, hi) => {
+                onChange('growthMinPct', lo);
+                onChange('growthMaxPct', hi);
+              }}
+            />
+            <NumericPairInputs
+              labelText="Dividend (% ann.)"
+              loVal={row.dividendMinPct}
+              hiVal={row.dividendMaxPct}
+              loPlaceholder="Low"
+              hiPlaceholder="High"
+              separator="–"
+              onChange={(lo, hi) => {
+                onChange('dividendMinPct', lo);
+                onChange('dividendMaxPct', hi);
+              }}
+            />
+            <NumericPairInputs
+              labelText="Multiple (×)"
+              loVal={row.multipleStart}
+              hiVal={row.multipleEnd}
+              loPlaceholder="Start"
+              hiPlaceholder="End"
+              separator="→"
+              onChange={(lo, hi) => {
+                onChange('multipleStart', lo);
+                onChange('multipleEnd', hi);
+              }}
+            />
+          </div>
+
+          {/* Narrative */}
+          <div>
+            <div className={`${label} mb-0 leading-snug`}>Narrative</div>
+            <textarea
+              className={`${cardTextarea} mt-1.5`}
+              placeholder="What drives returns in this phase?"
+              value={row.narrative}
+              onChange={(e) => onChange('narrative', e.target.value)}
+            />
+          </div>
+        </>
+      ) : (
+        /* ---- Collapsed view ---- */
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h3 className="text-base font-semibold leading-snug text-slate-900 pr-2">
+              {row.label.trim() || `Phase ${index + 1}`}
+            </h3>
+            <span className={`text-xs font-medium ${
+              isCompleted ? 'text-emerald-700' : isActive ? 'text-blue-600' : 'text-slate-400'
+            }`}>
+              {isCompleted ? 'Completed' : isActive ? 'Active' : 'Planned'}
+            </span>
+          </div>
+          {/* Performance line */}
+          <p className="text-xs text-slate-600 tabular-nums">
+            {hasPrice ? (
+              <>
+                ${row.priceAtStart!.toFixed(2)} → ${effectiveEndPrice!.toFixed(2)}{isActive && row.priceAtEnd == null ? ' (now)' : ''}
+                {absPct != null ? (
+                  <span className={absPct >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                    {' '}({absPct >= 0 ? '+' : ''}{absPct.toFixed(1)}%)
+                  </span>
+                ) : null}
+                {returnInterval && (returnInterval.min !== 0 || returnInterval.max !== 0) ? (
+                  <span className="text-slate-500">
+                    {' '}· {fmtReturnBadge(returnInterval)} ann.
+                  </span>
+                ) : null}
+              </>
+            ) : returnInterval && (returnInterval.min !== 0 || returnInterval.max !== 0) ? (
+              <span className="text-slate-500">{fmtReturnBadge(returnInterval)} ann.</span>
+            ) : null}
+          </p>
+          {avgDividendYield != null ? (
+            <p className="text-xs text-slate-500 tabular-nums">
+              Avg dividend yield: {avgDividendYield.pct.toFixed(2)}% ({avgDividendYield.n} times)
+            </p>
+          ) : null}
+          {/* Duration line */}
+          <p className="text-xs text-slate-500">
+            {row.durationMonths}mo planned
+            {row.startedAt ? ` — started ${fmtShortDate(row.startedAt)}` : ''}
+            {row.completedAt ? `, completed ${fmtShortDate(row.completedAt)}` : ''}
+          </p>
+          {/* Narrative preview */}
+          {row.narrative.trim() ? (
+            <ReadMoreClamp text={row.narrative} />
+          ) : (
+            <p className="text-sm text-slate-500 italic">No narrative yet.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1272,6 +1522,9 @@ export default function PositionThesisBuilderView({
   const [chatAutoSend, setChatAutoSend] = useState<{ nonce: number; text: string } | null>(null);
   const [editingDriverIndex, setEditingDriverIndex] = useState<number | null>(null);
   const [editingFailureIndex, setEditingFailureIndex] = useState<number | null>(null);
+  const [editingPhaseIndex, setEditingPhaseIndex] = useState<number | null>(null);
+  const [dailyPrices, setDailyPrices] = useState<DailyPricePoint[]>([]);
+  const [quarterlyDividends, setQuarterlyDividends] = useState<QuarterlyDividendPoint[]>([]);
   const [authoringShown, setAuthoringShown] = useState(false);
   const thesisChatRef = useRef<ThesisBuilderChatHandle>(null);
 
@@ -1298,6 +1551,33 @@ export default function PositionThesisBuilderView({
   }, [initialPayload, lockTickerInitially]);
 
   const symbol = form.ticker.trim().toUpperCase() || routeTicker;
+
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    fetch(`/api/daily-prices/${encodeURIComponent(symbol)}?period=5y`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((json: { data?: { date: string; price: number }[] }) => {
+        if (!cancelled && json.data) {
+          setDailyPrices(json.data.map((d) => ({ date: d.date, price: d.price })));
+        }
+      })
+      .catch(() => {});
+    fetch(`/api/quarterly-timeseries/${encodeURIComponent(symbol)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((json: { data?: { date: string; dividendsPOR?: number }[] }) => {
+        if (!cancelled && json.data) {
+          setQuarterlyDividends(
+            json.data
+              .filter((d) => d.dividendsPOR != null && d.dividendsPOR > 0)
+              .map((d) => ({ date: d.date, dividendsPOR: d.dividendsPOR! }))
+          );
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [symbol]);
+
   const titleName =
     symbol === routeTicker && companyName ? `${companyName} (${symbol})` : symbol;
   const portfolioBackHref = resolvedPortfolioLink
@@ -1826,20 +2106,28 @@ export default function PositionThesisBuilderView({
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
                       Model how returns unfold over time. Each phase has its own growth, dividend, and multiple
-                      assumptions. Mark one phase as <span className="font-medium text-slate-600">active</span> to
-                      indicate where the position currently sits.
+                      assumptions. Set start/completion dates to track lifecycle — completed phases show realized
+                      returns and the summary shows residual forward return.
                     </p>
                     {(() => {
                       const phaseReturn = getImpliedReturnFromPhasesForDisplay(form.returnPhases);
                       if (!phaseReturn) return null;
                       const fmt = (v: number) => v.toFixed(1);
-                      const text =
-                        phaseReturn.min === phaseReturn.max
-                          ? `${fmt(phaseReturn.min)}%`
-                          : `${fmt(phaseReturn.min)}–${fmt(phaseReturn.max)}%`;
+                      const fmtInterval = (r: { min: number; max: number }) =>
+                        r.min === r.max ? `${fmt(r.min)}%` : `${fmt(r.min)}–${fmt(r.max)}%`;
+                      const hasLifecycleActivity = form.returnPhases.some((p) => p.startedAt || p.completedAt);
+                      const residual = hasLifecycleActivity ? getResidualForwardReturn(form.returnPhases) : null;
                       return (
-                        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
-                          Phase-weighted annualized return: <span className="font-semibold">{text}</span>
+                        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800 flex flex-wrap gap-x-6 gap-y-1">
+                          <span>
+                            Original plan: <span className="font-semibold tabular-nums">{fmtInterval(phaseReturn)}</span> ann.
+                          </span>
+                          {residual ? (
+                            <span>
+                              Residual forward: <span className="font-semibold tabular-nums">{fmtInterval(residual)}</span> ann.
+                              <span className="text-blue-600/70 ml-1">({residual.remainingMonths}mo left)</span>
+                            </span>
+                          ) : null}
                         </div>
                       );
                     })()}
@@ -1854,21 +2142,79 @@ export default function PositionThesisBuilderView({
                             key={i}
                             row={row}
                             index={i}
-                            onActivate={() =>
-                              setForm((f) => ({
-                                ...f,
-                                returnPhases: f.returnPhases.map((p, j) => ({
-                                  ...p,
-                                  active: j === i,
-                                })),
-                              }))
+                            editing={editingPhaseIndex === i}
+                            dailyPrices={dailyPrices}
+                            quarterlyDividends={quarterlyDividends}
+                            onEdit={() => setEditingPhaseIndex(i)}
+                            onDoneEditing={() =>
+                              setEditingPhaseIndex((prev) => (prev === i ? null : prev))
                             }
-                            onRemove={() =>
+                            onStartPhase={() =>
+                              setForm((f) => {
+                                const today = new Date().toISOString().slice(0, 10);
+                                const price = findPriceOnOrBefore(dailyPrices, today);
+                                return {
+                                  ...f,
+                                  returnPhases: f.returnPhases.map((p, j) => ({
+                                    ...p,
+                                    active: j === i,
+                                    startedAt: j === i ? (p.startedAt ?? today) : p.startedAt,
+                                    priceAtStart: j === i && p.priceAtStart == null && price != null ? price : p.priceAtStart,
+                                  })),
+                                };
+                              })
+                            }
+                            onCompletePhase={() =>
+                              setForm((f) => {
+                                const today = new Date().toISOString().slice(0, 10);
+                                const price = findPriceOnOrBefore(dailyPrices, today);
+                                const current = f.returnPhases[i];
+                                if (!current) return f;
+                                const startDate = current.startedAt ? new Date(current.startedAt) : null;
+                                const actualMonths = startDate
+                                  ? Math.max(1, Math.round(
+                                      (new Date(today).getFullYear() - startDate.getFullYear()) * 12
+                                      + (new Date(today).getMonth() - startDate.getMonth())
+                                      + (new Date(today).getDate() - startDate.getDate()) / 30
+                                    ))
+                                  : current.durationMonths;
+                                const nextPlannedIdx = f.returnPhases.findIndex(
+                                  (p, j) => j > i && !p.startedAt && !p.completedAt
+                                );
+                                return {
+                                  ...f,
+                                  returnPhases: f.returnPhases.map((p, j) => {
+                                    if (j === i) {
+                                      return {
+                                        ...p,
+                                        active: false,
+                                        completedAt: today,
+                                        actualDurationMonths: actualMonths,
+                                        priceAtEnd: p.priceAtEnd == null && price != null ? price : p.priceAtEnd,
+                                      };
+                                    }
+                                    if (j === nextPlannedIdx) {
+                                      return {
+                                        ...p,
+                                        active: true,
+                                        startedAt: today,
+                                        priceAtStart: p.priceAtStart == null && price != null ? price : p.priceAtStart,
+                                      };
+                                    }
+                                    return p;
+                                  }),
+                                };
+                              })
+                            }
+                            onRemove={() => {
                               setForm((f) => ({
                                 ...f,
                                 returnPhases: f.returnPhases.filter((_, idx) => idx !== i),
-                              }))
-                            }
+                              }));
+                              setEditingPhaseIndex((prev) =>
+                                prev === i ? null : prev != null && prev > i ? prev - 1 : prev
+                              );
+                            }}
                             onChange={(field, value) =>
                               setForm((f) => ({
                                 ...f,
@@ -1885,7 +2231,8 @@ export default function PositionThesisBuilderView({
                       type="button"
                       className={addRowBtn}
                       disabled={form.returnPhases.length >= MAX_TABLE_ROWS}
-                      onClick={() =>
+                      onClick={() => {
+                        const idx = form.returnPhases.length;
                         setForm((f) => ({
                           ...f,
                           returnPhases: [
@@ -1895,8 +2242,9 @@ export default function PositionThesisBuilderView({
                               active: f.returnPhases.length === 0,
                             },
                           ],
-                        }))
-                      }
+                        }));
+                        setEditingPhaseIndex(idx);
+                      }}
                     >
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />

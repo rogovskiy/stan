@@ -8,6 +8,7 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from firebase_functions.params import SecretParam
 
 try:
     import flask
@@ -25,6 +26,8 @@ _LEVEL_MAP = {
     "ERROR": firebase_logger.LogSeverity.ERROR,
     "CRITICAL": firebase_logger.LogSeverity.CRITICAL,
 }
+
+GEMINI_API_KEY = SecretParam("GEMINI_API_KEY")
 
 
 class FirebaseLoggerHandler(logging.Handler):
@@ -239,6 +242,7 @@ def portfolio_weekly_publish(event: scheduler_fn.ScheduledEvent) -> None:
     timeout_sec=540,
     concurrency=2,
     max_instances=5,
+    secrets=[GEMINI_API_KEY],
 )
 def portfolio_channel_exposure_refresh(
     event: pubsub_fn.CloudEvent[pubsub_fn.MessagePublishedData],

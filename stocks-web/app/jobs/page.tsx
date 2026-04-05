@@ -12,6 +12,8 @@ const JOB_TYPES = [
   'youtube_transcript',
   'portfolio_channel_exposure',
   'portfolio_channel_exposure_publish',
+  'portfolio_stress_drawdown',
+  'position_thesis_evaluation',
 ] as const;
 const DAYS_RANGE = 14;
 
@@ -39,6 +41,8 @@ const LOGGING_SERVICE_BY_JOB_TYPE: Partial<Record<(typeof JOB_TYPES)[number], st
   // functions_portfolio (Gen2 → Cloud Run); adjust if console shows different service_name
   portfolio_channel_exposure: 'portfolio-channel-exposure-refresh',
   portfolio_channel_exposure_publish: 'portfolio-weekly-publish',
+  portfolio_stress_drawdown: 'portfolio-channel-exposure-refresh',
+  position_thesis_evaluation: 'position-thesis-evaluation-refresh',
 };
 
 function cloudLoggingUrl(projectId: string, query: string): string {

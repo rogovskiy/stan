@@ -22,12 +22,22 @@ import { scratchPositionThesisPayload } from '../positionThesisScratch';
 import type {
   AuthoringContextEntry,
   DriverRow,
+  LoadedPositionThesisEvaluation,
+  PositionThesisEvaluationDoc,
   PositionThesisPayload,
   PositionThesisStatus,
   PositionThesisFirestoreDoc,
+  ThesisDriverEvaluation,
+  ThesisEvaluationDerivedResult,
+  ThesisEvaluationPromptMetadata,
+  ThesisEvaluationStructuredResult,
+  ThesisEvidenceItem,
+  ThesisFailureEvaluation,
 } from '../types/positionThesis';
 
 const COLLECTION = 'position_theses';
+const EVALUATIONS_SUBCOLLECTION = 'evaluations';
+const LATEST_EVALUATION_DOC_ID = 'latest';
 
 export function positionThesisDocId(userId: string, ticker: string): string {
   return `${userId}_${ticker.toUpperCase()}`;
@@ -135,6 +145,194 @@ function toIso(value: unknown): string | undefined {
     return (value as { toDate: () => Date }).toDate().toISOString();
   }
   return undefined;
+}
+
+function normalizeEvidenceItems(raw: unknown): ThesisEvidenceItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ThesisEvidenceItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    if (typeof row.source !== 'string' || typeof row.detail !== 'string') continue;
+    out.push({ source: row.source, detail: row.detail });
+  }
+  return out;
+}
+
+function normalizeDriverEvaluations(raw: unknown): ThesisDriverEvaluation[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ThesisDriverEvaluation[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    if (
+      typeof row.driver !== 'string' ||
+      typeof row.whyItMatters !== 'string' ||
+      typeof row.importance !== 'string' ||
+      !['working', 'mixed', 'failing'].includes(String(row.score)) ||
+      typeof row.rationale !== 'string'
+    ) {
+      continue;
+    }
+    out.push({
+      driver: row.driver,
+      whyItMatters: row.whyItMatters,
+      importance: row.importance,
+      score: row.score as ThesisDriverEvaluation['score'],
+      rationale: row.rationale,
+      evidence: normalizeEvidenceItems(row.evidence),
+    });
+  }
+  return out;
+}
+
+function normalizeFailureEvaluations(raw: unknown): ThesisFailureEvaluation[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ThesisFailureEvaluation[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    if (
+      typeof row.failurePath !== 'string' ||
+      typeof row.trigger !== 'string' ||
+      typeof row.estimatedImpact !== 'string' ||
+      typeof row.timeframe !== 'string' ||
+      !['inactive', 'emerging', 'active'].includes(String(row.score)) ||
+      typeof row.rationale !== 'string'
+    ) {
+      continue;
+    }
+    out.push({
+      failurePath: row.failurePath,
+      trigger: row.trigger,
+      estimatedImpact: row.estimatedImpact,
+      timeframe: row.timeframe,
+      score: row.score as ThesisFailureEvaluation['score'],
+      rationale: row.rationale,
+      evidence: normalizeEvidenceItems(row.evidence),
+    });
+  }
+  return out;
+}
+
+function normalizeStructuredResult(raw: unknown): ThesisEvaluationStructuredResult | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.summary !== 'string' || typeof row.systemRecommendation !== 'string') return undefined;
+  const driverAssessments = normalizeDriverEvaluations(row.driverAssessments);
+  const failureAssessments = normalizeFailureEvaluations(row.failureAssessments);
+  const ruleSignals =
+    row.ruleSignals && typeof row.ruleSignals === 'object' && !Array.isArray(row.ruleSignals)
+      ? {
+          trimTriggered: row.ruleSignals != null
+            ? (row.ruleSignals as Record<string, unknown>).trimTriggered === true
+            : undefined,
+          exitTriggered: row.ruleSignals != null
+            ? (row.ruleSignals as Record<string, unknown>).exitTriggered === true
+            : undefined,
+          addTriggered: row.ruleSignals != null
+            ? (row.ruleSignals as Record<string, unknown>).addTriggered === true
+            : undefined,
+          rationale:
+            typeof (row.ruleSignals as Record<string, unknown>).rationale === 'string'
+              ? ((row.ruleSignals as Record<string, unknown>).rationale as string)
+              : undefined,
+        }
+      : undefined;
+  return {
+    summary: row.summary,
+    systemRecommendation: row.systemRecommendation,
+    driverAssessments,
+    failureAssessments,
+    ruleSignals,
+  };
+}
+
+function normalizeDerivedResult(raw: unknown): ThesisEvaluationDerivedResult | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  if (
+    !['healthy', 'unsure', 'problematic', 'trim', 'exit', 'possible_add'].includes(
+      String(row.status)
+    ) ||
+    typeof row.statusRationale !== 'string' ||
+    typeof row.recommendationLabel !== 'string' ||
+    !['none', 'monitor', 'add', 'trim', 'exit'].includes(String(row.ruleRegime))
+  ) {
+    return undefined;
+  }
+  return {
+    status: row.status as ThesisEvaluationDerivedResult['status'],
+    statusRationale: row.statusRationale,
+    recommendationLabel: row.recommendationLabel,
+    ruleRegime: row.ruleRegime as ThesisEvaluationDerivedResult['ruleRegime'],
+    driverHealthScore:
+      typeof row.driverHealthScore === 'number' && Number.isFinite(row.driverHealthScore)
+        ? row.driverHealthScore
+        : 0,
+    failurePressureScore:
+      typeof row.failurePressureScore === 'number' && Number.isFinite(row.failurePressureScore)
+        ? row.failurePressureScore
+        : 0,
+    thesisConfidenceScore:
+      typeof row.thesisConfidenceScore === 'number' && Number.isFinite(row.thesisConfidenceScore)
+        ? row.thesisConfidenceScore
+        : 0,
+  };
+}
+
+function normalizePromptMetadata(raw: unknown): ThesisEvaluationPromptMetadata | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  if (
+    typeof row.reportPromptId !== 'string' ||
+    typeof row.structuringPromptId !== 'string' ||
+    typeof row.groundingUsed !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return {
+    reportPromptId: row.reportPromptId,
+    reportPromptVersion:
+      typeof row.reportPromptVersion === 'number' ? row.reportPromptVersion : null,
+    reportExecutionId:
+      typeof row.reportExecutionId === 'string' ? row.reportExecutionId : null,
+    structuringPromptId: row.structuringPromptId,
+    structuringPromptVersion:
+      typeof row.structuringPromptVersion === 'number' ? row.structuringPromptVersion : null,
+    structuringExecutionId:
+      typeof row.structuringExecutionId === 'string' ? row.structuringExecutionId : null,
+    model: typeof row.model === 'string' ? row.model : null,
+    groundingUsed: row.groundingUsed,
+  };
+}
+
+function loadedEvaluationFromSnap(
+  snap: DocumentSnapshot,
+  thesisDocId: string
+): LoadedPositionThesisEvaluation | null {
+  if (!snap.exists()) return null;
+  const data = snap.data() as Partial<PositionThesisEvaluationDoc>;
+  if (typeof data.userId !== 'string' || typeof data.ticker !== 'string') return null;
+  const state =
+    data.state === 'blocked' || data.state === 'error' || data.state === 'ready'
+      ? data.state
+      : 'error';
+  return {
+    id: snap.id,
+    thesisDocId,
+    userId: data.userId,
+    ticker: data.ticker.toUpperCase(),
+    state,
+    blockedReason: typeof data.blockedReason === 'string' ? data.blockedReason : undefined,
+    reportMarkdown: typeof data.reportMarkdown === 'string' ? data.reportMarkdown : undefined,
+    structuredResult: normalizeStructuredResult(data.structuredResult),
+    derivedResult: normalizeDerivedResult(data.derivedResult),
+    promptMetadata: normalizePromptMetadata(data.promptMetadata),
+    createdAt: toIso(data.createdAt),
+    updatedAt: toIso(data.updatedAt),
+    evaluatedAt: toIso(data.evaluatedAt),
+  };
 }
 
 function applyLegacyReturnAssumptions(
@@ -253,6 +451,20 @@ export async function getPositionThesisByDocId(
       ? data.ticker.trim()
       : '';
   return loadedFromSnap(snap, hint || 'UNKNOWN');
+}
+
+export async function getLatestPositionThesisEvaluation(
+  userId: string,
+  thesisDocId: string
+): Promise<LoadedPositionThesisEvaluation | null> {
+  if (!db) throw new Error('Firestore not initialized');
+  if (!thesisDocId.trim()) return null;
+  const ref = doc(db, COLLECTION, thesisDocId.trim(), EVALUATIONS_SUBCOLLECTION, LATEST_EVALUATION_DOC_ID);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const loaded = loadedEvaluationFromSnap(snap, thesisDocId.trim());
+  if (!loaded || loaded.userId !== userId) return null;
+  return loaded;
 }
 
 

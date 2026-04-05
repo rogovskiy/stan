@@ -12,7 +12,10 @@ import {
 import { createPortal } from 'react-dom';
 import { LiveThesisCardPanel, type LiveThesisCardPanelProps } from '@/app/components/position-thesis/LiveThesisCard';
 import { thesisPayloadToLiveCardPanelProps } from '@/app/lib/thesisPayloadToLiveCardPanel';
-import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type {
+  LoadedPositionThesisEvaluation,
+  PositionThesisPayload,
+} from '@/app/lib/types/positionThesis';
 import type { StressDrawdownPosition } from '@/app/lib/services/portfolioService';
 
 const HOVER_LEAVE_MS = 200;
@@ -96,6 +99,7 @@ function stressDownsideFromRow(
 export default function PositionThesisCardHoverTrigger({
   ticker,
   thesisPayload,
+  thesisEvaluation,
   loading = false,
   bandExpectedReturn,
   /** Fallback displayed downside % when row-level stress details are unavailable. */
@@ -108,6 +112,7 @@ export default function PositionThesisCardHoverTrigger({
 }: {
   ticker: string;
   thesisPayload: PositionThesisPayload | null | undefined;
+  thesisEvaluation?: LoadedPositionThesisEvaluation | null;
   loading?: boolean;
   /** Band target %/yr (min–max); used only to tint the growth+yield subtitle when above/below band. */
   bandExpectedReturn?: { min: number; max: number } | null;
@@ -132,7 +137,7 @@ export default function PositionThesisCardHoverTrigger({
   const panelProps: LiveThesisCardPanelProps = useMemo(() => {
     const stressDown = stressDownsideFromRow(rawStressDrawdownPct, stressRow, stressPercentile);
     if (loading) {
-      const base = thesisPayloadToLiveCardPanelProps(null, bandExpectedReturn);
+      const base = thesisPayloadToLiveCardPanelProps(null, thesisEvaluation, bandExpectedReturn);
       return {
         ...base,
         forwardReturn: '…',
@@ -141,12 +146,12 @@ export default function PositionThesisCardHoverTrigger({
         ...(stressDown ?? {}),
       };
     }
-    const base = thesisPayloadToLiveCardPanelProps(thesisPayload, bandExpectedReturn);
+    const base = thesisPayloadToLiveCardPanelProps(thesisPayload, thesisEvaluation, bandExpectedReturn);
     if (stressDown) {
       return { ...base, ...stressDown };
     }
     return base;
-  }, [loading, thesisPayload, bandExpectedReturn, rawStressDrawdownPct, stressRow, stressPercentile]);
+  }, [loading, thesisPayload, thesisEvaluation, bandExpectedReturn, rawStressDrawdownPct, stressRow, stressPercentile]);
 
   const computePosition = useCallback(() => {
     const trigger = wrapRef.current;

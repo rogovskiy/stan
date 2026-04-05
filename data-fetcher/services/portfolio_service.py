@@ -40,6 +40,7 @@ class PortfolioService(FirebaseBaseService):
                 "quantity": pos_data.get("quantity", 0),
                 "purchaseDate": pos_data.get("purchaseDate"),
                 "purchasePrice": pos_data.get("purchasePrice"),
+                "thesisId": pos_data.get("thesisId"),
             })
         positions.sort(key=lambda p: p["ticker"])
 
@@ -52,6 +53,18 @@ class PortfolioService(FirebaseBaseService):
             "positions": positions,
             "stressDrawdown": data.get("stressDrawdown"),
         }
+
+    def list_linked_thesis_ids(self, portfolio_id: str) -> List[str]:
+        """Unique linked thesis document IDs referenced by positions in a portfolio."""
+        portfolio = self.get_portfolio(portfolio_id)
+        if not portfolio:
+            return []
+        thesis_ids = {
+            str(pos.get("thesisId", "")).strip()
+            for pos in portfolio.get("positions", [])
+            if str(pos.get("thesisId", "")).strip()
+        }
+        return sorted(thesis_ids)
 
     def get_snapshots_up_to_date(
         self, portfolio_id: str, date_max: str

@@ -71,17 +71,24 @@ from portfolio_stress_drawdown import (
     EXIT_SKIPPED as STRESS_EXIT_SKIPPED,
     run_stress_drawdown,
 )
+from position_thesis_evaluation import (
+    EXIT_OK as THESIS_EVAL_EXIT_OK,
+    EXIT_SKIPPED as THESIS_EVAL_EXIT_SKIPPED,
+    run_position_thesis_evaluation,
+)
 from services.job_run_service import (
     record_job_run,
     JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE,
     JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE_PUBLISH,
     JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN,
+    JOB_TYPE_POSITION_THESIS_EVALUATION,
 )
 from services.portfolio_service import PortfolioService
 
 logger = logging.getLogger(__name__)
 
 PORTFOLIO_CHANNEL_EXPOSURE_TOPIC = "portfolio-channel-exposure-requests"
+POSITION_THESIS_EVALUATION_TOPIC = "position-thesis-evaluation-requests"
 
 
 def _resolve_invocation_execution_id() -> str:
@@ -127,6 +134,17 @@ def _decode_pubsub_json(message) -> dict:
     raise ValueError("No message data")
 
 
+def _publish_json_message(
+    client: PublisherClient,
+    topic_path: str,
+    payload: dict,
+    *,
+    timeout: int = 30,
+) -> None:
+    data = json.dumps(payload).encode("utf-8")
+    client.publish(topic_path, data).result(timeout=timeout)
+
+
 @scheduler_fn.on_schedule(
     schedule="0 6 * * 1",
     memory=512,
@@ -134,25 +152,35 @@ def _decode_pubsub_json(message) -> dict:
     concurrency=1,
 )
 def portfolio_weekly_publish(event: scheduler_fn.ScheduledEvent) -> None:
-    """Monday 06:00 UTC: list portfolios and publish one channel-exposure message per id."""
+    """Monday 06:00 UTC: publish portfolio refresh and linked thesis evaluation messages."""
     execution_id = _resolve_invocation_execution_id()
     started_at = datetime.utcnow()
     logger.info("portfolio_weekly_publish schedule_time=%s", event.schedule_time)
     errors: list[str] = []
     published = 0
+    thesis_eval_published = 0
     portfolio_ids: list[str] = []
     try:
         project = _gcp_project_id()
-        portfolio_ids = PortfolioService().list_portfolio_ids()
+        portfolio_service = PortfolioService()
+        portfolio_ids = portfolio_service.list_portfolio_ids()
         logger.info("Publishing %d portfolio refresh message(s)", len(portfolio_ids))
 
         client = PublisherClient()
         topic_path = client.topic_path(project, PORTFOLIO_CHANNEL_EXPOSURE_TOPIC)
+        thesis_topic_path = client.topic_path(project, POSITION_THESIS_EVALUATION_TOPIC)
         for pid in portfolio_ids:
             try:
-                data = json.dumps({"portfolioId": pid}).encode("utf-8")
-                client.publish(topic_path, data).result(timeout=30)
+                _publish_json_message(client, topic_path, {"portfolioId": pid})
                 published += 1
+                thesis_ids = portfolio_service.list_linked_thesis_ids(pid)
+                for thesis_id in thesis_ids:
+                    _publish_json_message(
+                        client,
+                        thesis_topic_path,
+                        {"portfolioId": pid, "thesisDocId": thesis_id},
+                    )
+                    thesis_eval_published += 1
             except Exception as ex:
                 logger.warning("Publish failed for portfolio %s: %s", pid, ex)
                 errors.append(f"{pid}: {ex}")
@@ -169,6 +197,7 @@ def portfolio_weekly_publish(event: scheduler_fn.ScheduledEvent) -> None:
                 finished_at=finished_at,
                 payload={
                     "published": published,
+                    "thesis_eval_published": thesis_eval_published,
                     "failed": len(errors),
                     "portfolio_count": len(portfolio_ids),
                 },
@@ -185,6 +214,7 @@ def portfolio_weekly_publish(event: scheduler_fn.ScheduledEvent) -> None:
             finished_at=finished_at,
             payload={
                 "published": published,
+                "thesis_eval_published": thesis_eval_published,
                 "portfolio_count": len(portfolio_ids),
             },
         )
@@ -321,3 +351,63 @@ def portfolio_channel_exposure_refresh(
                 started_at=s_started,
                 finished_at=datetime.utcnow(),
             )
+
+
+@pubsub_fn.on_message_published(
+    topic=POSITION_THESIS_EVALUATION_TOPIC,
+    memory=1024,
+    timeout_sec=540,
+    concurrency=2,
+    max_instances=5,
+)
+def position_thesis_evaluation_refresh(
+    event: pubsub_fn.CloudEvent[pubsub_fn.MessagePublishedData],
+) -> None:
+    """Pub/Sub: refresh thesis evaluation for one thesis document."""
+    message = event.data.message
+    payload = _decode_pubsub_json(message)
+    thesis_id = payload.get("thesisDocId") or payload.get("thesis_id")
+    if not thesis_id:
+        logger.error("Missing thesisDocId in message")
+        raise ValueError("Message must include thesisDocId")
+    thesis_id = str(thesis_id)
+
+    execution_id = _resolve_invocation_execution_id()
+    started_at = datetime.utcnow()
+    try:
+        rc = run_position_thesis_evaluation(thesis_id, quiet=True)
+        if rc == THESIS_EVAL_EXIT_SKIPPED:
+            record_job_run(
+                JOB_TYPE_POSITION_THESIS_EVALUATION,
+                execution_id,
+                "success",
+                entity=thesis_id,
+                started_at=started_at,
+                finished_at=datetime.utcnow(),
+                payload={"skipped": True},
+            )
+            logger.info("Thesis evaluation skipped for %s", thesis_id)
+        elif rc != THESIS_EVAL_EXIT_OK:
+            raise RuntimeError(f"exit code {rc}")
+        else:
+            record_job_run(
+                JOB_TYPE_POSITION_THESIS_EVALUATION,
+                execution_id,
+                "success",
+                entity=thesis_id,
+                started_at=started_at,
+                finished_at=datetime.utcnow(),
+            )
+            logger.info("Thesis evaluation done for %s", thesis_id)
+    except Exception as e:
+        logger.exception("Thesis evaluation failed for %s: %s", thesis_id, e)
+        record_job_run(
+            JOB_TYPE_POSITION_THESIS_EVALUATION,
+            execution_id,
+            "error",
+            entity=thesis_id,
+            error_message=str(e),
+            started_at=started_at,
+            finished_at=datetime.utcnow(),
+        )
+        raise

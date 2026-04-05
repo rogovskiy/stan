@@ -7,9 +7,15 @@
  * - position_thesis_onboard: {{portfolioContextBlock}}, {{draftJsonSnippet}}
  * - position_thesis_onboard_structurize: {{portfolioContextBlock}}, {{draftJsonSnippet}}, {{freeText}}
  * - position_thesis_reality_check: {{name}}, {{thesisContextBlock}}
+ * - position_thesis_evaluation_report: {{name}}, {{current_date}}, {{thesisContextBlock}}
+ * - position_thesis_evaluation_structurize: {{name}}, {{thesisContextBlock}}, {{evaluationReportBlock}}
  */
 export const PROMPT_POSITION_THESIS_BUILDER = 'position_thesis_builder' as const;
 export const PROMPT_POSITION_THESIS_ONBOARD = 'position_thesis_onboard' as const;
 export const PROMPT_POSITION_THESIS_ONBOARD_STRUCTURIZE =
   'position_thesis_onboard_structurize' as const;
 export const PROMPT_POSITION_THESIS_REALITY_CHECK = 'position_thesis_reality_check' as const;
+export const PROMPT_POSITION_THESIS_EVALUATION_REPORT =
+  'position_thesis_evaluation_report' as const;
+export const PROMPT_POSITION_THESIS_EVALUATION_STRUCTURIZE =
+  'position_thesis_evaluation_structurize' as const;

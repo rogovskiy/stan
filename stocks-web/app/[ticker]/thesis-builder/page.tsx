@@ -12,11 +12,15 @@ import {
 } from '@/app/lib/portfolioThesisContext';
 import {
   coercePositionThesisPayload,
+  getLatestPositionThesisEvaluation,
   getPositionThesis,
   getPositionThesisByDocId,
 } from '@/app/lib/services/positionThesisService';
 import type { Portfolio } from '@/app/lib/services/portfolioService';
-import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type {
+  LoadedPositionThesisEvaluation,
+  PositionThesisPayload,
+} from '@/app/lib/types/positionThesis';
 import type { PersistedChatMessage } from '@/app/lib/types/chatTranscript';
 import type { ChatHistoryEntry, ThesisOnboardPortfolioLink } from '@/app/lib/thesisOnboardHandoff';
 import { fetchPositionThesisChatTranscript } from '@/app/lib/services/positionThesisChatClient';
@@ -77,6 +81,8 @@ function ThesisBuilderPageInner() {
   >(undefined);
   const [remoteChatMessages, setRemoteChatMessages] = useState<PersistedChatMessage[]>([]);
   const [chatHydrationVersion, setChatHydrationVersion] = useState(0);
+  const [latestEvaluation, setLatestEvaluation] =
+    useState<LoadedPositionThesisEvaluation | null>(null);
 
   const thesisDocIdParam = searchParams.get('thesisDocId');
   const portfolioIdParam = searchParams.get('portfolioId');
@@ -136,6 +142,7 @@ function ThesisBuilderPageInner() {
     setInitialAuthoringHistory(undefined);
     setThesisDocId(null);
     setRemoteChatMessages([]);
+    setLatestEvaluation(null);
 
     (async () => {
       try {
@@ -325,6 +332,26 @@ function ThesisBuilderPageInner() {
   useEffect(() => {
     if (authLoading) return;
     if (!user?.uid || !thesisDocId?.trim()) {
+      setLatestEvaluation(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const evaluation = await getLatestPositionThesisEvaluation(user.uid, thesisDocId.trim());
+        if (!cancelled) setLatestEvaluation(evaluation);
+      } catch {
+        if (!cancelled) setLatestEvaluation(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, thesisDocId, user]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user?.uid || !thesisDocId?.trim()) {
       setRemoteChatMessages([]);
       return;
     }
@@ -393,6 +420,7 @@ function ThesisBuilderPageInner() {
         portfolioLink={portfolioLink}
         portfolioContextForCoach={portfolioContextForCoach}
         initialAuthoringHistory={initialAuthoringHistory}
+        latestEvaluation={latestEvaluation}
         getIdToken={() => user?.getIdToken() ?? Promise.resolve(null)}
         onThesisDocIdCommitted={onThesisDocIdCommitted}
         onTickerCommitted={(canonical) => {

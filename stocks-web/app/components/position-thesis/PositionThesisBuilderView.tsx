@@ -9,16 +9,26 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import Link from 'next/link';
 import { formatAssumptionRange, parseAssumptionRange } from '@/app/lib/positionThesisAssumptionRange';
 import {
   computeSectionCompleteness,
   type ThesisSectionCompleteness,
 } from '@/app/lib/positionThesisCompleteness';
+import {
+  deriveThesisEvaluationResult,
+  thesisStatusDisplay,
+} from '@/app/lib/positionThesisEvaluation';
+import { buildPositionThesisSectionAnalysis } from '@/app/lib/positionThesisSectionAnalysis';
 import type {
   AuthoringContextEntry,
   DriverRow,
   FailureRow,
+  LoadedPositionThesisEvaluation,
   PositionThesisPayload,
+  ThesisDriverEvaluation,
+  ThesisEvidenceItem,
+  ThesisFailureEvaluation,
 } from '@/app/lib/types/positionThesis';
 
 const MAX_TABLE_ROWS = 12;
@@ -59,6 +69,8 @@ import {
   newThesisDocumentId,
   savePositionThesisByDocId,
 } from '@/app/lib/services/positionThesisService';
+import { PROMPT_POSITION_THESIS_EVALUATION_REPORT } from '@/app/lib/promptIds';
+import { ExecutionFeedbackWidget } from '@/app/components/ExecutionFeedbackWidget';
 import ThesisBuilderChat, { type ThesisBuilderChatHandle } from './ThesisBuilderChat';
 
 const section = 'bg-white rounded-2xl shadow-sm border border-slate-200 p-5';
@@ -84,6 +96,7 @@ const assumptionTierCard =
   'rounded-xl border border-slate-200 bg-slate-50/50 p-4 ring-1 ring-slate-100';
 const tierHeading = 'text-sm font-semibold text-slate-800 mb-3';
 const badge = 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium border';
+const latestAnalysisShell = 'mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3';
 
 function AssumptionRangeFields({
   title,
@@ -338,10 +351,202 @@ function ReadMoreClamp({ text }: { text: string }) {
   );
 }
 
+function evaluationScoreTone(score: string): string {
+  switch (score) {
+    case 'working':
+    case 'inactive':
+      return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    case 'mixed':
+    case 'emerging':
+      return 'bg-amber-50 text-amber-900 border-amber-200';
+    case 'failing':
+    case 'active':
+      return 'bg-red-50 text-red-800 border-red-200';
+    default:
+      return 'bg-slate-100 text-slate-600 border-slate-200';
+  }
+}
+
+function ruleSignalTone(triggered: boolean): string {
+  return triggered
+    ? 'bg-amber-50 text-amber-900 border-amber-200'
+    : 'bg-slate-100 text-slate-600 border-slate-200';
+}
+
+function AssessmentEvidenceList({ evidence }: { evidence: ThesisEvidenceItem[] }) {
+  if (evidence.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">
+        Evidence
+      </p>
+      <ul className="space-y-1.5 text-xs leading-relaxed text-slate-600">
+        {evidence.map((item, index) => (
+          <li key={`${item.source}-${item.detail}-${index}`}>
+            <span className="font-medium text-slate-700">{item.source}:</span> {item.detail}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function LatestSectionAnalysis({
+  summary,
+  blockedReason,
+  phaseLabel,
+  badgeClassName,
+  recommendation,
+  feedbackExecutionId,
+}: {
+  summary?: string | null;
+  blockedReason?: string | null;
+  phaseLabel?: string;
+  badgeClassName?: string;
+  recommendation?: string;
+  feedbackExecutionId?: string | null;
+}) {
+  const cleanSummary = summary?.trim() || '';
+  const cleanBlockedReason = blockedReason?.trim() || '';
+  const cleanRecommendation = recommendation?.trim() || '';
+  const cleanFeedbackExecutionId = feedbackExecutionId?.trim() || '';
+  const showStatus = Boolean(phaseLabel && badgeClassName);
+
+  if (!cleanSummary && !cleanBlockedReason && !cleanRecommendation) return null;
+
+  if (cleanBlockedReason) {
+    return (
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+          Latest analysis
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-amber-950">{cleanBlockedReason}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={latestAnalysisShell}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Latest analysis
+        </div>
+        {showStatus ? <span className={`${badge} ${badgeClassName}`}>{phaseLabel}</span> : null}
+      </div>
+      {cleanSummary ? (
+        <div className="mt-2">
+          <ReadMoreClamp text={cleanSummary} />
+        </div>
+      ) : null}
+      {cleanRecommendation ? (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            System recommendation
+          </div>
+          <p className="mt-1 text-sm leading-relaxed text-slate-700">{cleanRecommendation}</p>
+        </div>
+      ) : null}
+      {cleanFeedbackExecutionId ? (
+        <ExecutionFeedbackWidget
+          provenance={[{ analysis: cleanFeedbackExecutionId }]}
+          promptId={PROMPT_POSITION_THESIS_EVALUATION_REPORT}
+          className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DriverAssessmentPanel({
+  assessment,
+}: {
+  assessment: ThesisDriverEvaluation | null;
+}) {
+  if (!assessment) return null;
+  return (
+    <div className={latestAnalysisShell}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Latest analysis
+        </div>
+        <span className={`${badge} ${evaluationScoreTone(assessment.score)}`}>
+          {assessment.score}
+        </span>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-slate-700">{assessment.rationale}</p>
+      <AssessmentEvidenceList evidence={assessment.evidence} />
+    </div>
+  );
+}
+
+function FailureAssessmentPanel({
+  assessment,
+}: {
+  assessment: ThesisFailureEvaluation | null;
+}) {
+  if (!assessment) return null;
+  return (
+    <div className={latestAnalysisShell}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Latest analysis
+        </div>
+        <span className={`${badge} ${evaluationScoreTone(assessment.score)}`}>
+          {assessment.score}
+        </span>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-slate-700">{assessment.rationale}</p>
+      <AssessmentEvidenceList evidence={assessment.evidence} />
+    </div>
+  );
+}
+
+function RuleSignalsAnalysis({
+  blockedReason,
+  ruleSignals,
+}: {
+  blockedReason?: string | null;
+  ruleSignals?:
+    | {
+        trimTriggered: boolean;
+        exitTriggered: boolean;
+        addTriggered: boolean;
+        rationale: string;
+      }
+    | null;
+}) {
+  if (blockedReason?.trim()) {
+    return <LatestSectionAnalysis blockedReason={blockedReason} />;
+  }
+  if (!ruleSignals) return null;
+  return (
+    <div className={latestAnalysisShell}>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Latest analysis
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className={`${badge} ${ruleSignalTone(ruleSignals.trimTriggered)}`}>
+          Trim: {ruleSignals.trimTriggered ? 'Triggered' : 'Not triggered'}
+        </span>
+        <span className={`${badge} ${ruleSignalTone(ruleSignals.exitTriggered)}`}>
+          Exit: {ruleSignals.exitTriggered ? 'Triggered' : 'Not triggered'}
+        </span>
+        <span className={`${badge} ${ruleSignalTone(ruleSignals.addTriggered)}`}>
+          Add: {ruleSignals.addTriggered ? 'Triggered' : 'Not triggered'}
+        </span>
+      </div>
+      {ruleSignals.rationale ? (
+        <p className="mt-3 text-sm leading-relaxed text-slate-700">{ruleSignals.rationale}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ThesisDriverCard({
   row,
   index,
   editing,
+  assessment,
   onEdit,
   onDoneEditing,
   onRemove,
@@ -350,6 +555,7 @@ function ThesisDriverCard({
   row: DriverRow;
   index: number;
   editing: boolean;
+  assessment: ThesisDriverEvaluation | null;
   onEdit: () => void;
   onDoneEditing: () => void;
   onRemove: () => void;
@@ -511,6 +717,7 @@ function ThesisDriverCard({
           </div>
         </div>
       )}
+      <DriverAssessmentPanel assessment={assessment} />
     </div>
   );
 }
@@ -536,6 +743,7 @@ function ThesisFailureCard({
   row,
   index,
   editing,
+  assessment,
   onEdit,
   onDoneEditing,
   onRemove,
@@ -544,6 +752,7 @@ function ThesisFailureCard({
   row: FailureRow;
   index: number;
   editing: boolean;
+  assessment: ThesisFailureEvaluation | null;
   onEdit: () => void;
   onDoneEditing: () => void;
   onRemove: () => void;
@@ -722,6 +931,7 @@ function ThesisFailureCard({
           </div>
         </div>
       )}
+      <FailureAssessmentPanel assessment={assessment} />
     </div>
   );
 }
@@ -811,6 +1021,7 @@ export interface PositionThesisBuilderViewProps {
   portfolioContextForCoach?: string;
   /** Latest authoring snapshots from Firestore. */
   initialAuthoringHistory?: AuthoringContextEntry[];
+  latestEvaluation?: LoadedPositionThesisEvaluation | null;
   /** After first save mints or confirms doc id, parent updates URL. */
   onThesisDocIdCommitted?: (
     docId: string,
@@ -831,6 +1042,7 @@ export default function PositionThesisBuilderView({
   portfolioLink,
   portfolioContextForCoach,
   initialAuthoringHistory,
+  latestEvaluation,
   getIdToken,
   onThesisDocIdCommitted,
 }: PositionThesisBuilderViewProps) {
@@ -880,7 +1092,7 @@ export default function PositionThesisBuilderView({
   const [chatAutoSend, setChatAutoSend] = useState<{ nonce: number; text: string } | null>(null);
   const [editingDriverIndex, setEditingDriverIndex] = useState<number | null>(null);
   const [editingFailureIndex, setEditingFailureIndex] = useState<number | null>(null);
-  const [authoringShown, setAuthoringShown] = useState(true);
+  const [authoringShown, setAuthoringShown] = useState(false);
   const thesisChatRef = useRef<ThesisBuilderChatHandle>(null);
 
   const assumptionRangeFlushersRef = useRef<Array<() => Record<string, string>>>([]);
@@ -908,8 +1120,25 @@ export default function PositionThesisBuilderView({
   const symbol = form.ticker.trim().toUpperCase() || routeTicker;
   const titleName =
     symbol === routeTicker && companyName ? `${companyName} (${symbol})` : symbol;
+  const portfolioBackHref = resolvedPortfolioLink
+    ? `/portfolios/${encodeURIComponent(resolvedPortfolioLink.portfolioId)}`
+    : '/portfolios';
 
   const sectionCompleteness = useMemo(() => computeSectionCompleteness(form), [form]);
+  const sectionAnalysis = useMemo(
+    () => buildPositionThesisSectionAnalysis(form, latestEvaluation),
+    [form, latestEvaluation]
+  );
+  const latestDerivedResult = useMemo(
+    () => latestEvaluation?.derivedResult ?? deriveThesisEvaluationResult(latestEvaluation),
+    [latestEvaluation]
+  );
+  const latestStatusUi = useMemo(
+    () => thesisStatusDisplay(latestDerivedResult?.status),
+    [latestDerivedResult]
+  );
+  const latestAnalysisFeedbackExecutionId =
+    latestEvaluation?.promptMetadata?.reportExecutionId ?? null;
 
   const persist = useCallback(async () => {
       if (!userId) {
@@ -1036,6 +1265,14 @@ export default function PositionThesisBuilderView({
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 p-6 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex items-center">
+          <Link
+            href={portfolioBackHref}
+            className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+          >
+            ← Back to portfolio
+          </Link>
+        </div>
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
           <div>
             <p className="text-sm text-slate-500 mb-2">Position Thesis Builder</p>
@@ -1213,6 +1450,18 @@ export default function PositionThesisBuilderView({
                     onChange={(e) => setForm((f) => ({ ...f, riskPosture: e.target.value }))}
                   />
                 </div>
+                <LatestSectionAnalysis
+                  summary={sectionAnalysis.summary}
+                  blockedReason={sectionAnalysis.blockedReason}
+                  phaseLabel={
+                    latestDerivedResult ? latestStatusUi.phaseLabel : undefined
+                  }
+                  badgeClassName={
+                    latestDerivedResult ? latestStatusUi.badgeClassName : undefined
+                  }
+                  recommendation={latestEvaluation?.structuredResult?.systemRecommendation}
+                  feedbackExecutionId={latestAnalysisFeedbackExecutionId}
+                />
               </div>
 
               <div className={section}>
@@ -1334,6 +1583,10 @@ export default function PositionThesisBuilderView({
                     />
                   </div>
                 </div>
+                <LatestSectionAnalysis
+                  summary={sectionAnalysis.summary}
+                  blockedReason={sectionAnalysis.blockedReason}
+                />
               </div>
 
               <div className={section}>
@@ -1361,6 +1614,7 @@ export default function PositionThesisBuilderView({
                         row={row}
                         index={i}
                         editing={editingDriverIndex === i}
+                        assessment={sectionAnalysis.driverAssessmentsByIndex[i] ?? null}
                         onEdit={() => setEditingDriverIndex(i)}
                         onDoneEditing={() =>
                           setEditingDriverIndex((prev) => (prev === i ? null : prev))
@@ -1431,6 +1685,7 @@ export default function PositionThesisBuilderView({
                         row={row}
                         index={i}
                         editing={editingFailureIndex === i}
+                        assessment={sectionAnalysis.failureAssessmentsByIndex[i] ?? null}
                         onEdit={() => setEditingFailureIndex(i)}
                         onDoneEditing={() =>
                           setEditingFailureIndex((prev) => (prev === i ? null : prev))
@@ -1536,6 +1791,10 @@ export default function PositionThesisBuilderView({
                     />
                   </div>
                 </div>
+                <RuleSignalsAnalysis
+                  blockedReason={sectionAnalysis.blockedReason}
+                  ruleSignals={sectionAnalysis.ruleSignals}
+                />
               </div>
             </div>
 

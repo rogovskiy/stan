@@ -2,12 +2,18 @@
 
 import { Fragment, useMemo, type RefObject } from 'react';
 import type { Portfolio, Position, StressDrawdownPosition } from '../../lib/services/portfolioService';
-import type { PositionThesisPayload } from '../../lib/types/positionThesis';
+import type {
+  LoadedPositionThesisEvaluation,
+  PositionThesisPayload,
+} from '../../lib/types/positionThesis';
 import {
   computeBandThesisReturnSignal,
   computePositionThesisReturnRowIssue,
 } from '../../lib/portfolioBandThesisReturnAlignment';
-import LiveThesisCardHoverTrigger from '../position-thesis/LiveThesisCardHoverTrigger';
+import {
+  deriveThesisEvaluationResult,
+  thesisStatusDisplay,
+} from '../../lib/positionThesisEvaluation';
 import PositionThesisCardHoverTrigger from '../position-thesis/PositionThesisCardHoverTrigger';
 import { buildPositionSections } from './positionsTableUtils';
 
@@ -25,6 +31,7 @@ export default function PositionsTable({
   openTransactionHistory,
   handleDeletePosition,
   thesisPayloadByThesisId = {},
+  thesisEvaluationByThesisId = {},
   thesisPayloadsLoading = false,
 }: {
   router: { push: (href: string) => void };
@@ -40,6 +47,7 @@ export default function PositionsTable({
   openTransactionHistory: (ticker: string) => void;
   handleDeletePosition: (positionId: string) => void;
   thesisPayloadByThesisId?: Record<string, PositionThesisPayload>;
+  thesisEvaluationByThesisId?: Record<string, LoadedPositionThesisEvaluation>;
   thesisPayloadsLoading?: boolean;
 }) {
   const sections = buildPositionSections(selectedPortfolio);
@@ -104,12 +112,7 @@ export default function PositionsTable({
               >
                 Weighted risk
               </th>
-              <th className="text-left py-3 px-4 font-medium text-gray-700">
-                <div className="inline-flex items-center gap-1.5">
-                  <span>Thesis Status</span>
-                  <LiveThesisCardHoverTrigger />
-                </div>
-              </th>
+              <th className="text-left py-3 px-4 font-medium text-gray-700">Thesis Status</th>
               <th className="text-right py-3 px-4 font-medium text-gray-700">Total value</th>
               <th className="w-28 py-3 px-4">Actions</th>
             </tr>
@@ -229,6 +232,13 @@ export default function PositionsTable({
                       !thesisPayloadsLoading && section.band && tid
                         ? computePositionThesisReturnRowIssue(section.band, position, thesisPayloadByThesisId[tid])
                         : 'none';
+                    const thesisEvaluation = tid ? thesisEvaluationByThesisId[tid] : undefined;
+                    const derivedEvaluation =
+                      thesisEvaluation?.derivedResult ?? deriveThesisEvaluationResult(thesisEvaluation);
+                    const statusUi = thesisStatusDisplay(derivedEvaluation?.status);
+                    const hasStatusLabel =
+                      thesisEvaluation?.state === 'blocked' ||
+                      Boolean(derivedEvaluation?.status);
                     const stressRow = stressRowByTicker.get(tickerKey);
                     const stressPct = displayedStressPctForRow(stressRow);
                     const weightedStressPct =
@@ -290,6 +300,7 @@ export default function PositionsTable({
                             <PositionThesisCardHoverTrigger
                               ticker={position.ticker}
                               thesisPayload={tid ? thesisPayloadByThesisId[tid] : undefined}
+                              thesisEvaluation={thesisEvaluation}
                               loading={thesisPayloadsLoading}
                               bandExpectedReturn={bandERForHover}
                               rawStressDrawdownPct={
@@ -313,22 +324,38 @@ export default function PositionsTable({
                                     `/${position.ticker}/thesis-builder?${q.toString()}`
                                   );
                                 }}
-                                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors inline-flex"
+                                className={
+                                  hasStatusLabel
+                                    ? `inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-90 ${
+                                        thesisEvaluation?.state === 'blocked'
+                                          ? 'border-amber-200 bg-amber-50 text-amber-900'
+                                          : statusUi.badgeClassName
+                                      }`
+                                    : 'p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors inline-flex'
+                                }
                               >
-                                <svg
-                                  className="w-5 h-5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                  aria-hidden
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                                  />
-                                </svg>
+                                {hasStatusLabel ? (
+                                  thesisEvaluation?.state === 'blocked' ? (
+                                    'Blocked'
+                                  ) : (
+                                    statusUi.statusBadge
+                                  )
+                                ) : (
+                                  <svg
+                                    className="w-5 h-5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    aria-hidden
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                    />
+                                  </svg>
+                                )}
                               </button>
                             </PositionThesisCardHoverTrigger>
                           ) : selectedPortfolio.id && position.id ? (

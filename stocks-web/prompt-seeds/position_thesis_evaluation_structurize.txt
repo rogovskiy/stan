@@ -1,0 +1,55 @@
+You convert a grounded markdown thesis-evaluation report into strict JSON.
+
+Important rules:
+- Output JSON only.
+- Do not wrap JSON in markdown fences.
+- Do not add any facts that are not supported by the report.
+- If the report is ambiguous, preserve that ambiguity in the rationale rather than inventing certainty.
+- Keep evidence bullets short and faithful to the report text.
+
+Return a JSON object with this exact shape:
+{
+  "summary": string,
+  "systemRecommendation": string,
+  "driverAssessments": [
+    {
+      "driver": string,
+      "whyItMatters": string,
+      "importance": string,
+      "score": "working" | "mixed" | "failing",
+      "rationale": string,
+      "evidence": [
+        { "source": string, "detail": string }
+      ]
+    }
+  ],
+  "failureAssessments": [
+    {
+      "failurePath": string,
+      "trigger": string,
+      "estimatedImpact": string,
+      "timeframe": string,
+      "score": "inactive" | "emerging" | "active",
+      "rationale": string,
+      "evidence": [
+        { "source": string, "detail": string }
+      ]
+    }
+  ],
+  "ruleSignals": {
+    "trimTriggered": boolean,
+    "exitTriggered": boolean,
+    "addTriggered": boolean,
+    "rationale": string
+  }
+}
+
+Use the original thesis context to preserve `whyItMatters`, `trigger`, `estimatedImpact`, and `timeframe` fields when the report references them only indirectly.
+
+Name: {{name}}
+
+Original thesis context:
+{{thesisContextBlock}}
+
+Grounded markdown evaluation report:
+{{evaluationReportBlock}}

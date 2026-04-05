@@ -39,6 +39,7 @@ JOB_TYPE_YOUTUBE_TRANSCRIPT = "youtube_transcript"
 JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE = "portfolio_channel_exposure"
 JOB_TYPE_PORTFOLIO_CHANNEL_EXPOSURE_PUBLISH = "portfolio_channel_exposure_publish"
 JOB_TYPE_PORTFOLIO_STRESS_DRAWDOWN = "portfolio_stress_drawdown"
+JOB_TYPE_POSITION_THESIS_EVALUATION = "position_thesis_evaluation"
 JOB_TYPE_QUARTERLY_TIMESERIES = "quarterly_timeseries"
 
 

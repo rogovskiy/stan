@@ -53,6 +53,107 @@ export interface PositionThesisPayload {
 
 export type PositionThesisStatus = 'draft' | 'published';
 
+export type ThesisDriverEvaluationScore = 'working' | 'mixed' | 'failing';
+export type ThesisFailureEvaluationScore = 'inactive' | 'emerging' | 'active';
+export type ThesisEvaluationStatus =
+  | 'healthy'
+  | 'unsure'
+  | 'problematic'
+  | 'trim'
+  | 'exit'
+  | 'possible_add';
+export type ThesisRuleRegime = 'none' | 'monitor' | 'add' | 'trim' | 'exit';
+export type ThesisEvaluationState = 'ready' | 'blocked' | 'error';
+
+export interface ThesisEvidenceItem {
+  source: string;
+  detail: string;
+}
+
+export interface ThesisDriverEvaluation {
+  driver: string;
+  whyItMatters: string;
+  importance: string;
+  score: ThesisDriverEvaluationScore;
+  rationale: string;
+  evidence: ThesisEvidenceItem[];
+}
+
+export interface ThesisFailureEvaluation {
+  failurePath: string;
+  trigger: string;
+  estimatedImpact: string;
+  timeframe: string;
+  score: ThesisFailureEvaluationScore;
+  rationale: string;
+  evidence: ThesisEvidenceItem[];
+}
+
+export interface ThesisEvaluationStructuredResult {
+  summary: string;
+  systemRecommendation: string;
+  driverAssessments: ThesisDriverEvaluation[];
+  failureAssessments: ThesisFailureEvaluation[];
+  ruleSignals?: {
+    trimTriggered?: boolean;
+    exitTriggered?: boolean;
+    addTriggered?: boolean;
+    rationale?: string;
+  };
+}
+
+export interface ThesisEvaluationDerivedResult {
+  status: ThesisEvaluationStatus;
+  statusRationale: string;
+  recommendationLabel: string;
+  ruleRegime: ThesisRuleRegime;
+  driverHealthScore: number;
+  failurePressureScore: number;
+  thesisConfidenceScore: number;
+}
+
+export interface ThesisEvaluationPromptMetadata {
+  reportPromptId: string;
+  reportPromptVersion: number | null;
+  reportExecutionId?: string | null;
+  structuringPromptId: string;
+  structuringPromptVersion: number | null;
+  structuringExecutionId?: string | null;
+  model: string | null;
+  groundingUsed: boolean;
+}
+
+export interface PositionThesisEvaluationDoc {
+  thesisDocId: string;
+  userId: string;
+  ticker: string;
+  state: ThesisEvaluationState;
+  blockedReason?: string;
+  reportMarkdown?: string;
+  structuredResult?: ThesisEvaluationStructuredResult;
+  derivedResult?: ThesisEvaluationDerivedResult;
+  promptMetadata?: ThesisEvaluationPromptMetadata;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  evaluatedAt?: unknown;
+}
+
+export interface LoadedPositionThesisEvaluation {
+  id: string;
+  thesisDocId: string;
+  userId: string;
+  ticker: string;
+  state: ThesisEvaluationState;
+  blockedReason?: string;
+  reportMarkdown?: string;
+  structuredResult?: ThesisEvaluationStructuredResult;
+  derivedResult?: ThesisEvaluationDerivedResult;
+  promptMetadata?: ThesisEvaluationPromptMetadata;
+  createdAt?: string;
+  updatedAt?: string;
+  evaluatedAt?: string;
+}
+
 /** Provenance snapshot stored on the thesis document (not inside payload). */
 export interface AuthoringContextEntry {
   source: 'standalone' | 'portfolio_position' | 'onboard_handoff';

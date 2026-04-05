@@ -1,6 +1,13 @@
 import type { LiveThesisCardPanelProps } from '@/app/components/position-thesis/LiveThesisCard';
+import {
+  deriveThesisEvaluationResult,
+  thesisStatusDisplay,
+} from '@/app/lib/positionThesisEvaluation';
 import { getImpliedReturnIntervalFromPayload } from '@/app/lib/thesisImpliedReturnFromPayload';
-import type { PositionThesisPayload } from '@/app/lib/types/positionThesis';
+import type {
+  LoadedPositionThesisEvaluation,
+  PositionThesisPayload,
+} from '@/app/lib/types/positionThesis';
 
 function fmtRange(i: { min: number; max: number }): string {
   if (i.min === i.max) return `${i.min.toFixed(1)}%`;
@@ -33,22 +40,23 @@ function bandRange(
 /**
  * Full Live Thesis Card props. Forward return matches band alignment (growth + yield → implied interval).
  * Subtitle under forward return is only "above band" / "below band" when misaligned (portfolio hover).
- * Status, rule state, and system recommendation are always "n/a"; downside is "N/A". Other missing fields use "—".
+ * Status and recommendation come from the latest persisted evaluation when available.
  */
 export function thesisPayloadToLiveCardPanelProps(
   payload: PositionThesisPayload | null | undefined,
+  evaluation?: LoadedPositionThesisEvaluation | null,
   bandExpectedReturn?: { min: number; max: number } | null
 ): LiveThesisCardPanelProps {
+  const derived = evaluation?.derivedResult ?? deriveThesisEvaluationResult(evaluation);
+  const statusUi = thesisStatusDisplay(derived?.status);
   if (!payload) {
     return {
-      phaseLabel: 'n/a',
-      statusBadge: 'n/a',
-      badgeClassName: 'bg-slate-100 text-slate-600 border-slate-200',
+      phaseLabel: statusUi.phaseLabel,
+      statusBadge: statusUi.statusBadge,
+      badgeClassName: statusUi.badgeClassName,
       forwardReturn: '—',
       downside: 'N/A',
-      volRegime: '—',
-      ruleState: 'n/a',
-      recommendation: 'n/a',
+      recommendation: evaluation?.structuredResult?.systemRecommendation ?? 'n/a',
     };
   }
 
@@ -71,15 +79,14 @@ export function thesisPayloadToLiveCardPanelProps(
   }
 
   return {
-    phaseLabel: 'n/a',
-    statusBadge: 'n/a',
-    badgeClassName: 'bg-slate-100 text-slate-700 border-slate-200',
+    phaseLabel: statusUi.phaseLabel,
+    statusBadge: statusUi.statusBadge,
+    badgeClassName: statusUi.badgeClassName,
     forwardReturn,
     forwardReturnSubtitle,
     forwardReturnSubtitleTone,
     downside: 'N/A',
-    volRegime: dash(payload.currentVolRegime),
-    ruleState: 'n/a',
-    recommendation: 'n/a',
+    recommendation:
+      evaluation?.structuredResult?.systemRecommendation ?? dash(evaluation?.blockedReason, 120),
   };
 }

@@ -14,8 +14,6 @@ export interface LiveThesisCardPanelProps {
   downside?: string;
   /** Small line under downside (e.g. source label). */
   downsideSubtitle?: string;
-  volRegime?: string;
-  ruleState?: string;
   recommendation?: string;
 }
 
@@ -33,8 +31,6 @@ const defaults: Required<
   forwardReturnSubtitle: '',
   forwardReturnSubtitleTone: undefined,
   downside: 'N/A',
-  volRegime: '—',
-  ruleState: 'n/a',
   recommendation: 'n/a',
 };
 
@@ -48,8 +44,6 @@ export function LiveThesisCardPanel({
   forwardReturnSubtitleTone = defaults.forwardReturnSubtitleTone,
   downside = defaults.downside,
   downsideSubtitle,
-  volRegime = defaults.volRegime,
-  ruleState = defaults.ruleState,
   recommendation = defaults.recommendation,
 }: LiveThesisCardPanelProps) {
   return (
@@ -83,14 +77,6 @@ export function LiveThesisCardPanel({
           {downsideSubtitle ? (
             <div className="text-xs text-slate-500 mt-1 leading-snug">{downsideSubtitle}</div>
           ) : null}
-        </div>
-        <div className="rounded-xl bg-white border border-slate-200 p-3">
-          <div className="text-slate-500">Vol regime</div>
-          <div className="text-lg font-semibold">{volRegime}</div>
-        </div>
-        <div className="rounded-xl bg-white border border-slate-200 p-3">
-          <div className="text-slate-500">Rule state</div>
-          <div className="text-lg font-semibold">{ruleState}</div>
         </div>
       </div>
       <div>

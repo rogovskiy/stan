@@ -10,8 +10,14 @@ import {
   type Transaction,
 } from '../lib/services/portfolioService';
 import { useAuth } from '../lib/authContext';
-import type { PositionThesisPayload } from '../lib/types/positionThesis';
-import { getPositionThesisByDocId } from '../lib/services/positionThesisService';
+import type {
+  LoadedPositionThesisEvaluation,
+  PositionThesisPayload,
+} from '../lib/types/positionThesis';
+import {
+  getLatestPositionThesisEvaluation,
+  getPositionThesisByDocId,
+} from '../lib/services/positionThesisService';
 import type { WatchlistItem, WatchlistStatus } from '../lib/services/watchlistShared';
 import { TAX_RATES, computeTaxImpactFromLots, type Lot } from '../lib/taxEstimator';
 import PortfolioBenchmarkChart from './PortfolioBenchmarkChart';
@@ -91,6 +97,9 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
   const [thesisPayloadByThesisId, setThesisPayloadByThesisId] = useState<
     Record<string, PositionThesisPayload>
   >({});
+  const [thesisEvaluationByThesisId, setThesisEvaluationByThesisId] = useState<
+    Record<string, LoadedPositionThesisEvaluation>
+  >({});
   const [thesisPayloadsLoading, setThesisPayloadsLoading] = useState(false);
 
   const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
@@ -129,6 +138,7 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
     const plist = selectedPortfolio?.positions;
     if (!uid || !plist?.length) {
       setThesisPayloadByThesisId({});
+      setThesisEvaluationByThesisId({});
       setThesisPayloadsLoading(false);
       return;
     }
@@ -139,6 +149,7 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
     ];
     if (ids.length === 0) {
       setThesisPayloadByThesisId({});
+      setThesisEvaluationByThesisId({});
       setThesisPayloadsLoading(false);
       return;
     }
@@ -148,19 +159,25 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
       const entries = await Promise.all(
         ids.map(async (docId) => {
           try {
-            const loaded = await getPositionThesisByDocId(uid, docId);
-            return [docId, loaded?.payload ?? null] as const;
+            const [loaded, evaluation] = await Promise.all([
+              getPositionThesisByDocId(uid, docId),
+              getLatestPositionThesisEvaluation(uid, docId),
+            ]);
+            return [docId, loaded?.payload ?? null, evaluation] as const;
           } catch {
-            return [docId, null] as const;
+            return [docId, null, null] as const;
           }
         })
       );
       if (cancelled) return;
       const next: Record<string, PositionThesisPayload> = {};
-      for (const [docId, payload] of entries) {
+      const nextEval: Record<string, LoadedPositionThesisEvaluation> = {};
+      for (const [docId, payload, evaluation] of entries) {
         if (payload) next[docId] = payload;
+        if (evaluation) nextEval[docId] = evaluation;
       }
       setThesisPayloadByThesisId(next);
+      setThesisEvaluationByThesisId(nextEval);
       setThesisPayloadsLoading(false);
     })();
     return () => {
@@ -1202,6 +1219,7 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
                     openTransactionHistory={openTransactionHistory}
                     handleDeletePosition={handleDeletePosition}
                     thesisPayloadByThesisId={thesisPayloadByThesisId}
+                thesisEvaluationByThesisId={thesisEvaluationByThesisId}
                     thesisPayloadsLoading={thesisPayloadsLoading}
                   />
                 ) : (

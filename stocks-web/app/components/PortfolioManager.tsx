@@ -134,6 +134,16 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
   }, [selectedPortfolio?.id]);
 
   useEffect(() => {
+    if (!selectedPortfolio?.id) return;
+    const count = selectedPortfolio.positions?.length ?? 0;
+    setPortfolios((prev) =>
+      prev.map((p) =>
+        p.id === selectedPortfolio.id ? { ...p, positionCount: count } : p
+      )
+    );
+  }, [selectedPortfolio?.id, selectedPortfolio?.positions?.length]);
+
+  useEffect(() => {
     const uid = user?.uid;
     const plist = selectedPortfolio?.positions;
     if (!uid || !plist?.length) {

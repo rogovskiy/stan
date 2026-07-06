@@ -149,6 +149,8 @@ export interface Portfolio {
   /** Stress drawdown (from portfolio_stress_drawdown.py). */
   stressDrawdown?: StressDrawdown;
   positions?: Position[];
+  /** Open position count (list API only; full positions loaded via getPortfolio). */
+  positionCount?: number;
   createdAt?: string;
   updatedAt?: string;
   userId?: string; // For future multi-user support
@@ -163,20 +165,25 @@ export async function getAllPortfolios(): Promise<Portfolio[]> {
     const q = query(portfoliosRef, orderBy('createdAt', 'desc'));
     const querySnapshot = await getDocs(q);
     
-    const portfolios: Portfolio[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      portfolios.push({
-        id: doc.id,
-        name: data.name,
-        description: data.description,
-        accountType: data.accountType === 'ira' ? 'ira' : 'taxable',
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
-        userId: data.userId,
-      });
-    });
-    
+    const portfolios = await Promise.all(
+      querySnapshot.docs.map(async (portfolioDoc) => {
+        const data = portfolioDoc.data();
+        const positionsRef = collection(db, 'portfolios', portfolioDoc.id, 'positions');
+        const positionsSnapshot = await getDocs(positionsRef);
+
+        return {
+          id: portfolioDoc.id,
+          name: data.name,
+          description: data.description,
+          accountType: data.accountType === 'ira' ? 'ira' : 'taxable',
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+          userId: data.userId,
+          positionCount: positionsSnapshot.size,
+        } satisfies Portfolio;
+      })
+    );
+
     return portfolios;
   } catch (error) {
     console.error('Error fetching portfolios:', error);

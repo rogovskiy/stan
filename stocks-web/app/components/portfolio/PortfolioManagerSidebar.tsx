@@ -17,6 +17,16 @@ const STATUS_TOOLTIP: Record<WatchlistStatus, string> = {
   ready_to_buy: 'Status: ready to buy',
 };
 
+function getPortfolioPositionCount(
+  portfolio: Portfolio,
+  selectedPortfolio: Portfolio | null
+): number {
+  if (selectedPortfolio?.id === portfolio.id && selectedPortfolio.positions) {
+    return selectedPortfolio.positions.length;
+  }
+  return portfolio.positionCount ?? portfolio.positions?.length ?? 0;
+}
+
 function getStatusSidebarColor(status: WatchlistStatus) {
   switch (status) {
     case 'ready_to_buy':
@@ -131,7 +141,7 @@ export default function PortfolioManagerSidebar({
                     <div className="text-xs text-gray-500 mt-1 line-clamp-2">{portfolio.description}</div>
                   )}
                   <div className="text-xs text-gray-400 mt-1">
-                    {portfolio.positions?.length || 0} positions
+                    {getPortfolioPositionCount(portfolio, selectedPortfolio)} positions
                   </div>
                 </div>
               ))}

@@ -14,6 +14,13 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import {
+  applyTransactionToLots,
+  averageCostFromLots,
+  earliestPurchaseDateFromLots,
+  totalQuantityFromLots,
+  type Lot,
+} from '../taxEstimator';
 
 /** Risk band: portfolio size range and limits (defined in portfolio settings). */
 export interface Band {
@@ -626,10 +633,8 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
   const transactionsAsc = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
 
   const portfolioRef = doc(db, 'portfolios', portfolioId);
-  const byTicker = new Map<
-    string,
-    { quantity: number; costSum: number; earliestDate: string | null; thesisId?: string; notes?: string }
-  >();
+  const lotsByTicker = new Map<string, Lot[]>();
+  const metaByTicker = new Map<string, { thesisId?: string; notes?: string }>();
   let cashTotal = 0;
   const datesWithTx = new Set<string>();
 
@@ -649,23 +654,17 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
       cashTotal += tx.amount;
       if (tx.ticker) {
         const key = tx.ticker.toUpperCase();
-        if (!byTicker.has(key)) byTicker.set(key, { quantity: 0, costSum: 0, earliestDate: null });
-        const row = byTicker.get(key)!;
-        row.quantity += tx.quantity;
-        if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
-          row.costSum += tx.quantity * tx.price;
-        }
-        if (tx.date && (row.earliestDate == null || tx.date < row.earliestDate)) {
-          row.earliestDate = tx.date;
-        }
+        if (!lotsByTicker.has(key)) lotsByTicker.set(key, []);
+        applyTransactionToLots(lotsByTicker.get(key)!, tx);
       }
     }
     datesWithTx.add(dateStr);
     const positionsForSnapshot: { ticker: string; quantity: number; costBasis: number }[] = [];
-    for (const [ticker, row] of byTicker) {
-      if (row.quantity <= 0) continue;
-      const costBasis = row.quantity > 0 && row.costSum > 0 ? row.costSum / row.quantity : 0;
-      positionsForSnapshot.push({ ticker, quantity: row.quantity, costBasis });
+    for (const [ticker, lots] of lotsByTicker) {
+      const quantity = totalQuantityFromLots(lots);
+      if (quantity <= 0) continue;
+      const costBasis = averageCostFromLots(lots) ?? 0;
+      positionsForSnapshot.push({ ticker, quantity, costBasis });
     }
     const snapshotRef = doc(db, 'portfolios', portfolioId, 'snapshots', dateStr);
     await setDoc(snapshotRef, {
@@ -692,42 +691,42 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
     if (t) existingByTicker.set(t, { id: posDoc.id, thesisId: d.thesisId, notes: d.notes });
   });
 
-  for (const [ticker, row] of byTicker) {
-    const existing = existingByTicker.get(ticker);
-    if (existing) {
-      row.thesisId = existing.thesisId;
-      row.notes = existing.notes;
-    }
+  for (const [ticker, meta] of existingByTicker) {
+    metaByTicker.set(ticker, { thesisId: meta.thesisId, notes: meta.notes });
   }
 
-  for (const [ticker, row] of byTicker) {
-    if (row.quantity <= 0) {
+  for (const [ticker, lots] of lotsByTicker) {
+    const quantity = totalQuantityFromLots(lots);
+    if (quantity <= 0) {
       const existing = existingByTicker.get(ticker);
       if (existing) await deleteDoc(doc(db, 'portfolios', portfolioId, 'positions', existing.id));
     }
   }
 
-  for (const [ticker, row] of byTicker) {
-    if (row.quantity <= 0) continue;
-    const averagePrice = row.quantity > 0 && row.costSum > 0 ? row.costSum / row.quantity : null;
+  for (const [ticker, lots] of lotsByTicker) {
+    const quantity = totalQuantityFromLots(lots);
+    if (quantity <= 0) continue;
+    const averagePrice = averageCostFromLots(lots);
+    const earliestDate = earliestPurchaseDateFromLots(lots);
+    const meta = metaByTicker.get(ticker);
     const existing = existingByTicker.get(ticker);
     if (existing) {
       await updateDoc(doc(db, 'portfolios', portfolioId, 'positions', existing.id), {
-        quantity: row.quantity,
+        quantity,
         purchasePrice: averagePrice,
-        purchaseDate: row.earliestDate ?? null,
-        thesisId: row.thesisId ?? null,
-        notes: row.notes ?? '',
+        purchaseDate: earliestDate ?? null,
+        thesisId: meta?.thesisId ?? existing.thesisId ?? null,
+        notes: meta?.notes ?? existing.notes ?? '',
         updatedAt: serverTimestamp(),
       });
     } else {
       await addDoc(collection(db, 'portfolios', portfolioId, 'positions'), {
         ticker,
-        quantity: row.quantity,
+        quantity,
         purchasePrice: averagePrice,
-        purchaseDate: row.earliestDate ?? null,
-        thesisId: row.thesisId ?? null,
-        notes: row.notes ?? '',
+        purchaseDate: earliestDate ?? null,
+        thesisId: meta?.thesisId ?? null,
+        notes: meta?.notes ?? '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

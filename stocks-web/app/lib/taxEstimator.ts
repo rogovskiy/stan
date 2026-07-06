@@ -8,6 +8,61 @@ export interface Lot {
   costBasisPerShare: number;
 }
 
+type LotTransaction = Pick<Transaction, 'type' | 'quantity' | 'price' | 'date'>;
+
+/** Apply one buy/sell/reinvest transaction to open lots (FIFO). Mutates `lots`. */
+export function applyTransactionToLots(lots: Lot[], tx: LotTransaction): void {
+  if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
+    lots.push({
+      purchaseDate: tx.date,
+      quantity: tx.quantity,
+      costBasisPerShare: tx.price,
+    });
+    return;
+  }
+  if (tx.type === 'sell' && tx.quantity < 0) {
+    let toSell = Math.abs(tx.quantity);
+    while (toSell > 0 && lots.length > 0) {
+      const lot = lots[0];
+      if (lot.quantity <= toSell) {
+        toSell -= lot.quantity;
+        lots.shift();
+      } else {
+        lot.quantity -= toSell;
+        toSell = 0;
+      }
+    }
+  }
+}
+
+/** Weighted average cost per share across remaining open lots. */
+export function averageCostFromLots(lots: Lot[]): number | null {
+  let totalQty = 0;
+  let totalCost = 0;
+  for (const lot of lots) {
+    if (lot.quantity > 0) {
+      totalQty += lot.quantity;
+      totalCost += lot.quantity * lot.costBasisPerShare;
+    }
+  }
+  if (totalQty <= 0 || totalCost <= 0) return null;
+  return totalCost / totalQty;
+}
+
+export function totalQuantityFromLots(lots: Lot[]): number {
+  return lots.reduce((sum, lot) => sum + lot.quantity, 0);
+}
+
+export function earliestPurchaseDateFromLots(lots: Lot[]): string | null {
+  let earliest: string | null = null;
+  for (const lot of lots) {
+    if (lot.quantity > 0 && (earliest == null || lot.purchaseDate < earliest)) {
+      earliest = lot.purchaseDate;
+    }
+  }
+  return earliest;
+}
+
 /**
  * Build open lots for a ticker from transaction history (FIFO).
  * Buys add lots; sells consume from the oldest lots first.
@@ -22,29 +77,9 @@ export function buildOpenLots(
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const lots: Lot[] = [];
-
   for (const tx of sorted) {
-    if ((tx.type === 'buy' || tx.type === 'dividend_reinvest') && tx.quantity > 0 && tx.price != null) {
-      lots.push({
-        purchaseDate: tx.date,
-        quantity: tx.quantity,
-        costBasisPerShare: tx.price,
-      });
-    } else if (tx.type === 'sell' && tx.quantity < 0) {
-      let toSell = Math.abs(tx.quantity);
-      while (toSell > 0 && lots.length > 0) {
-        const lot = lots[0];
-        if (lot.quantity <= toSell) {
-          toSell -= lot.quantity;
-          lots.shift();
-        } else {
-          lot.quantity -= toSell;
-          toSell = 0;
-        }
-      }
-    }
+    applyTransactionToLots(lots, tx);
   }
-
   return lots.filter((l) => l.quantity > 0);
 }
 

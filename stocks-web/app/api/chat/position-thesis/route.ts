@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { sanitizeFormPatch } from '@/app/lib/positionThesisMerge';
 import { PROMPT_POSITION_THESIS_BUILDER } from '@/app/lib/promptIds';
 import {
@@ -17,12 +16,17 @@ import {
 const MAX_CONTEXT_CHARS = 48_000;
 const MAX_MESSAGES = POSITION_THESIS_COACH_MAX_MESSAGES;
 const MAX_MESSAGE_CHARS = POSITION_THESIS_COACH_MAX_MESSAGE_CHARS;
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 type Role = 'user' | 'assistant';
 
 interface IncomingMessage {
   role: Role;
   content: string;
+}
+
+function currentDateUtc(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function buildThesisBuilderPlaceholders(
@@ -70,6 +74,7 @@ function buildThesisBuilderPlaceholders(
     continuationNote,
     thesisContextBlock,
     portfolioContextBlock,
+    current_date: currentDateUtc(),
   };
 }
 
@@ -171,32 +176,68 @@ export async function POST(request: Request) {
   );
 
   const modelId = resolveGeminiModel(promptLoaded.params);
-  const generationConfig: {
-    responseMimeType: string;
-    temperature?: number;
-  } = {
+  const modelPath = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
+  const url = `${API_BASE}/${modelPath}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const contents = [
+    ...messages.slice(0, -1).map((m) => ({
+      role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
+      parts: [{ text: m.content }],
+    })),
+    { role: 'user' as const, parts: [{ text: last.content }] },
+  ];
+
+  const generationConfig: { responseMimeType: string; temperature?: number } = {
     responseMimeType: 'application/json',
   };
   if (promptLoaded.params.temperature != null) {
     generationConfig.temperature = promptLoaded.params.temperature;
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelId,
-    systemInstruction,
+  const requestBody: Record<string, unknown> = {
+    contents,
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
     generationConfig,
-  });
+  };
 
-  const history = messages.slice(0, -1).map((m) => ({
-    role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
-    parts: [{ text: m.content }],
-  }));
+  if (promptLoaded.params.groundingEnabled) {
+    requestBody.tools = [{ google_search: {} }];
+  }
 
   try {
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(last.content);
-    const text = result.response.text();
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+    const json = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      error?: { message?: string };
+    };
+    if (!res.ok) {
+      const msg = json.error?.message ?? res.statusText;
+      console.error('POST /api/chat/position-thesis: API error', res.status, msg);
+      return NextResponse.json(
+        { error: msg || 'Gemini request failed' },
+        { status: 502 }
+      );
+    }
+
+    const parts = json.candidates?.[0]?.content?.parts ?? [];
+    const text = parts
+      .map((p) => (typeof p.text === 'string' ? p.text : ''))
+      .join('\n')
+      .trim();
+    if (!text) {
+      console.error('POST /api/chat/position-thesis: empty response');
+      return NextResponse.json(
+        { error: 'Assistant returned no response. Try again.' },
+        { status: 502 }
+      );
+    }
+
     const parsed = parseModelJson(text);
     if (!parsed) {
       console.error('POST /api/chat/position-thesis: invalid model JSON', text.slice(0, 500));

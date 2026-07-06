@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDailyPricesForTicker, getStartDateFromPeriod } from '@/app/lib/dailyPrices';
+import { getStartDateFromPeriod } from '@/app/lib/dailyPrices';
+import { getDailyPricesForTicker } from '@/app/lib/server/getDailyPrices';
 
 const SECTOR_ETFS = [
   { ticker: 'XLF', label: 'Financials' },

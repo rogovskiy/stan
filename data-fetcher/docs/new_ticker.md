@@ -10,4 +10,4 @@
 
 6. python scan_ir_website.py TEM --verbose
 
-7. Enable autorefresh in the database
+Step 3 (`download_max_data.py`) enables daily autorefresh by default (`refresh_enabled=True`). Use `--no-refresh-enabled` to skip.

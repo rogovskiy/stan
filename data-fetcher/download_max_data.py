@@ -23,6 +23,7 @@ from services.financial_data_service import FinancialDataService
 from services.analyst_data_service import AnalystDataService
 from unified_data_service import UnifiedDataService
 from extract_sec_financials import SECFinancialsService
+from services.ticker_metadata_service import TickerMetadataService
 
 
 def validate_firebase_config(verbose: bool = True):
@@ -62,11 +63,13 @@ class MaxDataDownloader:
         self.unified_service = UnifiedDataService()
         self.yfinance_service = YFinanceService()
         self.sec_service = SECFinancialsService()
+        self.metadata_service = TickerMetadataService()
     
     def download_max_data(self, ticker: str, clear_existing: bool = False,
                          force_price: bool = False,
                          verbose: bool = False, skip_price: bool = False,
-                         include_analyst: bool = False) -> None:
+                         include_analyst: bool = False,
+                         refresh_enabled: bool = True) -> None:
         """Download and cache maximum available data for a ticker
 
         Args:
@@ -76,11 +79,12 @@ class MaxDataDownloader:
             verbose: Show detailed progress
             skip_price: Skip downloading historical price data
             include_analyst: Include analyst predictions/forecasts data
+            refresh_enabled: Set refresh_enabled on the ticker document
         """
 
         if verbose:
             print(f'\n🚀 Starting maximum data download for {ticker.upper()}')
-            print(f'Options: clear={clear_existing}, force_price={force_price}, skipPrice={skip_price}, includeAnalyst={include_analyst}')
+            print(f'Options: clear={clear_existing}, force_price={force_price}, skipPrice={skip_price}, includeAnalyst={include_analyst}, refreshEnabled={refresh_enabled}')
         else:
             print(f'\n🚀 Downloading data for {ticker.upper()}...')
 
@@ -162,6 +166,11 @@ class MaxDataDownloader:
                         print(f' ⚠️  Error: {analyst_results.get("error", "Unknown error")}')
                     else:
                         print(f'\n⚠️  Error fetching analyst data: {analyst_results.get("error", "Unknown error")}')
+            
+            if refresh_enabled:
+                self.metadata_service.set_refresh_enabled(ticker, enabled=True)
+                if verbose:
+                    print(f'\n✅ Enabled daily refresh (refresh_enabled=True)')
             
             print(f'\n✅ Completed for {ticker.upper()}!')
             
@@ -565,6 +574,8 @@ Examples:
                        help='Skip downloading historical price data')
     parser.add_argument('--include-analyst', action='store_true',
                        help='Include analyst predictions/forecasts data')
+    parser.add_argument('--no-refresh-enabled', action='store_true',
+                       help='Do not set refresh_enabled on the ticker document')
     
     args = parser.parse_args()
     
@@ -579,7 +590,8 @@ Examples:
             force_price=args.force_price,
             verbose=args.verbose,
             skip_price=args.skip_price,
-            include_analyst=args.include_analyst
+            include_analyst=args.include_analyst,
+            refresh_enabled=not args.no_refresh_enabled
         )
         
         print(f'\n🎉 Successfully downloaded and cached maximum data for {ticker}!')

@@ -38,9 +38,12 @@ class PriceDataService(FirebaseBaseService):
             if verbose:
                 print(f'Uploading price data for {ticker} {year} to Storage...')
             blob = self.bucket.blob(storage_path)
+            # Replace in place so public URLs don't keep serving an old object generation.
+            if blob.exists():
+                blob.delete()
             blob.upload_from_string(json_data, content_type='application/json')
-            
-            # Make blob publicly readable
+            blob.cache_control = 'public, max-age=300'
+            blob.patch()
             blob.make_public()
             download_url = blob.public_url
             

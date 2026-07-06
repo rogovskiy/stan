@@ -39,7 +39,7 @@ export interface AnnualPriceReference {
   endDate: string;
   dataSource: string;
   storageRef: string;
-  downloadUrl: string;
+  downloadUrl?: string;
   metadata: {
     totalDays: number;
     firstClose: number;
@@ -332,18 +332,13 @@ export class FirebaseCache {
           // Handle different data formats (historical vs new)
           const lastUpdated = yearData.lastUpdated || yearData.last_updated;
           const storageRef = yearData.storageRef || yearData.storage_ref;
-          const downloadUrl = yearData.downloadUrl || yearData.download_url;
           
-          // Ensure the reference has the required fields
           if (!storageRef) {
             console.log(`Annual price reference for ${ticker} ${year} missing storage reference`);
             return null;
           }
           
-          if (!downloadUrl) {
-            console.log(`Annual price reference for ${ticker} ${year} missing download URL`);
-            return null;
-          }
+          const downloadUrl = yearData.downloadUrl || yearData.download_url;
           
           // Create normalized reference object
           const normalizedReference: AnnualPriceReference = {
@@ -388,18 +383,12 @@ export class FirebaseCache {
     }
   }
 
-  // Download annual price data from Firebase Storage
+  // Download annual price data from Firebase Storage (Admin SDK — latest object generation)
   async downloadAnnualPriceData(reference: AnnualPriceReference): Promise<AnnualPriceData> {
     try {
       console.log(`Downloading price data from Storage: ${reference.storageRef}`);
-      const response = await fetch(reference.downloadUrl);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to download price data: ${response.statusText}`);
-      }
-      
-      const priceData = await response.json() as AnnualPriceData;
-      return priceData;
+      const { downloadAnnualPriceJson } = await import('./server/downloadAnnualPriceData');
+      return (await downloadAnnualPriceJson(reference.storageRef)) as AnnualPriceData;
     } catch (error) {
       console.error(`Error downloading annual price data:`, error);
       throw error;
@@ -464,7 +453,7 @@ export class FirebaseCache {
       console.log(`Cache: Fetching data for year ${year}`);
       const reference = await this.getAnnualPriceReference(ticker, year);
       if (reference) {
-        console.log(`Cache: Found reference for ${year}, downloading data from ${reference.downloadUrl}`);
+        console.log(`Cache: Found reference for ${year}, downloading data from ${reference.storageRef}`);
         try {
           const annualData = await this.downloadAnnualPriceData(reference);
           

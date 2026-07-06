@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPortfolio } from '../../../../lib/services/portfolioService';
-import { getDailyPricesForTicker } from '../../../../lib/dailyPrices';
+import { getDailyPricesForTicker } from '../../../../lib/server/getDailyPrices';
 import type { Band, Position } from '../../../../lib/services/portfolioService';
 import { computeBandThesisReturnSignal } from '../../../../lib/portfolioBandThesisReturnAlignment';
 import type { PositionThesisPayload } from '../../../../lib/types/positionThesis';

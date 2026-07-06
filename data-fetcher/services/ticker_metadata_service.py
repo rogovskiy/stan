@@ -55,6 +55,18 @@ class TickerMetadataService(FirebaseBaseService):
             print(f'Error getting metadata for {ticker}: {error}')
             return None
 
+    def set_refresh_enabled(self, ticker: str, enabled: bool = True) -> None:
+        """Set refresh_enabled on the ticker document without overwriting other fields."""
+        try:
+            doc_ref = self.db.collection('tickers').document(ticker.upper())
+            doc_ref.set({
+                'refresh_enabled': enabled,
+                'last_updated': datetime.now().isoformat(),
+            }, merge=True)
+        except Exception as error:
+            print(f'Error setting refresh_enabled for {ticker}: {error}')
+            raise error
+
 
 
 

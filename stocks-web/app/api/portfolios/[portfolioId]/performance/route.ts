@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPortfolio, getTransactions, getSnapshotsUpToDate } from '../../../../lib/services/portfolioService';
 import type { PortfolioSnapshot } from '../../../../lib/services/portfolioService';
-import { getDailyPricesForTicker, getStartDateFromPeriod } from '../../../../lib/dailyPrices';
+import { getStartDateFromPeriod } from '../../../../lib/dailyPrices';
+import { getDailyPricesForTicker } from '../../../../lib/server/getDailyPrices';
 import { computeBandExpectedReturn } from '../../../../lib/portfolioKpis';
 
 const VALID_BENCHMARKS = ['SPY', 'QQQ', 'GLD'] as const;

@@ -1,5 +1,7 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
+/**
+ * Shared daily price helpers (client-safe).
+ * Server routes load price files via Admin Storage — see lib/server/getDailyPrices.ts.
+ */
 
 /**
  * Calculate start date from period string (e.g. "1y", "3y", "5y").
@@ -14,7 +16,7 @@ export function getStartDateFromPeriod(period: string): Date {
 
   const yearsMatch = normalizedPeriod.match(/^(\d+)(y|yr|year|years)?$/);
   if (yearsMatch) {
-    const years = parseInt(yearsMatch[1]);
+    const years = parseInt(yearsMatch[1], 10);
     // Jan 1 of (currentYear - (years - 1)) so 1y = this year, 5y = 5 full calendar years
     startDate.setFullYear(today.getFullYear() - (years - 1));
     startDate.setMonth(0, 1); // January 1st
@@ -38,69 +40,6 @@ export function getStartDateFromPeriod(period: string): Date {
 export interface DailyPricePoint {
   date: string;
   price: number;
-}
-
-/**
- * Fetch daily price data for a ticker from Firebase.
- * Returns sorted array of { date, price } for the given period.
- */
-export async function getDailyPricesForTicker(
-  ticker: string,
-  period: string = '5y'
-): Promise<DailyPricePoint[]> {
-  const startDate = getStartDateFromPeriod(period);
-  const startYear = startDate.getFullYear();
-
-  const priceDataRef = doc(db, 'tickers', ticker.toUpperCase(), 'price', 'consolidated');
-  const priceDataSnap = await getDoc(priceDataRef);
-
-  if (!priceDataSnap.exists()) {
-    return [];
-  }
-
-  const consolidatedData = priceDataSnap.data() as Record<string, unknown>;
-  const years = (consolidatedData.years || {}) as Record<string, { downloadUrl?: string; download_url?: string }>;
-
-  const yearsToFetch: number[] = [];
-  for (const yearStr of Object.keys(years)) {
-    const year = parseInt(yearStr);
-    if (year >= startYear) yearsToFetch.push(year);
-  }
-  yearsToFetch.sort((a, b) => a - b);
-
-  const allPriceData: Record<string, { c: number }> = {};
-  const normalizedStartDate = new Date(startDate);
-  normalizedStartDate.setHours(0, 0, 0, 0);
-
-  for (const year of yearsToFetch) {
-    const yearData = years[year.toString()];
-    if (!yearData) continue;
-
-    const downloadUrl = yearData.downloadUrl || yearData.download_url;
-    if (!downloadUrl) continue;
-
-    try {
-      const response = await fetch(downloadUrl);
-      if (!response.ok) continue;
-
-      const annualData = await response.json();
-      const data = annualData.data || {};
-
-      for (const [dateStr, dayData] of Object.entries(data) as [string, { c: number }][]) {
-        const date = new Date(dateStr);
-        date.setHours(0, 0, 0, 0);
-        if (date >= normalizedStartDate) {
-          allPriceData[dateStr] = dayData;
-        }
-      }
-    } catch {
-      // Skip year on error
-    }
-  }
-
-  return Object.entries(allPriceData)
-    .map(([date, data]) => ({ date, price: data.c }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 /**

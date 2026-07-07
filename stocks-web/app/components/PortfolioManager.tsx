@@ -91,6 +91,7 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
   const [positionBandId, setPositionBandId] = useState('');
   const [importInProgress, setImportInProgress] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importWarning, setImportWarning] = useState<string | null>(null);
   const [cashTransactions, setCashTransactions] = useState<Transaction[]>([]);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -876,43 +877,79 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
   };
 
   const handleImportCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    // Snapshot before clearing input — FileList is live and can empty when value is reset.
+    const fileList = Array.from(event.target.files ?? []);
     event.target.value = '';
-    if (!file || !selectedPortfolio?.id) return;
+    const portfolioId = selectedPortfolio?.id;
+    if (!fileList.length) return;
+    if (!portfolioId) {
+      setError('Select a portfolio before importing transactions.');
+      return;
+    }
     setError(null);
     setImportMessage(null);
+    setImportWarning(null);
     setImportInProgress(true);
     try {
-      const text = await file.text();
-      const res = await fetch(`/api/portfolios/${selectedPortfolio.id}/transactions/import`, {
+      const texts = await Promise.all(fileList.map((f) => f.text()));
+      const res = await fetch(`/api/portfolios/${portfolioId}/transactions/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: text }),
+        body: JSON.stringify({ csvs: texts }),
       });
       const result = await res.json();
       if (!res.ok) {
         setError(result.error ?? 'Import failed');
         setImportMessage(null);
+        setImportWarning(null);
         return;
       }
       if (result.success && result.data) {
-        const { equityOk, cashOk, skipped, failed } = result.data;
-        const parts = [`Imported ${equityOk} equity, ${cashOk} cash`];
+        const { equityOk, cashOk, skipped, failed, filesProcessed, providers, missingPriceTickers } =
+          result.data;
+        const parts: string[] = [];
+        if (filesProcessed > 1) {
+          const providerSummary = providers
+            ? `Schwab: ${providers.schwab ?? 0}, Fidelity: ${providers.fidelity ?? 0}`
+            : '';
+          parts.push(`Imported ${filesProcessed} files (${providerSummary})`);
+          parts.push(`${equityOk} equity, ${cashOk} cash`);
+        } else {
+          parts.push(`Imported ${equityOk} equity, ${cashOk} cash`);
+        }
         if (skipped > 0) parts.push(`${skipped} duplicate(s) skipped`);
         if (failed > 0) parts.push(`${failed} failed`);
-        setImportMessage(parts.join('. ') + '.');
+        if (equityOk === 0 && cashOk === 0 && skipped === 0 && failed > 0) {
+          setError(`Import failed: ${failed} row(s) could not be imported.`);
+          setImportMessage(null);
+          setImportWarning(null);
+        } else {
+          setImportMessage(parts.join('. ') + '.');
+          if (Array.isArray(missingPriceTickers) && missingPriceTickers.length > 0) {
+            setImportWarning(
+              `Missing price data for: ${missingPriceTickers.join(', ')}. Run the data fetcher to bootstrap these tickers.`
+            );
+          } else {
+            setImportWarning(null);
+          }
+        }
         if (result.portfolio) setSelectedPortfolio(result.portfolio);
+      } else if (result.success) {
+        setImportMessage('Import completed.');
       }
-      if (selectedPortfolio?.id) {
-        await loadPortfolio(selectedPortfolio.id);
-        await loadCashTransactions(selectedPortfolio.id);
-      }
+      await loadPortfolio(portfolioId);
+      await loadCashTransactions(portfolioId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse CSV');
       setImportMessage(null);
+      setImportWarning(null);
     } finally {
       setImportInProgress(false);
     }
+  };
+
+  const openCsvImport = () => {
+    csvFileInputRef.current?.click();
   };
 
   const startEditTransaction = (tx: Transaction) => {
@@ -1200,6 +1237,24 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
               </div>
 
               <div className="relative z-0 flex-1 overflow-y-auto p-6">
+                <input
+                  ref={csvFileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  multiple
+                  className="hidden"
+                  onChange={handleImportCsv}
+                />
+                {importMessage && (
+                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2 mb-4">
+                    {importMessage}
+                  </p>
+                )}
+                {importWarning && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-4">
+                    {importWarning}
+                  </p>
+                )}
                 {selectedPortfolio.id && (
                   <>
                     <div className="mb-6">
@@ -1220,10 +1275,8 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
                     selectedPortfolio={selectedPortfolio}
                     positionPrices={positionPrices}
                     totalPortfolioValue={totalPortfolioValue}
-                    csvFileInputRef={csvFileInputRef}
                     importInProgress={importInProgress}
-                    importMessage={importMessage}
-                    handleImportCsv={handleImportCsv}
+                    onImportCsv={openCsvImport}
                     onOpenAddTransaction={openAddTransaction}
                     startEditPositionMetadata={startEditPositionMetadata}
                     openTransactionHistory={openTransactionHistory}
@@ -1234,10 +1287,8 @@ export default function PortfolioManager({ portfolioIdFromRoute }: PortfolioMana
                   />
                 ) : (
                   <PositionsEmptyState
-                    csvFileInputRef={csvFileInputRef}
                     importInProgress={importInProgress}
-                    importMessage={importMessage}
-                    handleImportCsv={handleImportCsv}
+                    onImportCsv={openCsvImport}
                     onOpenAddTransaction={openAddTransaction}
                   />
                 )}

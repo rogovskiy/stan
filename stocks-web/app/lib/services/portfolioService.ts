@@ -21,6 +21,8 @@ import {
   totalQuantityFromLots,
   type Lot,
 } from '../taxEstimator';
+import { isMoneyMarketSweepTicker } from '../moneyMarketSweep';
+import { resolveRsuGrantPrices } from '../transactionImport/fidelityRsu';
 
 /** Risk band: portfolio size range and limits (defined in portfolio settings). */
 export interface Band {
@@ -259,7 +261,9 @@ export async function getPortfolio(portfolioId: string): Promise<Portfolio | nul
       bands,
       channelExposures,
       stressDrawdown,
-      positions: positions.sort((a, b) => a.ticker.localeCompare(b.ticker)),
+      positions: positions
+        .filter((p) => !isMoneyMarketSweepTicker(p.ticker))
+        .sort((a, b) => a.ticker.localeCompare(b.ticker)),
       createdAt: portfolioData.createdAt?.toDate?.()?.toISOString() || portfolioData.createdAt,
       updatedAt: portfolioData.updatedAt?.toDate?.()?.toISOString() || portfolioData.updatedAt,
       userId: portfolioData.userId,
@@ -294,6 +298,29 @@ export async function createPortfolio(portfolio: Omit<Portfolio, 'id' | 'created
   }
 }
 
+function bandForFirestore(b: {
+  id: string;
+  name: string;
+  sizeMinPct: number;
+  sizeMaxPct: number;
+  maxPositionSizePct?: number;
+  maxDrawdownPct?: number;
+  expectedReturnMinPct?: number;
+  expectedReturnMaxPct?: number;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    id: b.id,
+    name: b.name,
+    sizeMinPct: b.sizeMinPct,
+    sizeMaxPct: b.sizeMaxPct,
+  };
+  if (b.maxPositionSizePct != null) out.maxPositionSizePct = b.maxPositionSizePct;
+  if (b.maxDrawdownPct != null) out.maxDrawdownPct = b.maxDrawdownPct;
+  if (b.expectedReturnMinPct != null) out.expectedReturnMinPct = b.expectedReturnMinPct;
+  if (b.expectedReturnMaxPct != null) out.expectedReturnMaxPct = b.expectedReturnMaxPct;
+  return out;
+}
+
 /**
  * Update a portfolio
  */
@@ -307,7 +334,9 @@ export async function updatePortfolio(
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.description !== undefined) payload.description = updates.description;
     if (updates.accountType !== undefined) payload.accountType = updates.accountType;
-    if (updates.bands !== undefined) payload.bands = updates.bands;
+    if (updates.bands !== undefined) {
+      payload.bands = updates.bands.map((b) => bandForFirestore(b));
+    }
     await updateDoc(portfolioRef, payload);
   } catch (error) {
     console.error(`Error updating portfolio ${portfolioId}:`, error);
@@ -631,6 +660,7 @@ export async function getSnapshotsUpToDate(
 export async function recomputeAndWriteAggregates(portfolioId: string): Promise<void> {
   const transactions = await getTransactions(portfolioId, null);
   const transactionsAsc = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  resolveRsuGrantPrices(transactionsAsc);
 
   const portfolioRef = doc(db, 'portfolios', portfolioId);
   const lotsByTicker = new Map<string, Lot[]>();
@@ -652,7 +682,7 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
     const txsForDate = byDate.get(dateStr)!;
     for (const tx of txsForDate) {
       cashTotal += tx.amount;
-      if (tx.ticker) {
+      if (tx.ticker && !isMoneyMarketSweepTicker(tx.ticker)) {
         const key = tx.ticker.toUpperCase();
         if (!lotsByTicker.has(key)) lotsByTicker.set(key, []);
         applyTransactionToLots(lotsByTicker.get(key)!, tx);
@@ -661,6 +691,7 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
     datesWithTx.add(dateStr);
     const positionsForSnapshot: { ticker: string; quantity: number; costBasis: number }[] = [];
     for (const [ticker, lots] of lotsByTicker) {
+      if (isMoneyMarketSweepTicker(ticker)) continue;
       const quantity = totalQuantityFromLots(lots);
       if (quantity <= 0) continue;
       const costBasis = averageCostFromLots(lots) ?? 0;
@@ -703,7 +734,14 @@ export async function recomputeAndWriteAggregates(portfolioId: string): Promise<
     }
   }
 
+  for (const [ticker, existing] of existingByTicker) {
+    if (isMoneyMarketSweepTicker(ticker)) {
+      await deleteDoc(doc(db, 'portfolios', portfolioId, 'positions', existing.id));
+    }
+  }
+
   for (const [ticker, lots] of lotsByTicker) {
+    if (isMoneyMarketSweepTicker(ticker)) continue;
     const quantity = totalQuantityFromLots(lots);
     if (quantity <= 0) continue;
     const averagePrice = averageCostFromLots(lots);

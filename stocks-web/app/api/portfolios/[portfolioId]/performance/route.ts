@@ -4,6 +4,8 @@ import type { PortfolioSnapshot } from '../../../../lib/services/portfolioServic
 import { getStartDateFromPeriod } from '../../../../lib/dailyPrices';
 import { getDailyPricesForTicker } from '../../../../lib/server/getDailyPrices';
 import { computeBandExpectedReturn } from '../../../../lib/portfolioKpis';
+import { isMoneyMarketSweepTicker } from '../../../../lib/moneyMarketSweep';
+import { buildTwrCashFlowByDate } from '../../../../lib/portfolioTwrCashFlows';
 
 const VALID_BENCHMARKS = ['SPY', 'QQQ', 'GLD'] as const;
 type BenchmarkTicker = (typeof VALID_BENCHMARKS)[number];
@@ -56,7 +58,7 @@ function valueFromSnapshot(
 ): number {
   let total = snapshot.cashBalance;
   for (const p of snapshot.positions) {
-    if (p.quantity <= 0) continue;
+    if (p.quantity <= 0 || isMoneyMarketSweepTicker(p.ticker)) continue;
     const map = priceMaps.get(p.ticker);
     if (!map) continue;
     const price = getPriceAtDate(valueDate, map);
@@ -74,7 +76,7 @@ function getBreakdownFromSnapshot(
   if (!snapshot) return [];
   const result: { ticker: string; quantity: number; price: number; value: number }[] = [];
   for (const p of snapshot.positions) {
-    if (p.quantity <= 0) continue;
+    if (p.quantity <= 0 || isMoneyMarketSweepTicker(p.ticker)) continue;
     const map = priceMaps.get(p.ticker);
     if (!map) continue;
     const price = getPriceAtDate(dateStr, map);
@@ -119,7 +121,9 @@ export async function GET(
 
     const transactionTickers = [
       ...new Set(
-        transactions.filter((t) => t.ticker != null).map((t) => t.ticker!.toUpperCase())
+        transactions
+          .filter((t) => t.ticker != null && !isMoneyMarketSweepTicker(t.ticker))
+          .map((t) => t.ticker!.toUpperCase())
       ),
     ];
     const positions = portfolio.positions || [];
@@ -170,7 +174,9 @@ export async function GET(
     const positionTickers = new Set<string>();
     for (const snap of snapshotsAsc) {
       for (const p of snap.positions) {
-        if (p.quantity > 0) positionTickers.add(p.ticker);
+        if (p.quantity > 0 && !isMoneyMarketSweepTicker(p.ticker)) {
+          positionTickers.add(p.ticker);
+        }
       }
     }
     const missingPriceTickers = [...positionTickers].filter((ticker) => {
@@ -215,10 +221,10 @@ export async function GET(
       normPortfolio = portfolioValues.map(() => 100);
     } else {
       const cashFlowByDate: Record<string, number> = {};
-      for (const tx of transactions) {
-        if (tx.type !== 'cash') continue;
-        if (tx.date >= dateMin && tx.date <= dateMax) {
-          cashFlowByDate[tx.date] = (cashFlowByDate[tx.date] ?? 0) + tx.amount;
+      const allCashFlows = buildTwrCashFlowByDate(transactions);
+      for (const [date, amount] of Object.entries(allCashFlows)) {
+        if (date >= dateMin && date <= dateMax) {
+          cashFlowByDate[date] = amount;
         }
       }
       const growthIndex = new Array<number>(dates.length);

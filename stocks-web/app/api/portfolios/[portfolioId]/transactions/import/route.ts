@@ -6,10 +6,27 @@ import {
   recomputeAndWriteAggregates,
 } from '../../../../../lib/services/portfolioService';
 import type { TransactionType } from '../../../../../lib/services/portfolioService';
-import { parseSchwabTransactionsCsv } from '../../../../../lib/schwabCsvParser';
-import type { TransactionPayload } from '../../../../../lib/schwabCsvParser';
+import {
+  parseTransactionsCsvs,
+  type BrokerProvider,
+  type TransactionPayload,
+} from '../../../../../lib/transactionImport';
+import { getMissingPriceTickers } from '../../../../../lib/server/missingPriceTickers';
 
 const VALID_TYPES: TransactionType[] = ['buy', 'sell', 'dividend', 'dividend_reinvest', 'cash'];
+
+function normalizeCsvInputs(body: unknown): string[] | null {
+  if (body == null || typeof body !== 'object') return null;
+  const { csv, csvs } = body as { csv?: unknown; csvs?: unknown };
+  if (Array.isArray(csvs)) {
+    const texts = csvs.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
+    return texts.length > 0 ? texts : null;
+  }
+  if (typeof csv === 'string' && csv.trim()) {
+    return [csv];
+  }
+  return null;
+}
 
 function transactionSignature(tx: {
   date: string;
@@ -38,10 +55,13 @@ export async function POST(
   try {
     const { portfolioId } = await params;
     const body = await _request.json();
-    const csv = body?.csv;
-    if (typeof csv !== 'string' || !csv.trim()) {
+    const csvTexts = normalizeCsvInputs(body);
+    if (!csvTexts) {
       return NextResponse.json(
-        { success: false, error: 'Request body must include a non-empty "csv" string' },
+        {
+          success: false,
+          error: 'Request body must include a non-empty "csv" string or "csvs" string array',
+        },
         { status: 400 }
       );
     }
@@ -51,12 +71,28 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'Portfolio not found' }, { status: 404 });
     }
 
-    const { equity, cash } = parseSchwabTransactionsCsv(csv);
-    const all: TransactionPayload[] = [...equity, ...cash];
+    let parseResults;
+    try {
+      parseResults = parseTransactionsCsvs(csvTexts);
+    } catch (parseError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: parseError instanceof Error ? parseError.message : 'Failed to parse CSV',
+        },
+        { status: 400 }
+      );
+    }
+
+    const { merged, results } = parseResults;
+    const all: TransactionPayload[] = [...merged.equity, ...merged.cash];
+
+    const providerCounts: Record<BrokerProvider, number> = { schwab: 0, fidelity: 0 };
+    results.forEach(({ provider }) => {
+      providerCounts[provider] += 1;
+    });
 
     const existing = await getTransactions(portfolioId, null);
-    // Count occurrences of each signature in DB so we only skip CSV rows that match existing ones.
-    // Same signature can appear multiple times (e.g. two identical buys on the same day).
     const signatureCount = new Map<string, number>();
     existing.forEach((tx) => {
       const sig = transactionSignature({
@@ -115,9 +151,22 @@ export async function POST(
     }
 
     const updatedPortfolio = await getPortfolio(portfolioId);
+    const positionTickers = (updatedPortfolio?.positions ?? [])
+      .filter((p) => (Number(p.quantity) || 0) > 0.0001)
+      .map((p) => p.ticker.toUpperCase());
+    const missingPriceTickers = await getMissingPriceTickers(positionTickers);
+
     return NextResponse.json({
       success: true,
-      data: { equityOk, cashOk, skipped, failed },
+      data: {
+        equityOk,
+        cashOk,
+        skipped,
+        failed,
+        filesProcessed: csvTexts.length,
+        providers: providerCounts,
+        missingPriceTickers,
+      },
       portfolio: updatedPortfolio,
     });
   } catch (error) {

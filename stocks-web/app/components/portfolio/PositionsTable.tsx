@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, type RefObject } from 'react';
+import { Fragment, useMemo } from 'react';
 import type { Portfolio, Position, StressDrawdownPosition } from '../../lib/services/portfolioService';
 import type {
   LoadedPositionThesisEvaluation,
@@ -22,10 +22,8 @@ export default function PositionsTable({
   selectedPortfolio,
   positionPrices,
   totalPortfolioValue,
-  csvFileInputRef,
   importInProgress,
-  importMessage,
-  handleImportCsv,
+  onImportCsv,
   onOpenAddTransaction,
   startEditPositionMetadata,
   openTransactionHistory,
@@ -38,10 +36,8 @@ export default function PositionsTable({
   selectedPortfolio: Portfolio;
   positionPrices: Record<string, number>;
   totalPortfolioValue: number | null;
-  csvFileInputRef: RefObject<HTMLInputElement | null>;
   importInProgress: boolean;
-  importMessage: string | null;
-  handleImportCsv: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onImportCsv: () => void;
   onOpenAddTransaction: () => void;
   startEditPositionMetadata: (position: Position) => void;
   openTransactionHistory: (ticker: string) => void;
@@ -70,16 +66,9 @@ export default function PositionsTable({
 
   const toolbar = (
     <>
-      <input
-        ref={csvFileInputRef}
-        type="file"
-        accept=".csv"
-        className="hidden"
-        onChange={handleImportCsv}
-      />
       <button
         type="button"
-        onClick={() => csvFileInputRef.current?.click()}
+        onClick={onImportCsv}
         disabled={importInProgress}
         className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
       >
@@ -97,7 +86,6 @@ export default function PositionsTable({
   return (
     <div>
       <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">{toolbar}</div>
-      {importMessage && <p className="text-sm text-gray-600 mb-2">{importMessage}</p>}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -461,16 +449,12 @@ export default function PositionsTable({
 }
 
 export function PositionsEmptyState({
-  csvFileInputRef,
   importInProgress,
-  importMessage,
-  handleImportCsv,
+  onImportCsv,
   onOpenAddTransaction,
 }: {
-  csvFileInputRef: RefObject<HTMLInputElement | null>;
   importInProgress: boolean;
-  importMessage: string | null;
-  handleImportCsv: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onImportCsv: () => void;
   onOpenAddTransaction: () => void;
 }) {
   return (
@@ -478,17 +462,10 @@ export function PositionsEmptyState({
       <p className="text-gray-500 mb-4">
         No positions in this portfolio yet. Add a transaction or import from CSV.
       </p>
-      <input
-        ref={csvFileInputRef}
-        type="file"
-        accept=".csv"
-        className="hidden"
-        onChange={handleImportCsv}
-      />
       <div className="flex justify-center gap-2 flex-wrap">
         <button
           type="button"
-          onClick={() => csvFileInputRef.current?.click()}
+          onClick={onImportCsv}
           disabled={importInProgress}
           className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -501,7 +478,6 @@ export function PositionsEmptyState({
           Add Your First Transaction
         </button>
       </div>
-      {importMessage && <p className="text-sm text-gray-600 mt-2">{importMessage}</p>}
     </div>
   );
 }

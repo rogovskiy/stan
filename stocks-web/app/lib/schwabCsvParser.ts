@@ -3,20 +3,17 @@
  * for POST /api/portfolios/[id]/transactions.
  */
 
-export type TransactionPayload = {
-  type: 'buy' | 'sell' | 'dividend' | 'dividend_reinvest' | 'cash';
-  ticker: string | null;
-  date: string; // YYYY-MM-DD
-  quantity: number;
-  price: number | null;
-  amount: number;
-  notes?: string;
-};
+import type { BrokerCsvParser, ParseResult, TransactionPayload } from './transactionImport/types';
+import {
+  colIndex,
+  getCell,
+  isBond,
+  isTicker,
+  parseCsvRow,
+  parseMoney,
+} from './transactionImport/csvUtils';
 
-export type ParseResult = {
-  equity: TransactionPayload[];
-  cash: TransactionPayload[];
-};
+export type { ParseResult, TransactionPayload } from './transactionImport/types';
 
 const EQUITY_ACTIONS = new Set([
   'Buy',
@@ -37,28 +34,7 @@ const DIVIDEND_ACTIONS = new Set([
   'Reinvest Dividend',
 ]);
 
-function parseCsvRow(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') {
-      inQuotes = !inQuotes;
-    } else if (inQuotes) {
-      current += c;
-    } else if (c === ',') {
-      result.push(current.trim());
-      current = '';
-    } else {
-      current += c;
-    }
-  }
-  result.push(current.trim());
-  return result;
-}
-
-function parseDate(raw: string): string {
+function parseSchwabDate(raw: string): string {
   const s = (raw || '').trim();
   const asOf = s.indexOf(' as of ');
   const dateStr = asOf >= 0 ? s.slice(0, asOf).trim() : s;
@@ -69,24 +45,16 @@ function parseDate(raw: string): string {
   return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
 }
 
-function parseMoney(raw: string): number | null {
-  const s = (raw || '').trim().replace(/\$/g, '').replace(/,/g, '');
-  if (s === '') return null;
-  const n = parseFloat(s);
-  return isNaN(n) ? null : n;
-}
-
-function isTicker(symbol: string | undefined): boolean {
-  if (symbol == null || typeof symbol !== 'string') return false;
-  const s = symbol.trim();
-  return s.length > 0 && !s.includes(' ');
-}
-
-/** Bonds (e.g. CUSIP like 46656MH95) expire; we have no expiration logic, so treat as cash only, no position. */
-function isBond(symbol: string | undefined): boolean {
-  if (symbol == null || typeof symbol !== 'string') return false;
-  const s = symbol.trim();
-  return /^[A-Z0-9]{9}$/i.test(s);
+function detectSchwabCsv(csvText: string): boolean {
+  const header = csvText.split(/\r?\n/).find((l) => l.trim().length > 0);
+  if (!header) return false;
+  const cols = parseCsvRow(header).map((h) => h.replace(/^\s+|\s+$/g, ''));
+  return (
+    cols.includes('Date') &&
+    cols.includes('Action') &&
+    cols.includes('Amount') &&
+    !cols.includes('Run Date')
+  );
 }
 
 /**
@@ -99,37 +67,31 @@ export function parseSchwabTransactionsCsv(csvText: string): ParseResult {
   if (lines.length < 2) return { equity: [], cash: [] };
 
   const headerRow = parseCsvRow(lines[0]);
-  const col = (name: string): number => {
-    const i = headerRow.findIndex((h) => h.replace(/^\s+|\s+$/g, '') === name);
-    return i >= 0 ? i : -1;
-  };
-  const dateCol = col('Date');
-  const actionCol = col('Action');
-  const symbolCol = col('Symbol');
-  const descCol = col('Description');
-  const qtyCol = col('Quantity');
-  const priceCol = col('Price');
-  const amountCol = col('Amount');
+  const dateCol = colIndex(headerRow, 'Date');
+  const actionCol = colIndex(headerRow, 'Action');
+  const symbolCol = colIndex(headerRow, 'Symbol');
+  const descCol = colIndex(headerRow, 'Description');
+  const qtyCol = colIndex(headerRow, 'Quantity');
+  const priceCol = colIndex(headerRow, 'Price');
+  const amountCol = colIndex(headerRow, 'Amount');
 
   if (dateCol < 0 || actionCol < 0 || amountCol < 0) {
     return { equity: [], cash: [] };
   }
-
-  const get = (row: string[], i: number): string => (i >= 0 && row[i] !== undefined ? row[i] : '');
 
   const equity: TransactionPayload[] = [];
   const cash: TransactionPayload[] = [];
 
   for (let r = 1; r < lines.length; r++) {
     const row = parseCsvRow(lines[r]);
-    const date = parseDate(get(row, dateCol));
-    const action = get(row, actionCol).trim();
-    const symbol = get(row, symbolCol).trim();
+    const date = parseSchwabDate(getCell(row, dateCol));
+    const action = getCell(row, actionCol).trim();
+    const symbol = getCell(row, symbolCol).trim();
     const symbolUpper = symbol.toUpperCase();
-    const description = get(row, descCol).trim();
-    const amountVal = parseMoney(get(row, amountCol));
-    const qtyVal = parseMoney(get(row, qtyCol));
-    const priceVal = parseMoney(get(row, priceCol));
+    const description = getCell(row, descCol).trim();
+    const amountVal = parseMoney(getCell(row, amountCol));
+    const qtyVal = parseMoney(getCell(row, qtyCol));
+    const priceVal = parseMoney(getCell(row, priceCol));
     const quantity = qtyVal ?? 0;
     const price = priceVal;
     const amount = amountVal ?? 0;
@@ -138,7 +100,6 @@ export function parseSchwabTransactionsCsv(csvText: string): ParseResult {
 
     const notesForCash = [action, symbol || description].filter(Boolean).join(' – ');
 
-    // Equity: ticker actions (buy/sell/dividends including Reinvest Dividend and Non-Qualified Div) so they show in ticker history and in cash total
     if (isTicker(symbol) && !isBond(symbol) && EQUITY_ACTIONS.has(action)) {
       if (action === 'Buy') {
         equity.push({
@@ -201,3 +162,9 @@ export function parseSchwabTransactionsCsv(csvText: string): ParseResult {
 
   return { equity, cash };
 }
+
+export const schwabCsvParser: BrokerCsvParser = {
+  id: 'schwab',
+  detect: detectSchwabCsv,
+  parse: parseSchwabTransactionsCsv,
+};
